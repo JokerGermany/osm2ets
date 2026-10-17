@@ -227,6 +227,7 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 
 - Exit: widening 2→3 (`ger_hw2-hw2_exit_mirrored_tmpl_v02`) + split 3→2+1
   (`ger_hw2_exit_joint_mirrored_tmpl_v02`); entry mirrored.
+- Junction areas: arms that meet at a sharp angle are bent onto an arc into the prefab direction; junctions closer than their prefab radii are connected prefab-to-prefab (the short road between them is dropped); one-way arms are attached by moving the prefab origin (`ChangeOrigin`).
 - Junctions: `ger_r1_x_r1_t_narrow_tmpl` (T), `ger_r1_x_r1_narrow_tmpl` (X); for
   four-lane roads (ger29) the `ger_r2_no_offset_x_r1_narrow*` variants.
 - Node roles and directions come from the `.ppd` files, variants/looks from the `.pmd`.

@@ -383,13 +383,30 @@ public static class Interchanges
     public const float Lead = 20f;   // so lang läuft die Straße gerade in den Prefab-Knoten ein
 
     /// <summary>Lässt eine Straße genau am Prefab-Knoten enden und in dessen Richtung einlaufen.</summary>
-    public static void SetTail(RoadEntry r, Vector3 node, Vector3 dirInto, float leadLen = Lead)
+    public static void SetTail(RoadEntry r, Vector3 node, Vector3 dirInto, float leadLen = Lead, float curve = 0)
     {
         var lead = node - dirInto * leadLen;
         int k = r.Points.Count - 1;
-        while (k > 0 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < leadLen + 10) k--;
+        float cut = MathF.Max(leadLen + 10, curve);
+        while (k > 0 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k--;
+        // Punkte, die schon jenseits des Einlaufpunkts liegen, ebenfalls weg (sonst Rücklauf)
+        while (k > 0 && Vector2.Dot(P(r.Points[k]) - new Vector2(lead.X, lead.Z), new Vector2(dirInto.X, dirInto.Z)) > -2) k--;
         var pts = r.Points.Take(k + 1).ToList();
         lead.Y = Between(node, pts[^1], leadLen);
+        if (curve > 0 && pts.Count >= 2)
+        {
+            // Bogen vom letzten behaltenen Punkt (mit dessen Richtung) zum Einlaufpunkt
+            var p3 = MapWriter.ToVector(pts[^1]); var p2 = MapWriter.ToVector(pts[^2]);
+            var tIn = p3 - p2; tIn.Y = 0; tIn = Vector3.Normalize(tIn);
+            foreach (var q in Bezier(p3, tIn, lead, dirInto))
+            {
+                // nur Punkte vor dem Einlauf und mit Abstand zum Vorgänger (keine Schleifen)
+                var dq = q - lead; dq.Y = 0;
+                if (Vector3.Dot(dq, dirInto) > -3) continue;
+                if (Vector2.Distance(P(pts[^1]), new Vector2(q.X, q.Z)) < 4) continue;
+                pts.Add(V(q));
+            }
+        }
         if (Vector2.Distance(P(pts[^1]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
         pts.Add(V(node));
         int segs = pts.Count - 1;
@@ -402,15 +419,30 @@ public static class Interchanges
     }
 
     /// <summary>Lässt eine Straße genau am Prefab-Knoten beginnen und in dessen Richtung auslaufen.</summary>
-    public static void SetHead(RoadEntry r, Vector3 node, Vector3 dirOut, float leadLen = Lead)
+    public static void SetHead(RoadEntry r, Vector3 node, Vector3 dirOut, float leadLen = Lead, float curve = 0)
     {
         var lead = node + dirOut * leadLen;
         int k = 0;
-        while (k < r.Points.Count - 1 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < leadLen + 10) k++;
+        float cut = MathF.Max(leadLen + 10, curve);
+        while (k < r.Points.Count - 1 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k++;
+        while (k < r.Points.Count - 1 && Vector2.Dot(P(r.Points[k]) - new Vector2(lead.X, lead.Z), new Vector2(dirOut.X, dirOut.Z)) < 2) k++;
         var rest = r.Points.Skip(k).ToList();
         var pts = new List<double[]> { V(node) };
         lead.Y = Between(node, rest[0], leadLen);
         if (Vector2.Distance(P(rest[0]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
+        if (curve > 0 && rest.Count >= 2)
+        {
+            var p3 = MapWriter.ToVector(rest[0]); var p4 = MapWriter.ToVector(rest[1]);
+            var tOut = p4 - p3; tOut.Y = 0; tOut = Vector3.Normalize(tOut);
+            foreach (var q in Bezier(lead, dirOut, p3, tOut))
+            {
+                var dq = q - lead; dq.Y = 0;
+                if (Vector3.Dot(dq, dirOut) < 3) continue;
+                if (Vector2.Distance(P(pts[^1]), new Vector2(q.X, q.Z)) < 4) continue;
+                if (Vector2.Distance(P(rest[0]), new Vector2(q.X, q.Z)) < 4) continue;
+                pts.Add(V(q));
+            }
+        }
         int added = pts.Count;
         pts.AddRange(rest);
         int shift = added - k;
@@ -423,6 +455,22 @@ public static class Interchanges
     }
 
     private static double[] V(Vector3 v) => [v.X, v.Y, v.Z];
+
+    /// <summary>Innere Punkte eines kubischen Bogens von a (Richtung ta) nach b (Richtung tb), etwa alle 10 m.</summary>
+    private static IEnumerable<Vector3> Bezier(Vector3 a, Vector3 ta, Vector3 b, Vector3 tb)
+    {
+        float d = Vector2.Distance(new Vector2(a.X, a.Z), new Vector2(b.X, b.Z));
+        if (d < 15) yield break;
+        var c1 = a + ta * (d / 3); var c2 = b - tb * (d / 3);
+        int n = Math.Max(2, (int)(d / 10));
+        for (int i = 1; i < n; i++)
+        {
+            float t = i / (float)n, u = 1 - t;
+            var q = u * u * u * a + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * b;
+            q.Y = a.Y + (b.Y - a.Y) * t;
+            yield return q;
+        }
+    }
 
     /// <summary>Höhe des Einlaufpunkts: linear zwischen Prefab-Knoten und erstem behaltenen Punkt.</summary>
     private static float Between(Vector3 node, double[] keep, float leadLen)

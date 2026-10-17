@@ -235,6 +235,7 @@ aus den `.scs`-Archiven kopieren.
 
 - Ausfahrt: Aufweitung 2→3 (`ger_hw2-hw2_exit_mirrored_tmpl_v02`) + Teilung 3→2+1
   (`ger_hw2_exit_joint_mirrored_tmpl_v02`); Einfahrt spiegelbildlich.
+- Knotenbereiche: spitzwinklig einmündende Arme werden auf einem Bogen in die Prefab-Richtung umgelegt; Kreuzungen, die näher beieinander liegen als ihre Prefab-Radien, werden Prefab an Prefab verbunden (die kurze Straße dazwischen entfällt); Einbahn-Arme werden über einen Ursprungswechsel (`ChangeOrigin`) angeschlossen.
 - Kreuzungen: `ger_r1_x_r1_t_narrow_tmpl` (T), `ger_r1_x_r1_narrow_tmpl` (X), für
   vierspurige Straßen (ger29) die `ger_r2_no_offset_x_r1_narrow*`-Varianten.
 - Knotenrollen und Richtungen stammen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.

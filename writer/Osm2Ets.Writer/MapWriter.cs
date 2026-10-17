@@ -74,19 +74,33 @@ public static class MapWriter
 
         // ebenerdige Kreuzungen normaler Straßen (T/X-Prefabs)
         var junctionPlans = new List<Junctions.Plan>();
-        Junctions.Fixed.Clear();
+        Junctions.Reset();
         if (prefabs is not null)
         {
             string TypeAt(RoadEntry r, bool atStart) => mapping.Resolve(atStart ? r.Runs[0] : r.Runs[^1]).RoadType;
-            foreach (var jp in Junctions.Find(valid, TypeAt, warnings))
+            // mehrere Durchgänge: eine Kreuzung, deren Arm zu kurz ist, kann im nächsten
+            // Durchgang direkt an das inzwischen gesetzte Nachbar-Prefab angeschlossen werden
+            var pending = Junctions.Find(valid, TypeAt, warnings);
+            var lastReason = new Dictionary<Junctions.Plan, string>();
+            foreach (var jp in pending) Junctions.PendingNodes.Add(jp.OsmNode);
+            bool progress = true;
+            while (pending.Count > 0 && progress)
             {
-                try
+                progress = false;
+                foreach (var jp in pending.ToList())
                 {
-                    if (Junctions.Prepare(jp, prefabs, out var reason)) junctionPlans.Add(jp);
-                    else warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): kein Prefab – {reason}");
+                    try
+                    {
+                        if (Junctions.Prepare(jp, prefabs, out var reason)) { junctionPlans.Add(jp); pending.Remove(jp); Junctions.PendingNodes.Remove(jp.OsmNode); progress = true; }
+                        else lastReason[jp] = reason ?? "?";
+                    }
+                    catch (Exception ex) { lastReason[jp] = $"{ex.GetType().Name}: {ex.Message}"; pending.Remove(jp); }
                 }
-                catch (Exception ex) { warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): {ex.GetType().Name}: {ex.Message}"); }
             }
+            foreach (var (jp, reason) in lastReason.Where(kv => !junctionPlans.Contains(kv.Key)))
+                warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): kein Prefab – {reason}");
+            int dropped = valid.RemoveAll(Junctions.Dropped.Contains);
+            if (dropped > 0) warnings.Add($"Info: {dropped} kurze Verbindungsstraßen durch direkt verbundene Kreuzungs-Prefabs ersetzt");
         }
 
         var (pairs, reversed) = Connector.Plan(valid, Junctions.Fixed);
@@ -225,12 +239,24 @@ public static class MapWriter
                 try
                 {
                     // Knoten 0 zuerst, damit ein Fehler dort nichts halb verbunden zurücklässt
-                    foreach (int i in Enumerable.Range(0, jp.Arms.Length).OrderBy(i => jp.NodeOf[i]))
+                    int cnt = pf.Nodes.Count;
+                    foreach (int i in Enumerable.Range(0, jp.Arms.Length).OrderBy(i => Junctions.NodeIndex(jp, jp.NodeOf[i], cnt)))
                     {
                         var a = jp.Arms[i];
-                        var at = pf.Nodes[jp.NodeOf[i]].Position;
-                        if (Junctions.StartsAt(a.Road, at)) pf.Attach(jp.NodeOf[i], firstItem[a.Road].Node);
-                        else pf.Attach(jp.NodeOf[i], lastItem[a.Road].ForwardNode);
+                        ushort ni = Junctions.NodeIndex(jp, jp.NodeOf[i], cnt);
+                        if (Junctions.Dropped.Contains(a.Road))
+                        {
+                            if (i == jp.SnapArm && jp.SnapTo.Plan.Placed is { } other)
+                            {
+                                var q = jp.SnapTo;
+                                ushort qi = Junctions.NodeIndex(q.Plan, q.Plan.NodeOf[q.Arm], other.Nodes.Count);
+                                pf.Attach(ni, other, qi);
+                            }
+                            continue;
+                        }
+                        var at = pf.Nodes[ni].Position;
+                        if (Junctions.StartsAt(a.Road, at)) pf.Attach(ni, firstItem[a.Road].Node);
+                        else pf.Attach(ni, lastItem[a.Road].ForwardNode);
                     }
                 }
                 catch { map.Delete(pf); throw; }
