@@ -1,259 +1,251 @@
 # osm2ets – OpenStreetMap → Euro Truck Simulator 2
 
-**Deutsch** · [English](README.en.md)
+[Deutsch](README.de.md) · **English**
 
-Erzeugt aus OpenStreetMap-Daten ETS2-Kartendateien in wählbarem Maßstab (Standard 1:1)
-und in Detailstufen. Die gröbste Stufe enthält nur das Fernstraßennetz – in Deutschland
-Autobahnen und Bundesstraßen – plus Rampen und die anschließenden Straßen bis zur
-nächsten Kreuzung.
+Generates ETS2 map files from OpenStreetMap data at a selectable scale (default 1:1)
+and in several detail levels. The coarsest level contains only the trunk road network –
+in Germany motorways (Autobahnen) and federal roads (Bundesstraßen) – plus ramps and the
+connecting roads up to the next junction.
 
 ```mermaid
 flowchart LR
-    A[OSM-Datei<br>.osm.pbf] --> B[osm2ets build<br>Python]
-    B --> C[roads.ets.json<br>Zwischenformat]
-    B --> D[roads.geojson<br>Kontrolle in QGIS]
+    A[OSM file<br>.osm.pbf] --> B[osm2ets build<br>Python]
+    B --> C[roads.ets.json<br>intermediate format]
+    B --> D[roads.geojson<br>check in QGIS]
     B --> E[roads.report.txt]
     C --> F[osm2ets-writer write<br>C# + TruckLib]
-    G[mapping.jsonc<br>OSM → Straßentyp] --> F
-    F --> H[name.mbd + Sektoren<br>ETS2-Karte]
+    G[mapping.jsonc<br>OSM → road type] --> F
+    F --> H[name.mbd + sectors<br>ETS2 map]
 ```
 
-## Stand (Oktober 2026) – bitte zuerst lesen
+## Status (October 2026) – please read first
 
-Frühe Entwicklungsversion. Im Spiel getestet mit ETS2 1.61 (Linux, Proton) an einem
-Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet.
+Early development version. Tested in game with ETS2 1.61 (Linux, Proton) on an extract
+near Bayreuth (A 9, A 70, B 85); larger areas have not been tested.
 
-| Bereich | Stand |
+| Area | Status |
 |---|---|
-| Straßennetz L1–L4 aus OSM, Maßstab 1:N, fester Ursprung | umgesetzt, getestet |
-| Echte Straßenvorlagen (ger13/ger16 Autobahn, ger2 Rampe, ger1/ger5/ger9/ger29) | umgesetzt, im Spiel befahrbar |
-| Durchgehende Straßen an Knoten verbunden, keine unsichtbaren Wände | umgesetzt, im Spiel geprüft |
-| Autobahn-Ausfahrt/-Einfahrt mit Prefabs (2 Spuren, Rampe rechts) | umgesetzt, Verkehr fährt darüber |
-| Ebenerdige T-/X-Kreuzungen mit Prefabs | umgesetzt (v7), nur ein Teil der Kreuzungen, siehe unten |
-| Höhen aus Geländemodell, Brücken, Tunnel | umgesetzt (v8), im Spiel noch nicht geprüft – siehe „Bekannte Probleme" |
-| 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
-| Brückenbauwerke (Modelle), Gelände flächig, Vegetation, Städte, Firmen | noch nicht |
-| Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
+| Road network L1–L4 from OSM, scale 1:N, fixed origin | implemented, tested |
+| Real road templates (ger13/ger16 motorway, ger2 ramp, ger1/ger5/ger9/ger29) | implemented, drivable in game |
+| Through roads connected at nodes, no invisible walls | implemented, checked in game |
+| Motorway exit/entry with prefabs (2 lanes, ramp on the right) | implemented, AI traffic uses them |
+| At-grade T/X junctions with prefabs | implemented (v7), only part of the junctions, see below |
+| Heights from a terrain model, bridges, tunnels | implemented (v8), not yet checked in game – see "Known issues" |
+| 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
+| Bridge structures (models), area-wide terrain, vegetation, cities, companies | not yet |
+| All of Germany | not tested (run time, memory, editor limits unknown) |
 
-### Bekannte Probleme (aus dem Spieltest)
+### Known issues (from in-game tests)
 
-- **Höhen:** Mit `--dem` (z. B. Copernicus GLO-30) folgen die Straßen dem Gelände.
-  Weil Copernicus ein Oberflächenmodell ist (Bäume, Gebäude), wird zuerst ein bodennahes
-  Perzentil entlang der Straße genommen, dann geglättet; an Knoten treffen sich alle
-  Straßen auf derselben Höhe, und die Steigung wird netzweit auf `terrain_max_grade`
-  (6 %) begrenzt. Anschlussstellen-Prefabs werden entsprechend geneigt, Kreuzungs-Prefabs
-  bleiben waagerecht. Gelände gibt es weiterhin nur als Streifen neben der Straße
-  (60–80 m) – dahinter ist nichts. Wo Rampen, Anschlussstraßen und Kreuzungen
-  unterschiedlich hoch liegen, entstehen Stufen und Durchdringungen.
-- **Kreuzungen ohne Prefab** (im Testgebiet 32 von 46): Straßenstück zwischen zwei
-  nahen Kreuzungen zu kurz, Einbahn-Rampe beginnt am Seitenarm (TruckLib kann an
-  Prefab-Knoten 0 nur ein Straßenende anschließen), oder Winkel > 40° von T/X (Y-Formen).
-  Dort liegen die Straßen weiter übereinander.
-- Knotenhäufungen an Autobahndreiecken werden noch nicht als Ganzes behandelt.
-- Die Kreuzungs-Prefabs sind „narrow"-Vorlagen; Breitensprünge zur Straße sind möglich.
-- TruckLib berechnet keine Bounding-Boxes: im Editor immer „Map → Recompute map".
+- **Heights:** With `--dem` (e.g. Copernicus GLO-30) roads follow the terrain. Because
+  Copernicus is a surface model (trees, buildings), a ground-biased percentile along the
+  road is taken first and then smoothed; all roads meeting at a node share the same
+  height, and the grade is limited network-wide to `terrain_max_grade` (6 %).
+  Interchange prefabs are pitched accordingly, junction prefabs stay level. Terrain still
+  exists only as strips beside the road (60–80 m) – beyond that there is nothing. Where
+  ramps, connecting roads and junctions lie at different heights, steps and overlaps occur.
+- **Junctions without a prefab** (32 of 46 in the test area): road piece between two
+  nearby junctions too short, a one-way ramp starts at the side arm (TruckLib can only
+  attach a road *end* to prefab node 0), or an angle more than 40° off T/X (Y shapes).
+  There the roads still overlap.
+- Node clusters at motorway triangles are not yet handled as a whole.
+- The junction prefabs are "narrow" templates; width jumps to the road are possible.
+- TruckLib does not compute bounding boxes: always run "Map → Recompute map" in the editor.
 
-## Voraussetzungen
+## Requirements
 
 - Python ≥ 3.10
-- .NET 10 SDK (TruckLib 0.5.1 zielt auf .NET 10). Auf Ubuntu 24.04-basierten Systemen
-  liegt `dotnet-sdk-10.0` in den Paketquellen (`sudo apt install dotnet-sdk-10.0`).
-- ETS2 **1.59–1.61**: TruckLib 0.5.1 schreibt nur Kartenformat 907. Nach einem
-  Spielupdate mit neuem Kartenformat braucht es eine neue TruckLib-Version.
-- Optional: `osmium-tool` zum Zuschneiden großer OSM-Dateien, `rasterio` für Geländemodelle.
+- .NET 10 SDK (TruckLib 0.5.1 targets .NET 10). On Ubuntu 24.04-based systems
+  `dotnet-sdk-10.0` is in the package sources (`sudo apt install dotnet-sdk-10.0`).
+- ETS2 **1.59–1.61**: TruckLib 0.5.1 writes map format 907 only. After a game update
+  with a new map format, a new TruckLib version is required.
+- Optional: `osmium-tool` to cut large OSM files, `rasterio` for terrain models.
 
 ## Installation
 
 ```sh
 python3 -m venv .venv && . .venv/bin/activate
-pip install .              # oder: pip install '.[dem,test]'
+pip install .              # or: pip install '.[dem,test]'
 dotnet build writer/Osm2Ets.Writer -c Release
 ```
 
-## Ablauf
+## Workflow
 
-### 1. OSM-Daten holen und zuschneiden
+### 1. Get and cut OSM data
 
-Länder- und Bundeslanddateien gibt es z. B. bei Geofabrik (download.geofabrik.de).
-Für den Anfang einen kleinen Ausschnitt nehmen:
+Country and state extracts are available e.g. from Geofabrik (download.geofabrik.de).
+Start with a small extract:
 
 ```sh
 osmium extract -b 11.48,50.02,11.62,50.06 bayern-latest.osm.pbf -o test.osm.pbf
 ```
 
-### 2. Zwischenformat erzeugen
+### 2. Build the intermediate format
 
 ```sh
 osm2ets build -i test.osm.pbf -o build/test --lod L1 \
-    [--bbox minLon,minLat,maxLon,maxLat] [--dem gelaende.tif] [--scale 1]
+    [--bbox minLon,minLat,maxLon,maxLat] [--dem terrain.tif] [--scale 1] [--origin lon,lat]
 ```
 
-Ergebnis: `roads.ets.json`, `roads.geojson` und `roads.report.txt`. Die GeoJSON-Datei
-zeigt genau die Geometrie, die ins Spiel geht, aufgeteilt in Abschnitte gleicher
-Attribute – in QGIS nach `role` einfärben (`core` = Kernnetz, `link` = Rampe,
-`connector` = Anschlussstraße) oder nach `bridge`/`tunnel`. Der Bericht nennt u. a.
-die größte Lageabweichung von OSM und alle höhenfreien Kreuzungen mit zu wenig Abstand.
+Output: `roads.ets.json`, `roads.geojson` and `roads.report.txt`. The GeoJSON file shows
+exactly the geometry that goes into the game, split into runs of equal attributes –
+colour it in QGIS by `role` (`core` = core network, `link` = ramp, `connector` =
+connecting road) or by `bridge`/`tunnel`. Among other things the report lists the
+largest positional deviation from OSM and all grade-separated crossings with too little
+clearance.
 
-### 3. Straßentypen festlegen
+Terrain model: e.g. the free Copernicus DEM GLO-30 tiles (1° × 1°, GeoTIFF). Attribution
+is required for distributed maps (see the Copernicus licence).
+
+### 3. Choose road types
 
 ```sh
-writer/Osm2Ets.Writer/bin/Release/net10.0/osm2ets-writer looks --game "<ETS2-Spielordner>" --filter ger
+writer/Osm2Ets.Writer/bin/Release/net10.0/osm2ets-writer looks --game "<ETS2 game folder>" --filter ger
 ```
 
-listet die Straßentypen (`road_look`) aus den `.scs`-Archiven des Spiels. Die passenden
-Namen in `writer/Osm2Ets.Writer/mapping.jsonc` eintragen. Einbahn-Straßen (z. B. jede
-Autobahn-Richtungsfahrbahn) werden in Fahrtrichtung geschrieben, also vom roten zum
-grünen Knoten. Ob eine gewählte Vorlage diese Richtung erwartet, im Editor prüfen.
+lists the road types (`road_look`) from the game's `.scs` archives. Enter the matching
+names in `writer/Osm2Ets.Writer/mapping.jsonc`. One-way roads (e.g. every motorway
+carriageway) are written in driving direction, i.e. from the red to the green node.
 
-### 4. Karte schreiben
+### 4. Write the map
 
 ```sh
 osm2ets-writer write --input build/test/roads.ets.json \
-    --out "<ETS2-Benutzerordner>/mod/user_map/map" --name osm_test --verify
+    --out "<ETS2 user folder>/mod/user_map/map" --name osm_test --verify \
+    [--game "<ETS2 game folder>" | --prefab-dir <folder with extracted .ppd files>]
 ```
 
-Benutzerordner laut TruckLib-Doku unter Windows `Dokumente\Euro Truck Simulator 2`;
-unter Proton (Linux) im Wine-Präfix:
-`steamapps/compatdata/227300/pfx/drive_c/users/steamuser/Documents/Euro Truck Simulator 2`. Der Writer legt je Sektor eine leere `.layer`-Datei an – das SCS-Wiki
-nennt fünf Pflichtdateien je Sektor, TruckLib schreibt `.layer` nur bei Bedarf.
+User folder per the TruckLib docs on Windows `Documents\Euro Truck Simulator 2`. Under
+Proton (Linux) it is inside the Wine prefix:
+`steamapps/compatdata/227300/pfx/drive_c/users/steamuser/Documents/Euro Truck Simulator 2`.
+The writer creates an empty `.layer` file per sector – the SCS wiki lists five required
+files per sector, TruckLib writes `.layer` only when needed.
 
-Rückgabewerte: 0 = alles geschrieben, 1 = geschrieben, aber Straßen übersprungen
-(Warnungen), 3 = Prüfung mit `--verify` fehlgeschlagen, 4 = nichts geschrieben.
+Exit codes: 0 = everything written, 1 = written but roads skipped (warnings),
+2 = usage/input error, 3 = `--verify` failed, 4 = nothing written.
 
-Schritte 2 und 4 in einem: `scripts/build_map.sh test.osm.pbf osm_test --lod L1`.
+Steps 2 and 4 in one go: `scripts/build_map.sh test.osm.pbf osm_test --lod L1`.
 
-### 5. Im Editor öffnen und testen
+`osm2ets-writer info --map <map.mbd>` shows item counts and the steepest road pieces.
 
-Laut SCS-Modding-Wiki: Spiel mit dem Startparameter `-edit osm_test` starten (optional
-`-noworkshop`), dann **Map → Recompute map** (TruckLib berechnet keine Bounding-Boxes),
-speichern, mit **Run Map** losfahren. Alternativ im normalen Spiel über die Konsole
-`preview osm_test`.
+### 5. Open and test in the editor
 
-Startpunkt für Run Map: Mitte der längsten Autobahnfahrbahn, nicht auf einer Brücke.
+Per the SCS modding wiki: start the game with the launch option `-edit osm_test`
+(optionally `-noworkshop`), then **Map → Recompute map** (TruckLib does not compute
+bounding boxes), save, and drive with **Run Map**. Alternatively use the console command
+`preview osm_test` in the normal game.
 
-## Detailstufen (Profil `de`)
+Start point for Run Map: middle of the longest motorway carriageway, not on a bridge.
 
-| Stufe | Kernnetz | Anschlussstraßen (bis zur nächsten Kreuzung) |
+## Detail levels (profile `de`)
+
+| Level | Core network | Connecting roads (up to the next junction) |
 |---|---|---|
-| L1 | motorway, trunk, Bundesstraßen (B-Nummer im `ref`), Rampen | primary … living_street |
-| L2 | + alle primary, secondary, tertiary (Landes-/Staats-, Kreisstraßen) | unclassified, residential, living_street |
+| L1 | motorway, trunk, federal roads (B number in `ref`), ramps | primary … living_street |
+| L2 | + all primary, secondary, tertiary (state and district roads) | unclassified, residential, living_street |
 | L3 | + unclassified, residential, living_street | service |
-| L4 | + service (z. B. Rastanlagen) | – |
+| L4 | + service (e.g. rest areas) | – |
 
-„Kreuzung" heißt: ein Knoten, an dem sich mindestens drei Straßenstücke der Klassen
-dieser Stufe treffen (Kern, Rampen, Anschlussklassen). Alles andere zählt nicht – also
-weder Feld-, Fuß- und Radwege noch `access=private`/`no`, in L1/L2 auch keine
-`service`-Wege, in L3/L4 keine Parkplatzgassen und Grundstückszufahrten.
-Die Tiefe (`connectors.depth`) ist im Profil einstellbar.
+"Junction" means a node where at least three road pieces of this level's classes meet
+(core, ramps, connecting classes). Nothing else counts – no field, foot or cycle paths, no
+`access=private`/`no`, no `service` ways in L1/L2, and no parking aisles or driveways in
+L3/L4. The depth (`connectors.depth`) is configurable in the profile.
 
-Bundesstraßen werden an der B-Nummer erkannt, weil `primary` in OSM nur meistens
-Bundesstraße bedeutet.
+Federal roads are recognised by their B number, because `primary` in OSM only usually
+means Bundesstraße.
 
-## Maßstab und Koordinaten
+## Scale and coordinates
 
-- Projektion `EPSG:25832` (ETRS89/UTM 32N), fester Ursprung = Mittelpunkt Deutschlands.
-  Getrennt erzeugte Teilgebiete passen dadurch später aneinander.
-- Spielachsen: x = Osten, z = Süden (Norden = −z), y = Höhe; Sektoren 4 × 4 km.
-- Der Bericht nennt den größten Koordinatenbetrag und die Float32-Auflösung dort
-  (Testgebiet bei Bayreuth: ~130 km vom Ursprung → ~8 mm). Ob die Engine bei mehreren
-  hundert Kilometern sauber bleibt, ist ungeklärt – das ist ein Punkt für den Spieltest.
-- `--scale N` skaliert die Lage, Höhen standardmäßig gleich (Steigungen bleiben).
-  Brückenhöhen und Rampen gelten in Spielmetern, weil Fahrzeuge immer 1:1 sind.
-  **Bei 1:19 passen Anschlussstellen geometrisch nicht mehr** (Rampen zu kurz); der
-  Bericht meldet das als Kreuzungen mit zu wenig Höhenabstand. Außerdem fallen Stücke
-  unter 1,25 Spielmetern weg (bei 1:19 alles unter ~24 m in echt). Für skalierte Karten
-  bräuchte es eine Generalisierung, die es noch nicht gibt.
+- Projection `EPSG:25832` (ETRS89/UTM 32N), fixed origin = centre of Germany (override
+  with `--origin`). Separately generated areas therefore fit together later.
+- Game axes: x = east, z = south (north = −z), y = height; sectors 4 × 4 km.
+- The report states the largest coordinate magnitude and the float32 resolution there
+  (test area near Bayreuth: ~130 km from the origin → ~8 mm). Whether the engine stays
+  clean at several hundred kilometres is unknown.
+- `--scale N` scales positions; heights by default the same (grades are preserved).
+  Bridge heights and ramps are in game metres, because vehicles are always 1:1.
+  **At 1:19 interchanges no longer fit geometrically** (ramps too short); the report
+  flags this as crossings with too little clearance. Pieces below 1.25 game metres are
+  also dropped (at 1:19 everything below ~24 m in reality). Scaled maps would need a
+  generalisation step that does not exist yet.
 
-## Höhen, Brücken, Tunnel (Heuristik)
+## Heights, bridges, tunnels (heuristic)
 
-Gerechnet wird auf einem gemeinsamen Graphen aller Straßen; an einem OSM-Knoten haben
-alle Straßen dieselbe Höhe.
+Computed on a shared graph of all roads; at an OSM node all roads have the same height.
 
-1. Gelände entlang der Straße aus dem Geländemodell (`--dem`, GeoTIFF/VRT): bodennahes
-   Perzentil (25 %, Fenster 60 m), dann geglättet (Fenster 120 m); Steigung netzweit
-   höchstens `terrain_max_grade` (6 %). Ohne Modell liegt alles auf Höhe 0.
-2. Brücken ab `min_bridge_length_m` (8 m, kürzere sind meist Durchlässe) werden um
-   `bridge_clearance_m × layer` angehoben (Standard 6,5 m). Die Anhebung fällt entlang
-   des Netzes mit höchstens `max_ramp_grade` (5 %) ab – so entstehen Rampen, auch über
-   Kreuzungen hinweg. Das gilt auch für Brücken über Flüsse oder Bahnstrecken, die in der
-   Karte (noch) nicht vorkommen.
-3. Jedes zusammenhängende Bauwerk wird als Ganzes zwischen seinen Widerlagern bzw.
-   Portalen interpoliert – auch wenn darin eine Rampe einmündet. Brückendecks hängen
-   dadurch nicht ins Tal, Tunnel steigen nicht über den Berg. Im Datenausschnitt
-   abgeschnittene Bauwerksenden übernehmen die Höhe ihres Nachbarn.
-4. Kreuzen sich zwei Straßen ohne gemeinsamen Knoten mit weniger als 6,5 m Abstand:
-   Liegt unten ein Tunnel, wird er abgesenkt; sonst wird die obere angehoben (Rangfolge:
-   höhere `layer`, dann Brücke, dann aktuelle Höhe, dann Rampe), höchstens
-   `max_bridge_levels` Ebenen.
+1. Terrain along the road from the terrain model (`--dem`, GeoTIFF/VRT): ground-biased
+   percentile (25 %, 60 m window), then smoothed (120 m window); grade limited
+   network-wide to `terrain_max_grade` (6 %). Without a model everything is at height 0.
+2. Bridges of at least `min_bridge_length_m` (8 m; shorter ones are mostly culverts) are
+   raised by `bridge_clearance_m × layer` (default 6.5 m). The lift falls off along the
+   network at no more than `max_ramp_grade` (5 %) – creating ramps, also across
+   junctions. This also applies to bridges over rivers or railways that are not (yet)
+   part of the map.
+3. Each connected structure is interpolated as a whole between its abutments or portals –
+   even if a ramp joins inside it. Bridge decks therefore do not sag into the valley,
+   tunnels do not climb over the hill. Structure ends cut off by the extract take the
+   height of their neighbour.
+4. If two roads cross without a shared node with less than 6.5 m clearance: a tunnel
+   below is lowered; otherwise the upper road is raised (priority: higher `layer`, then
+   bridge, then current height, then ramp), at most `max_bridge_levels` levels.
 
-Das ist eine Näherung aus OSM-Tags, keine Vermessung. Im Testgebiet (Dreieck
-Bayreuth/Kulmbach) haben danach alle 10 höhenfreien Kreuzungen ≥ 6,4 m Abstand;
-eine Überführung wurde dafür auf 10,6 m angehoben. Die Vereinfachung kann Steigungen
-stellenweise leicht erhöhen (Testgebiet: 5,2 % statt 5 %). Straßen, die nur durch
-Schritt 4 angehoben wurden, sind im Zwischenformat nicht als Brücke markiert (die
-Zuordnung lässt dort also Gelände stehen).
+This is an approximation from OSM tags, not a survey. In the test area all 10
+grade-separated crossings keep at least 4.5 m clearance.
 
-Stücke zwischen zwei Kreuzungen, die kürzer als die Wunschlänge von 5 m sind, werden als
-ein einzelnes Straßenstück geschrieben, solange sie das Spielminimum von 1,25 m erreichen;
-noch kürzere stehen im Bericht unter `qa.dropped_short_pieces`.
+## Intermediate format (`osm2ets/intermediate`, version 1)
 
-## Zwischenformat (`osm2ets/intermediate`, Version 1)
-
-- `roads[]`: `points` (Spielkoordinaten), `runs` (Attributabschnitte: `highway`, `role`,
+- `roads[]`: `points` (game coordinates), `runs` (attribute runs: `highway`, `role`,
   `oneway`, `lanes`, `bridge`, `tunnel`, `layer`, `ref`, `maxspeed`, `osm_ways`),
-  `start`/`end` (OSM-Knoten oder `cut` am Rand).
-- `junctions[]`: Knoten mit allen angrenzenden Straßenenden und deren Richtung –
-  Grundlage für die geplanten Kreuzungs-Prefabs.
-- `qa.low_clearance_crossings`: höhenfreie Kreuzungen mit < 4,5 m Abstand.
+  `start`/`end` (OSM node or `cut` at the boundary).
+- `junctions[]`: nodes with all adjoining road ends and their directions.
+- `qa.low_clearance_crossings`: grade-separated crossings with < 4.5 m clearance.
 
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 41 Tests, synthetische Netze
+python3 -m pytest                                   # 41 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 10 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 10 writer tests: mapping, validation, save/load, connections
 ```
 
-Als echter Ausschnitt dient die OSM-Testdatei `core/files/north-bayreuth.osm.gz`
-aus dem GraphHopper-Repository (A 9, A 70, B 85).
+The real extract is the OSM test file `core/files/north-bayreuth.osm.gz` from the
+GraphHopper repository (A 9, A 70, B 85).
 
-Hinweis zu TruckLib 0.5.1: Beim Anhängen wird kein Sektor für den Mittelpunkt des neuen
-Stücks angelegt, und `Map.Save` schreibt nur angelegte Sektoren. Ein Stück, dessen
-Mittelpunkt in einem Sektor ohne Knoten liegt, ginge sonst beim Speichern still verloren.
-Der Writer legt diese Sektoren selbst an; ein Regressionstest deckt das ab.
+Note on TruckLib 0.5.1: when appending, no sector is registered for the midpoint of the
+new piece, and `Map.Save` only writes registered sectors. A piece whose midpoint lies in
+a sector without nodes would otherwise be silently lost on save. The writer registers
+these sectors itself; a regression test covers this.
 
-## Prefabs (Anschlussstellen und Kreuzungen)
+## Prefabs (interchanges and junctions)
 
-Mit `--game <ETS2-Spielordner>` (oder entpackten `.ppd`-Dateien in `--prefab-dir`) setzt
-der Writer SCS-Prefabs ein. Die Spieldateien werden nur gelesen, nicht mitgeliefert.
-Einzelne Dateien lassen sich mit `osm2ets-writer extract --game … --paths liste.txt --out …`
-aus den `.scs`-Archiven kopieren.
+With `--game <ETS2 game folder>` (or extracted `.ppd` files in `--prefab-dir`) the writer
+places SCS prefabs. Game files are only read, never bundled. Single files can be copied
+from the `.scs` archives with `osm2ets-writer extract --game … --paths list.txt --out …`.
 
-- Ausfahrt: Aufweitung 2→3 (`ger_hw2-hw2_exit_mirrored_tmpl_v02`) + Teilung 3→2+1
-  (`ger_hw2_exit_joint_mirrored_tmpl_v02`); Einfahrt spiegelbildlich.
-- Kreuzungen: `ger_r1_x_r1_t_narrow_tmpl` (T), `ger_r1_x_r1_narrow_tmpl` (X), für
-  vierspurige Straßen (ger29) die `ger_r2_no_offset_x_r1_narrow*`-Varianten.
-- Knotenrollen und Richtungen stammen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.
-  Der Writer dreht jedes Prefab so, dass seine Arme möglichst auf den OSM-Straßen liegen,
-  kürzt die Straßen und führt sie gerade in die Prefab-Knoten ein.
+- Exit: widening 2→3 (`ger_hw2-hw2_exit_mirrored_tmpl_v02`) + split 3→2+1
+  (`ger_hw2_exit_joint_mirrored_tmpl_v02`); entry mirrored.
+- Junctions: `ger_r1_x_r1_t_narrow_tmpl` (T), `ger_r1_x_r1_narrow_tmpl` (X); for
+  four-lane roads (ger29) the `ger_r2_no_offset_x_r1_narrow*` variants.
+- Node roles and directions come from the `.ppd` files, variants/looks from the `.pmd`.
+  The writer rotates each prefab so its arms lie as close as possible to the OSM roads,
+  trims the roads and leads them straight into the prefab nodes.
 
-## Nächste Ausbaustufen
+## Roadmap
 
-1. Flächiges Gelände zwischen den Straßen (Terrain-Items aus dem Geländemodell),
-   geneigte Kreuzungs-Prefabs.
-2. Restliche Kreuzungen: kurze Stücke zusammenfassen, Y-Prefabs, alternative T-Prefabs
-   für Einbahn-Seitenarme, Kreisverkehre.
-3. 3-spurige Anschlussstellen, Rampen links, Spurwechsel ohne Rampe, Autobahnkreuze.
-4. Brückenmodelle, Gelände/Vegetation aus OSM-Landnutzung.
-5. Größere Gebiete: Laufzeit und Speicher für ein Bundesland bzw. ganz Deutschland messen.
+1. Area-wide terrain between roads (terrain items from the terrain model), pitched
+   junction prefabs.
+2. Remaining junctions: merge short pieces, Y prefabs, alternative T prefabs for one-way
+   side arms, roundabouts.
+3. 3-lane interchanges, left-hand ramps, lane changes without ramps, motorway interchanges.
+4. Bridge models, terrain/vegetation from OSM land use.
+5. Larger areas: measure run time and memory for a federal state or all of Germany.
 
-## Lizenzen
+## Licences
 
-- Python-Teil (`osm2ets/`, `tests/`, `scripts/`): GPL-3.0-or-later (`LICENSE`).
-- Writer (`writer/`): GPL-2.0-or-later (`writer/LICENSE`), weil TruckLib unter
-  „GPL v2" steht, ohne „or later". GPL-3.0-Code dürfte nicht mit GPL-2.0-only-Code
-  zusammen verbreitet werden. Das ist eine Einschätzung, keine Rechtsberatung.
-- Kartendaten: © OpenStreetMap contributors, ODbL 1.0 (openstreetmap.org/copyright).
-  Eine daraus erzeugte Karte braucht diese Namensnennung. Ob eine verteilte ETS2-Karte
-  als „Produced Work" oder als abgeleitete Datenbank (dann Share-Alike) gilt, ist hier
-  nicht verbindlich geklärt.
+- Python part (`osm2ets/`, `tests/`, `scripts/`): GPL-3.0-or-later (`LICENSE`).
+- Writer (`writer/`): GPL-2.0-or-later (`writer/LICENSE`), because TruckLib is licensed
+  "GPL v2" without "or later". GPL-3.0 code may not be distributed combined with
+  GPL-2.0-only code. This is an assessment, not legal advice.
+- Map data: © OpenStreetMap contributors, ODbL 1.0 (openstreetmap.org/copyright). A map
+  generated from it needs this attribution. Whether a distributed ETS2 map counts as a
+  "Produced Work" or a derivative database (then share-alike) is not settled here.
