@@ -15,8 +15,8 @@ namespace Osm2Ets.Writer;
 /// </summary>
 public static class TerrainFill
 {
-    public const float RowSpacing = 20f;   // Abstand der Reihen (m)
-    public const float Overlap = 4f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
+    public const float RowSpacing = 40f;   // Abstand der Reihen (m)
+    public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
     public const float Sample = 10f;       // Abtastung entlang der Reihe (m)
     public const float MaxPiece = 200f;    // längstes Terrain-Stück (m)
     private const float MaskCell = 4f;
@@ -157,10 +157,40 @@ public static class TerrainFill
             // gröberes Raster (16 m statt 4 m): flaches Feld braucht keine feinen Quads
             t.StepSize = StepSize.Meters16;
             t.Recalculate();
+            ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1);
+            ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1);
             map.AddSector(Map.GetSectorOfCoordinate((pa + pb) / 2));
             area += (pb.X - pa.X) * (l + r);
             n++;
         }
         return n;
+    }
+
+    /// <summary>
+    /// Höhenpunkte eines Streifens auf das Geländeraster legen. Im Spieltest (osm_ttest)
+    /// ermittelt: Spalte X läuft vom Anfangs- zum Endknoten, Zeile Y von der Mittellinie
+    /// (0) zum Außenrand (Rows−1); Offset.Y hebt den Punkt an. Gleichmäßige Abstände sind
+    /// angenommen, nicht gemessen.
+    /// </summary>
+    private static void ShapeSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign)
+    {
+        var q = side.QuadData;
+        q.Offsets.Clear();
+        int rows = q.Rows, cols = q.Cols;
+        if (rows < 2 || cols < 2 || size <= 0) return;
+        for (int i = 0; i < cols; i++)
+        {
+            float u = i / (float)(cols - 1);
+            var c = Vector3.Lerp(pa, pb, u);
+            for (int j = 1; j < rows; j++)
+            {
+                float z = c.Z + zSign * size * j / (rows - 1);
+                float h = grid.HeightAt(c.X, z);
+                if (float.IsNaN(h)) continue;
+                float dy = h - c.Y;
+                if (MathF.Abs(dy) < 0.05f) continue;
+                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(0, dy, 0) });
+            }
+        }
     }
 }

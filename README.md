@@ -39,7 +39,7 @@ near Bayreuth (A 9, A 70, B 85); larger areas have not been tested.
 
 With `--dem` the intermediate file also carries a `terrain_grid` (20 m, ground-filtered,
 blended into road heights within 12–80 m of a road). The writer fills the space between
-roads with ETS2 terrain items in west–east rows every 20 m (overlapping by 4 m). Each strip is flat across its
+roads with ETS2 terrain items in west–east rows every 40 m; vertex offsets bend each strip across its
 width, so on slopes small steps between rows are possible (≈0.4 m at 4 %).
 
 ### Known issues (from in-game tests)
