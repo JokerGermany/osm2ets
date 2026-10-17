@@ -17,7 +17,7 @@ public static class TerrainFill
 {
     public const float RowSpacing = 40f;   // Abstand der Reihen (m)
     public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
-    public const float Sample = 10f;       // Abtastung entlang der Reihe (m)
+    public const float Sample = 5f;        // Abtastung entlang der Reihe (m)
     public const float MaxPiece = 200f;    // längstes Terrain-Stück (m)
     private const float MaskCell = 4f;
 
@@ -57,7 +57,8 @@ public static class TerrainFill
                 dir /= len;
                 var right = new Vector2(-dir.Y, dir.X);
                 float hw = st[k].Width / 2;
-                float wl = hw + st[k].TerrainLeft + 1, wr = hw + st[k].TerrainRight + 1;
+                // Füllgelände darf 3 m über den Geländestreifen der Straße reichen (keine Lücke)
+                float wl = hw + MathF.Max(1, st[k].TerrainLeft - 3), wr = hw + MathF.Max(1, st[k].TerrainRight - 3);
                 for (float s = 0; s <= len; s += MaskCell / 2)
                 {
                     var c = a + dir * s;
