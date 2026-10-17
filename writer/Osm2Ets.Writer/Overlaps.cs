@@ -256,6 +256,14 @@ public static class Overlaps
     {
         var road = s.Road is not null ? s : o;
         var pf = s.Road is null ? s : o;
+        // angeschlossene Straße: ihre ersten/letzten beiden Stücke (Knoten + gerader
+        // Einlauf) liegen zwangsläufig im groben Prefab-Umriss
+        var r = road.Road!;
+        int n = r.Points.Count - 1;
+        var first = new Vector2((float)r.Points[0][0], (float)r.Points[0][2]);
+        var last = new Vector2((float)r.Points[^1][0], (float)r.Points[^1][2]);
+        if (road.Index <= 1 && Vector2.Distance(P2(pf.A), first) < 1f) return true;
+        if (road.Index >= n - 2 && Vector2.Distance(P2(pf.A), last) < 1f) return true;
         if (!IsEndSeg(road)) return false;
         return Vector2.Distance(P2(pf.A), P2(road.A)) < 1f || Vector2.Distance(P2(pf.A), P2(road.B)) < 1f;
     }

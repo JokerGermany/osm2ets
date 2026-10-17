@@ -175,6 +175,81 @@ def clamp_grade(z: np.ndarray, ea, eb, elen, grade: float, iterations: int = 200
     return iterations
 
 
+def _road_width(piece: Piece, seg: int) -> float:
+    """Geschätzte Fahrbahnbreite (Spielmeter) – passend zu mapping.jsonc des Writers."""
+    edge = piece.chain.parts[piece.dense.seg_part[seg]].edge
+    hw = edge.highway
+    tags = edge.way.tags
+    oneway = tags.get("oneway") in ("yes", "1", "true") or hw in ("motorway", "motorway_link")
+    if hw in ("motorway", "trunk") and oneway:
+        try:
+            return 14.5 if int(str(tags.get("lanes", "2")).split(";")[0]) >= 3 else 11.0
+        except ValueError:
+            return 11.0
+    if hw.endswith("_link") or oneway:
+        return 6.5
+    return 8.0
+
+
+def overlap_ties(pieces, offsets, canon, movable: np.ndarray, margin: float = 1.0):
+    """Paare von Punkten verschiedener Straßen, deren Fahrbahnen sich überdecken.
+    Ergebnis: (a, b, Gewicht) mit kleinem Gewicht – die Steigungsgrenze hält sie
+    dann praktisch auf gleicher Höhe."""
+    from scipy.spatial import cKDTree
+
+    pos, width, owner, vid = [], [], [], []
+    for pi, (p, off) in enumerate(zip(pieces, offsets)):
+        d = p.dense
+        n = len(d.xy)
+        for j in range(n):
+            c = int(canon[off + j])
+            if not movable[c]:
+                continue
+            w = max(_road_width(p, min(j, n - 2)), _road_width(p, max(j - 1, 0)))
+            pos.append(d.xy_game[j]); width.append(w); owner.append(pi); vid.append(c)
+    if not pos:
+        return []
+    pos = np.asarray(pos); width = np.asarray(width)
+    tree = cKDTree(pos)
+    ties = {}
+    for i, j in tree.query_pairs(r=float(width.max()) + margin):
+        if owner[i] == owner[j] or vid[i] == vid[j]:
+            continue
+        dist = float(np.linalg.norm(pos[i] - pos[j]))
+        need = (width[i] + width[j]) / 2 + margin
+        if dist >= need:
+            continue
+        key = (min(vid[i], vid[j]), max(vid[i], vid[j]))
+        ties[key] = min(ties.get(key, 1e9), 0.5)
+    return [(a, b, w) for (a, b), w in ties.items()]
+
+
+def junction_plateaus(pieces, offsets, canon, adj, degree, movable, radius: float = 25.0):
+    """Ebenerdige Kreuzungen normaler Straßen bekommen eine waagerechte Fläche
+    (Radius ≈ Kreuzungs-Prefab), weil die Prefabs waagerecht eingesetzt werden."""
+    motorway = set()
+    for p, off in zip(pieces, offsets):
+        for j, part_idx in enumerate(p.dense.seg_part):
+            edge = p.chain.parts[part_idx].edge
+            if edge.highway in ("motorway", "trunk") or edge.highway.endswith("motorway_link"):
+                motorway.add(int(canon[off + j])); motorway.add(int(canon[off + j + 1]))
+    ties = []
+    for v, deg in degree.items():
+        if deg < 3 or v in motorway or not movable[v]:
+            continue
+        dist = {v: 0.0}
+        stack = [v]
+        while stack:
+            a = stack.pop()
+            for b, w in adj.get(a, ()):
+                nd = dist[a] + w
+                if nd <= radius and nd < dist.get(b, 1e9):
+                    dist[b] = nd
+                    stack.append(b)
+        ties += [(v, u, 0.5) for u in dist if u != v and movable[u]]
+    return ties
+
+
 def lipschitz_envelope(z: np.ndarray, adj: dict, grade: float) -> np.ndarray:
     """Mittel aus oberer und unterer Steigungs-Hülle (beide höchstens grade steil,
     also auch ihr Mittel). Dijkstra auf dem Punktgraphen."""
@@ -477,11 +552,26 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             if f[0] or f[1]:
                 fixed[ea[e]] = fixed[eb[e]] = True
         g = max(profile.terrain_max_grade, grade)
-        env = lipschitz_envelope(z, adj, g)
+        # Überlagerungsregel: Fahrbahnen, die sich in der Draufsicht überdecken, müssen
+        # gleich hoch liegen – außer eine davon ist Brücke/Tunnel (oder wurde an einer
+        # höhenfreien Kreuzung angehoben). Dafür kurze Hilfskanten zwischen den Punkten.
+        movable = ~fixed & (lift < 0.1) & (sink < 0.1)
+        ties = overlap_ties(pieces, offsets, canon, movable)
+        ties += junction_plateaus(pieces, offsets, canon, adj, degree, movable)
+        adj2 = {k: list(v) for k, v in adj.items()}
+        for a, b, w in ties:
+            adj2.setdefault(a, []).append((b, w))
+            adj2.setdefault(b, []).append((a, w))
+        before = sum(1 for a, b, _ in ties if abs(z[a] - z[b]) > 0.3)
+        env = lipschitz_envelope(z, adj2, g)
         # Bauwerke nur festhalten, wo die Hülle sie absenken würde (Lichtraum bleibt);
         # anheben darf sie sie, damit kurze Brücken nicht steiler sind als ihre Rampen.
         z = np.where(fixed, np.maximum(z, env), env)
-        clamp_grade(z, ea_l, eb_l, elen_l, g, iterations=500)
+        clamp_grade(z, ea_l + [t[0] for t in ties], eb_l + [t[1] for t in ties],
+                    elen_l + [t[2] for t in ties], g, iterations=500)
+        overlap_stats = (len(ties), before, sum(1 for a, b, _ in ties if abs(z[a] - z[b]) > 0.3))
+    else:
+        overlap_stats = (0, 0, 0)
     for p, off in zip(pieces, offsets):
         p.dense.z = z[canon[off:off + len(p.dense.xy)]]
 
@@ -497,6 +587,9 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         "crossing_raised_points": raised,
         "crossing_sunk_points": sunk,
         "crossing_iterations": iterations,
+        "overlap_ties": overlap_stats[0],
+        "overlap_steps_before": overlap_stats[1],
+        "overlap_steps_after": overlap_stats[2],
         "max_lift_m": float(lift.max()) if total else 0.0,
         "max_sink_m": float(sink.max()) if total else 0.0,
     }

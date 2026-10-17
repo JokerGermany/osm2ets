@@ -95,6 +95,8 @@ def report_text(model: dict) -> str:
         f"max. Anhebung {ele.get('max_lift_m', 0):.1f} m, max. Absenkung {ele.get('max_sink_m', 0):.1f} m, "
         f"max. Steigung {100 * s['max_grade']:.1f} %"
         + (f", DEM-Lücken {ele['dem_missing_samples']}" if ele.get("dem_missing_samples") else ""),
+        f"Überlagerung:  {ele.get('overlap_ties', 0)} Punktpaare überdeckter Fahrbahnen (ohne Bauwerke); "
+        f"Höhenstufe > 0,3 m vorher {ele.get('overlap_steps_before', 0)}, nachher {ele.get('overlap_steps_after', 0)}",
         "",
         "Kartendaten © OpenStreetMap contributors (ODbL).",
     ]
