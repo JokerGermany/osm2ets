@@ -289,6 +289,12 @@ public static class Overlaps
                 // weiter entfernte Straßen begrenzt schon TerrainClearance (Gelände endet dort)
                 float reach = sg.HalfWidth + MathF.Min(MathF.Max(left, right), 40f) + o.HalfWidth;
                 if (d >= reach) continue;
+                // parallele Nachbarfahrbahn (Mittelstreifen): Abstand regelt TerrainClearance
+                if (o.Road is not null)
+                {
+                    var od = P2(o.B) - P2(o.A);
+                    if (od.LengthSquared() > 1e-6f && MathF.Abs(Vector2.Dot(Vector2.Normalize(od), dir)) >= 0.9f && d >= sg.HalfWidth + o.HalfWidth) continue;
+                }
                 float dz = MathF.Abs(HeightAt(sg, pa) - HeightAt(o, pb));
                 if (dz < minDz) continue;   // gleiche Höhe: Gelände darf anschließen
                 var side = pb - pa;
