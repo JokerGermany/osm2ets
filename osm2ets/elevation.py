@@ -179,7 +179,7 @@ def clamp_grade(z: np.ndarray, ea, eb, elen, grade: float, iterations: int = 200
 # Höchste Längsneigung nach RAA (Entwurfsklassen): EKA 1A 4 %, EKA 1B/2 4,5 %, Rampen ~6 %
 GRADE_BY_HIGHWAY = {"motorway": 0.04, "trunk": 0.045}
 # Glättungsfenster der Geländehöhe längs der Straße (m): Autobahnen weiträumiger
-WINDOW_BY_HIGHWAY = {"motorway": 400.0, "trunk": 300.0, "motorway_link": 160.0, "trunk_link": 160.0}
+WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, "trunk_link": 140.0}
 
 
 def _highway(piece: Piece, seg: int) -> str:
@@ -512,8 +512,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
                 ground = ground.copy()
                 ground[inner] = np.interp(d.s[inner], d.s[~inner], ground[~inner])
         sm = smooth_along(d.s, ground, win)
-        if win > profile.smoothing_window_m:
-            sm = smooth_along(d.s, sm, win)   # zweimal = Dreiecksfilter, runder
+
         smoothed.append(sm)
         for idx in (0, len(d.xy) - 1):
             c = int(canon[off + idx])
