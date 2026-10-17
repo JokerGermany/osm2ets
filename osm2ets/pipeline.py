@@ -114,6 +114,10 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                            "Gebiet, Detailstufe und Maßstab prüfen")
 
     roads = [_road_dict(p) for p in kept]
+    terrain_grid = None
+    if dem is not None:
+        from .terrain import build_grid
+        terrain_grid = build_grid(roads, dem, profile)
     junctions = _junctions(kept)
     stats = _stats(kept, roads, junctions, profile, dropped)
     stats["elevation"] = elevation_stats
@@ -145,6 +149,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         "elevation": {"source": f"dem:{Path(dem_path).name}" if dem_path else "none"},
         "roads": roads,
         "junctions": junctions,
+        "terrain_grid": terrain_grid,
         "stats": stats,
         "qa": {"min_clearance_m": MIN_CLEARANCE_M, "low_clearance_crossings": low[:200],
                "dropped_short_pieces": dropped_info[:200]},

@@ -87,16 +87,16 @@ static void MappingResolve()
 {
     var cfg = MappingConfig.Load(ShippedMapping());
     var mw = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true));
-    Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 80, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
+    Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 30, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
     var bridge = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true, bridge: true));
     Check(bridge.TerrainLeft == mw.TerrainLeft, "Brücke vorläufig mit Gelände wie die Straße");
     Check(bridge.RoadType == mw.RoadType, "Brücke behält Straßentyp");
     var link = cfg.Resolve(MakeRun(0, 1, "motorway_link", role: "link", oneway: true));
-    Check(link.TerrainLeft == 60, "Rampe");
+    Check(link.TerrainLeft == 10, "Rampe");
     var conn = cfg.Resolve(MakeRun(0, 1, "residential", role: "connector"));
-    Check(conn.TerrainLeft == 60, "Anschlussstraße");
+    Check(conn.TerrainLeft == 10, "Anschlussstraße");
     var other = cfg.Resolve(MakeRun(0, 1, "tertiary", role: "core"));
-    Check(other.TerrainLeft == 80 && other.Resolution == RoadResolution.HighPoly, "Standard");
+    Check(other.TerrainLeft == 20 && other.Resolution == RoadResolution.HighPoly, "Standard");
     Check(cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true)) == mw, "Wertgleichheit der Stile");
 }
 
@@ -259,8 +259,12 @@ static void ConnectsThroughRoads()
     var roads = map.MapItems.Values.OfType<Road>().ToList();
     // a→b durchgehend; c beginnt eigenständig; b→d verbunden
     var atNode7 = roads.Where(r => r.ForwardNode.Position == Vector3.Zero || r.Node.Position == Vector3.Zero).ToList();
-    var cFirst = roads.Single(r => r.Node.Position == Vector3.Zero && r.ForwardNode.Position.X > 1);
+    // Abzweig c ist bis zum Rand der Autobahn gekürzt (keine Überlagerung ohne Prefab)
+    var cFirst = roads.Where(r => r.Node.Position.X > 0.5f && r.Node.Position.Z > -45 && r.ForwardNode.Position.X > r.Node.Position.X)
+                      .MinBy(r => r.Node.Position.X)!;
     Check(cFirst.BackwardItem is null, "Abzweig bleibt offen");
+    Check(cFirst.Node.Position.X > 5, $"Abzweig gekürzt (Anfang x = {cFirst.Node.Position.X:0.0})");
+    Check(res.BranchesTrimmed == 1 && res.Overlaps!.Count == 0, $"gekürzt {res.BranchesTrimmed}, Überlagerungen {res.Overlaps!.Count}");
     var bFirst = roads.Single(r => r.Node.Position == Vector3.Zero && r.ForwardNode.Position.X == 0);
     Check(bFirst.BackwardItem is Road, "Geradeaus verbunden");
     var dir = MapWriter.Validate(d, out _, out _);

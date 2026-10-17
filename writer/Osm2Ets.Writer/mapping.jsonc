@@ -21,24 +21,22 @@
   // nur für den Geländeabstand zu Nachbarstraßen. boundary=false: keine
   // unsichtbare Randbegrenzung (Rampen ohne Prefab sind sonst nicht befahrbar).
   "default": { "road_type": "ger1", "width": 8, "boundary": false,
-               "terrain_left": 80, "terrain_right": 80, "resolution": "HighPoly" },
+               "terrain_left": 20, "terrain_right": 20, "resolution": "HighPoly" },
   "rules": [
     { "name": "Autobahn 3+ Spuren", "match": { "highway": ["motorway", "trunk"], "oneway": true, "lanes_min": 3 },
-      "road_type": "ger16", "width": 14.5, "terrain_left": 4, "terrain_right": 80 },
+      "road_type": "ger16", "width": 14.5, "terrain_left": 4, "terrain_right": 30 },
     { "name": "Autobahn / Kraftfahrstraße, Richtungsfahrbahn", "match": { "highway": ["motorway", "trunk"], "oneway": true },
-      "road_type": "ger13", "width": 11, "terrain_left": 4, "terrain_right": 80 },
+      "road_type": "ger13", "width": 11, "terrain_left": 4, "terrain_right": 30 },
     { "name": "Autobahnrampe", "match": { "highway": ["motorway_link", "trunk_link"], "oneway": true },
-      "road_type": "ger2", "width": 6.5, "terrain_left": 60, "terrain_right": 60 },
+      "road_type": "ger2", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
     { "name": "sonstige Rampe, einspurig", "match": { "highway": ["primary_link", "secondary_link", "tertiary_link"], "oneway": true },
-      "road_type": "ger5", "width": 6.5, "terrain_left": 60, "terrain_right": 60 },
+      "road_type": "ger5", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
     { "name": "Einbahn zweispurig", "match": { "oneway": true, "lanes_min": 2 }, "road_type": "ger9", "width": 9 },
     { "name": "Einbahn", "match": { "oneway": true }, "road_type": "ger5", "width": 6.5 },
     { "name": "Vierspurig ohne Mitteltrennung", "match": { "oneway": false, "lanes_min": 4 }, "road_type": "ger29", "width": 15 },
     { "name": "Anschlussstraßen", "match": { "role": ["connector"] }, "road_type": "ger1",
-      "terrain_left": 60, "terrain_right": 60 }
+      "terrain_left": 10, "terrain_right": 10 }
   ],
   // Brücken/Tunnel: vorläufig wie normale Straßen mit Gelände (Damm).
-  // Geländebreiten 60–80 m: bis zu einem flächigen Gelände füllt das die Lücken;
-  // TerrainClearance kürzt sie, wo eine Nachbarstraße näher liegt.
   "map": { "normal_scale": null, "city_scale": null }
 }

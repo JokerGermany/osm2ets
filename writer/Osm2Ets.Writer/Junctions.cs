@@ -23,16 +23,55 @@ public static class Junctions
     public static readonly Def TR2 = new(new("2i03c", "/prefab2/cross_temp/ger/ger_r2_no_offset_x_r1_narrow_t_tmpl.ppd", "default", "ger_1"), [1, 2], [0]);
     public static readonly Def XR2 = new(new("ger_2i03f", "/prefab2/cross_temp/ger/ger_r2_no_offset_x_r1_narrow_tmpl.ppd", "default", "ger_1"), [1, 3], [0, 2]);
 
+    // Gabelungen einspuriger Einbahnstraßen (Rampen): Knoten 0 = Stamm, 1/2 = Äste (±30°).
+    // Variante/Look ungeprüft (keine .pmd vorhanden) – "default"/"ger_1" wie bei den Anschlussstellen.
+    public static readonly Def FSPLIT = new(new("ch_4202n", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
+    public static readonly Def FJOIN = new(new("ch_4202o", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_mirrored_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
+
+    // Zweirichtungsstraße teilt sich in zwei Einbahnstraßen (z. B. Rampe, die zur
+    // getrennten Fahrbahn wird): Knoten 0 = beide Richtungen, 1 = Einbahn hinein, 2 = Einbahn heraus (±15°).
+    public static readonly Def SPLIT2 = new(new("ch_42029", "/prefab2/fork_temp/ger/ger_r1_split_short.ppd", "default", "ger_1"), [1, 2], [0]);
+
     /// <summary>Größte erlaubte Abweichung eines Arms von der Prefab-Richtung (Grad).</summary>
     public const float MaxDeviation = 40f;
 
+    /// <summary>
+    /// Arme, die bis zu so viel (Grad) von der Prefab-Richtung abweichen, werden auf einem
+    /// Bogen in die Prefab-Richtung umgelegt (spitzwinklige OSM-Einmündungen, Y-Formen).
+    /// Sonst liegen die Fahrbahnen auf den ersten Metern übereinander.
+    /// </summary>
+    public const float MaxBend = 75f;
+
+    /// <summary>Länge des Bogens je nach Abweichung (m); 0 = gerader Einlauf genügt.</summary>
+    public static float BendLength(float deg) => deg < 20 ? 0 : MathF.Min(25 + 1.2f * deg, 110);
+
     /// <summary>Gerader Einlauf in den Prefab-Knoten (m); kürzer als an Anschlussstellen.</summary>
     public const float Lead = 8f;
+
+    /// <summary>So viel Straße muss hinter dem Prefab-Knoten mindestens übrig bleiben (m).</summary>
+    public const float MinTail = 6f;
 
     public sealed record Arm(RoadEntry Road, Vector2 Away);
 
     /// <summary>Straßen, deren Richtung wegen Knoten 0 eines Prefabs festliegt (nicht mehr umdrehen).</summary>
     public static readonly HashSet<RoadEntry> Fixed = [];
+
+    /// <summary>Straßenende → bereits vorbereitete Kreuzung und Arm (für direkt verbundene Prefabs).</summary>
+    public static readonly Dictionary<RoadEntry, (Plan Plan, int Arm)> PlacedEnds = [];
+
+    /// <summary>Zu kurze Verbindungsstraßen zwischen zwei Kreuzungs-Prefabs; die Prefabs werden direkt verbunden.</summary>
+    public static readonly HashSet<RoadEntry> Dropped = [];
+
+    /// <summary>OSM-Knoten mit noch nicht gesetzter Kreuzung (dürfen kurze Arme „übernehmen“).</summary>
+    public static readonly HashSet<long> PendingNodes = [];
+
+    public static void Reset() { Fixed.Clear(); PlacedEnds.Clear(); Dropped.Clear(); PendingNodes.Clear(); }
+
+    private static bool OtherEndPending(RoadEntry r, Vector3 anchor)
+    {
+        var other = StartsAt(r, anchor) ? r.End : r.Start;
+        return other?.Kind == "node" && other.OsmNode is long id && PendingNodes.Contains(id);
+    }
 
     /// <summary>Liegt der Anfang (statt des Endes) der Straße an <paramref name="pos"/>?</summary>
     public static bool StartsAt(RoadEntry r, Vector3 pos) =>
@@ -45,6 +84,11 @@ public static class Junctions
         public required Def Def;
         public required Arm[] Arms;           // Arms[i] gehört zu Prefab-Knoten NodeOf[i]
         public ushort[] NodeOf = [];
+        public float[] Bend = [];
+        public ushort Origin;
+        public int SnapArm = -1;                // Arm, der direkt an ein anderes Prefab anschließt
+        public (Plan Plan, int Arm) SnapTo;                  // ppd-Knoten, der Ursprung des Prefabs wird              // Bogenlänge je Arm (m)
+        public ushort[]? ForceNodes;           // feste Zuordnung Arm → Knoten (Einbahn-Rollen)
         public Quaternion Rotation;
         public Vector3 Position;               // Lage von Knoten 0 (für Prefab.Add)
         public Vector3[] NodePos = [];
@@ -74,6 +118,42 @@ public static class Junctions
             if (runs.Any(x => x.Highway is "motorway" or "trunk" && x.Oneway)) continue; // Autobahnknoten
             if (list.Any(e => e.R.Closed)) continue;
             int oneway = runs.Count(x => x.Oneway);
+            if (list.Count == 3 && oneway == 2)
+            {
+                int two = runs.FindIndex(x => !x.Oneway);
+                int inc = Enumerable.Range(0, 3).FirstOrDefault(i => i != two && !list[i].AtStart, -1);   // endet hier = fährt hinein
+                int outg = Enumerable.Range(0, 3).FirstOrDefault(i => i != two && list[i].AtStart, -1);
+                bool twoWayNarrow = runs[two].Lanes is null or <= 2;
+                if (inc >= 0 && outg >= 0 && twoWayNarrow
+                    && runs[inc].Lanes is null or 1 && runs[outg].Lanes is null or 1)
+                {
+                    var fa = list.Select(e => new Arm(e.R, Away(e.R, e.AtStart))).ToArray();
+                    if (fa.All(a => a.Away.LengthSquared() > 0.5f))
+                    {
+                        var anc = MapWriter.ToVector(list[0].AtStart ? list[0].R.Points[0] : list[0].R.Points[^1]);
+                        plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = SPLIT2,
+                                             Arms = [fa[inc], fa[outg], fa[two]], ForceNodes = [1, 2, 0] });
+                        continue;
+                    }
+                }
+            }
+            if (list.Count == 3 && oneway == 3 && runs.All(x => x.Lanes is null or 1))
+            {
+                // Gabelung: ein Stamm, zwei Äste
+                int incoming = list.Count(e => !e.AtStart);
+                if (incoming is 1 or 2)
+                {
+                    bool split = incoming == 1;
+                    int stem = list.FindIndex(e => split ? !e.AtStart : e.AtStart);
+                    var fa = list.Select(e => new Arm(e.R, Away(e.R, e.AtStart))).ToArray();
+                    if (fa.Any(a => a.Away.LengthSquared() < 0.5f)) continue;
+                    var ord = Enumerable.Range(0, 3).Where(i => i != stem).Append(stem).ToList();
+                    var anc = MapWriter.ToVector(list[0].AtStart ? list[0].R.Points[0] : list[0].R.Points[^1]);
+                    plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = split ? FSPLIT : FJOIN,
+                                         Arms = ord.Select(i => fa[i]).ToArray() });
+                }
+                continue;
+            }
             if (oneway > list.Count - 2) continue;  // Rampengabelung o. Ä.
 
             var arms = list.Select(e => new Arm(e.R, Away(e.R, e.AtStart))).ToArray();
@@ -88,7 +168,7 @@ public static class Junctions
                     float d = Vector2.Dot(arms[i].Away, arms[j].Away);
                     if (d < bestDot) { bestDot = d; best = (i, j); }
                 }
-            if (best.A < 0 || bestDot > -MathF.Cos(MaxDeviation * MathF.PI / 180))
+            if (best.A < 0 || bestDot > -MathF.Cos(60 * MathF.PI / 180))
             {
                 warnings.Add($"Knoten {node}: Kreuzung ohne gegenüberliegende Arme – kein Prefab");
                 continue;
@@ -147,13 +227,18 @@ public static class Junctions
         var sideArms = p.Arms.Skip(2).ToArray();
         var sidePerms = Permutations(p.Def.Side.Length).ToList();
         float bestErr = float.MaxValue;
-        ushort[]? bestNodes = null; float bestRot = 0; bool blocked0 = false;
+        ushort[]? bestNodes = null; float bestRot = 0;
         foreach (var flip in new[] { false, true })
             foreach (var perm in sidePerms)
             {
                 if (sideArms.Length > p.Def.Side.Length) continue;
                 var nodes = new List<ushort> { p.Def.Through[flip ? 1 : 0], p.Def.Through[flip ? 0 : 1] };
                 nodes.AddRange(perm.Take(sideArms.Length).Select(k => p.Def.Side[k]));
+                if (p.ForceNodes is not null)
+                {
+                    if (flip || perm[0] != 0) continue;
+                    nodes = p.ForceNodes.ToList();
+                }
                 // mittlere Drehung (Kreismittel der Winkeldifferenzen)
                 float sx = 0, sy = 0;
                 for (int i = 0; i < nodes.Count; i++)
@@ -168,18 +253,55 @@ public static class Junctions
                     float e = MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(nodes[i])) - rot));
                     err += e * e; worst = MathF.Max(worst, e);
                 }
-                if (worst * 180 / MathF.PI > MaxDeviation) continue;
-                // TruckLib: an Knoten 0 (Ursprung) muss eine Straße mit ihrem Ende anschließen
-                int at0 = nodes.IndexOf(0);
-                if (at0 >= 0)
-                {
-                    var r0 = p.Arms[at0].Road;
-                    if (StartsAt(r0, p.Anchor) && (Fixed.Contains(r0) || r0.Runs.Any(x => x.Oneway))) { blocked0 = true; continue; }
-                }
+                if (worst * 180 / MathF.PI > MaxBend) continue;
                 if (err < bestErr) { bestErr = err; bestNodes = nodes.ToArray(); bestRot = rot; }
             }
-        if (bestNodes is null) { reason = blocked0 ? "Einbahn-Arm beginnt an Prefab-Knoten 0 (von TruckLib nicht anschließbar)" : "Winkel der Arme passen nicht zum Prefab"; return false; }
+        if (bestNodes is null) { reason = "Winkel der Arme passen nicht zum Prefab"; return false; }
         p.NodeOf = bestNodes;
+        // TruckLib: am Ursprungsknoten muss eine Straße mit ihrem ENDE anschließen. Ursprung
+        // daher auf einen Arm legen, der am Prefab endet (oder sich umdrehen lässt).
+        int originArm = Enumerable.Range(0, p.Arms.Length).FirstOrDefault(i => !StartsAt(p.Arms[i].Road, p.Anchor), -1);
+        if (originArm < 0)
+            originArm = Enumerable.Range(0, p.Arms.Length).FirstOrDefault(i =>
+                !Fixed.Contains(p.Arms[i].Road) && p.Arms[i].Road.Runs.All(x => !x.Oneway), -1);
+        if (originArm < 0) { reason = "alle Arme beginnen am Prefab und lassen sich nicht umdrehen"; return false; }
+        p.Origin = p.NodeOf[originArm];
+        p.Bend = new float[p.Arms.Length];
+        for (int i = 0; i < p.Arms.Length; i++)
+        {
+            float e = MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI;
+            p.Bend[i] = BendLength(e);
+        }
+
+        // Kurze Verbindung zu einer schon gesetzten Kreuzung: Prefabs direkt aneinandersetzen
+        var localPos = Interchanges.CalibrateNodes(ppd, unit, Quaternion.Identity);
+        var localCenter = p.Def == FSPLIT || p.Def == FJOIN || p.Def == SPLIT2
+            ? (localPos[0] + localPos[1] + localPos[2]) / 3
+            : (localPos[p.Def.Through[0]] + localPos[p.Def.Through[1]]) / 2;
+        p.SnapArm = -1;
+        for (int i = 0; i < p.Arms.Length && p.SnapArm < 0; i++)
+        {
+            var road = p.Arms[i].Road;
+            if (!PlacedEnds.TryGetValue(road, out var q) || q.Plan == p || q.Plan.SnapArm >= 0 && q.Plan.SnapTo.Plan == p) continue;
+            var lr = localPos[p.NodeOf[i]] - localCenter; lr.Y = 0;
+            if (Interchanges.ArcLengthOf(road) >= lr.Length() + MinTail) continue;
+            p.SnapArm = i; p.SnapTo = q;
+            var qk = q.Plan.NodeOf[q.Arm];
+            var qIn = q.Plan.Inward[qk];
+            bestRot = Wrap(MathF.Atan2(qIn.Z, qIn.X) - Ang(Out(p.NodeOf[i])));
+            p.Bend[i] = 0;
+        }
+        if (p.SnapArm >= 0 && p.SnapArm == originArm)
+        {
+            int alt = Enumerable.Range(0, p.Arms.Length).FirstOrDefault(i => i != p.SnapArm &&
+                (!StartsAt(p.Arms[i].Road, p.Anchor) || (!Fixed.Contains(p.Arms[i].Road) && p.Arms[i].Road.Runs.All(x => !x.Oneway))), -1);
+            if (alt < 0) { reason = "kein Ursprungsknoten neben der direkten Prefab-Verbindung"; return false; }
+            originArm = alt; p.Origin = p.NodeOf[alt];
+        }
+        if (p.SnapArm >= 0)
+            for (int i = 0; i < p.Arms.Length; i++)   // Bögen zur neuen Drehung neu bestimmen
+                if (i != p.SnapArm)
+                    p.Bend[i] = BendLength(MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI);
 
         // Drehung als Quaternion: lokalen Ausgang von Knoten 0 auf die Zielrichtung drehen
         var v0 = Out(p.NodeOf[0]);
@@ -187,8 +309,14 @@ public static class Junctions
         p.Rotation = Interchanges.YawTo(ppd, unit, new Vector3(v0.X, 0, v0.Y), new Vector3(target.X, 0, target.Y));
         var placed = Interchanges.CalibrateNodes(ppd, unit, p.Rotation);
         // Kreuzungsmitte = Mitte der beiden durchgehenden Knoten
-        var center = (placed[p.Def.Through[0]] + placed[p.Def.Through[1]]) / 2;
-        var shift = p.Anchor - center;
+        var center = p.Def == FSPLIT || p.Def == FJOIN || p.Def == SPLIT2
+            ? (placed[0] + placed[1] + placed[2]) / 3
+            : (placed[p.Def.Through[0]] + placed[p.Def.Through[1]]) / 2;
+        var shift = p.SnapArm >= 0
+            ? p.SnapTo.Plan.NodePos[p.SnapTo.Plan.NodeOf[p.SnapTo.Arm]] - placed[p.NodeOf[p.SnapArm]]
+            : p.Anchor - center;
+        if (p.SnapArm >= 0 && Vector2.Distance(P(V(p.Anchor)), P(V(center + shift))) > 30)
+        { reason = "direkte Prefab-Verbindung läge zu weit vom OSM-Knoten"; return false; }
         p.NodePos = placed.Select(v => v + shift).ToArray();
         p.Position = p.NodePos[0];
         p.Inward = Interchanges.WorldDirectionsOf(ppd, placed);
@@ -206,8 +334,14 @@ public static class Junctions
         for (int i = 0; i < p.Arms.Length; i++)
         {
             float r = Vector2.Distance(P(V(p.NodePos[p.NodeOf[i]])), P(V(p.Anchor)));
-            if (Interchanges.ArcLengthOf(p.Arms[i].Road) < r + Lead + 8)
-            { reason = $"{p.Arms[i].Road.Id} zu kurz"; return false; }
+            if (i == p.SnapArm) continue;
+            float arc = (float)Interchanges.ArcLengthOf(p.Arms[i].Road);
+            if (arc < r + MinTail && OtherEndPending(p.Arms[i].Road, p.Anchor) && arc > r + 1.5f)
+            { p.Bend[i] = 0; continue; }   // Nachbar-Prefab schließt dann direkt an
+            if (arc < r + MinTail)
+            { reason = $"{p.Arms[i].Road.Id} zu kurz ({arc:0} m, nötig {r + MinTail:0} m)"; return false; }
+            // Bogen notfalls verkürzen, damit vom Arm genug übrig bleibt
+            p.Bend[i] = MathF.Min(p.Bend[i], MathF.Max(0, arc - r - MinTail));
         }
         // eine Straße kann mit beiden Enden an derselben Kreuzung hängen – dann nicht
         if (p.Arms.Select(a => a.Road).Distinct().Count() != p.Arms.Length)
@@ -215,21 +349,31 @@ public static class Junctions
         for (int i = 0; i < p.Arms.Length; i++)
         {
             var a = p.Arms[i];
+            if (i == p.SnapArm) { Dropped.Add(a.Road); continue; }
+            PlacedEnds[a.Road] = (p, i);
             var n = p.NodePos[p.NodeOf[i]];
             var inward = p.Inward[p.NodeOf[i]];
-            if (p.NodeOf[i] == 0)
+            if (p.NodeOf[i] == p.Origin)
             {
                 if (StartsAt(a.Road, p.Anchor)) Connector.Reverse(a.Road);
                 Fixed.Add(a.Road);
             }
             bool atStart = StartsAt(a.Road, p.Anchor);
-            if (atStart) Interchanges.SetHead(a.Road, n, -inward, Lead);
-            else Interchanges.SetTail(a.Road, n, inward, Lead);
+            // erst den Teil im Prefab entfernen (bis zum Prefab-Knoten), sonst liefe die
+            // Straße vom Prefab-Knoten zurück zur Kreuzungsmitte
+            float rad = Vector2.Distance(new Vector2(n.X, n.Z), new Vector2(p.Anchor.X, p.Anchor.Z));
+            Overlaps.CutEnd(a.Road, atStart, rad);
+            float lead = MathF.Min(Lead, MathF.Max(2f, (float)Interchanges.ArcLengthOf(a.Road) - rad - 4f));
+            if (atStart) Interchanges.SetHead(a.Road, n, -inward, lead, p.Bend[i]);
+            else Interchanges.SetTail(a.Road, n, inward, lead, p.Bend[i]);
             if (atStart) a.Road.Start = new EndInfo { Kind = "prefab" };
             else a.Road.End = new EndInfo { Kind = "prefab" };
         }
         return true;
     }
+
+    /// <summary>Index eines ppd-Knotens in Prefab.Nodes nach ChangeOrigin.</summary>
+    public static ushort NodeIndex(Plan p, ushort ppdNode, int count) => (ushort)((ppdNode - p.Origin + count) % count);
 
     private static double[] V(Vector3 v) => [v.X, v.Y, v.Z];
 
@@ -253,7 +397,9 @@ public static class Junctions
             var inward = p.Inward[k];
             pf.Nodes[k].Rotation = MathEx.GetNodeRotation(StartsAt(p.Arms[i].Road, pf.Nodes[k].Position) ? -inward : inward);
         }
+        if (p.Origin != 0) pf.ChangeOrigin(p.Origin);
         p.Placed = pf;
+        PrefabFootprint.Register(pf, ppd);
         return pf;
     }
 }

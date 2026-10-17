@@ -51,7 +51,7 @@ elevation:
   # Glättungsfenster für das Geländeprofil entlang der Straße (Echtmeter).
   smoothing_window_m: 120.0
   # Höhe je Ebene (OSM layer) für Brücken, z. B. Überführungen (Spielmeter).
-  bridge_clearance_m: 6.5
+  bridge_clearance_m: 6.0
   # Maximale Steigung der Rampen vor und hinter Brücken (im Spiel).
   max_ramp_grade: 0.05
   # Größte Steigung des Geländeprofils entlang der Straßen (vor Brückenrampen).

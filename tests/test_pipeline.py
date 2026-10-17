@@ -62,9 +62,9 @@ def test_synthetic_end_to_end(synthetic_osm, tmp_path, profile, capsys):
     nb = by_osm[(1, 2)]
     assert nb["points"][0][2] > nb["points"][-1][2]
     assert all(run["oneway"] for run in nb["runs"])
-    # Brücke der Bundesstraße liegt 6,5 m hoch, die Autobahn darunter auf 0
+    # Brücke der Bundesstraße liegt 6,0 m hoch, die Autobahn darunter auf 0
     b = next(r for r in model["roads"] if any(run["bridge"] for run in r["runs"]))
-    assert max(p[1] for p in b["points"]) == pytest.approx(6.5, abs=0.01)
+    assert max(p[1] for p in b["points"]) == pytest.approx(6.0, abs=0.01)
     assert max(p[1] for p in nb["points"]) == pytest.approx(0.0, abs=0.01)
     # Kreuzungsknoten 32 liegt für alle angrenzenden Straßen auf derselben Höhe 0
     j32 = next(j for j in model["junctions"] if j["osm_node"] == 32)
@@ -72,7 +72,7 @@ def test_synthetic_end_to_end(synthetic_osm, tmp_path, profile, capsys):
     # höhenfreie Kreuzungen: Bundesstraße über beide Richtungsfahrbahnen
     clearances = crossing_clearances(model["roads"])
     assert len(clearances) == 2
-    assert min(c["clearance_m"] for c in clearances) >= 6.4
+    assert min(c["clearance_m"] for c in clearances) >= 5.9
     # Rampensteigung eingehalten (kleine Toleranz für die Vereinfachung)
     assert model["stats"]["max_grade"] <= profile.max_ramp_grade + 0.005
 
@@ -161,7 +161,7 @@ def test_dem(synthetic_osm, tmp_path, profile):
     expected = 300.0 + 0.01 * (e32[0] - x0)
     assert j32["position"][1] == pytest.approx(expected, abs=0.3)
     assert model["stats"]["elevation"]["dem_missing_samples"] == 0
-    assert min(c["clearance_m"] for c in crossing_clearances(model["roads"])) >= 6.0
+    assert min(c["clearance_m"] for c in crossing_clearances(model["roads"])) >= 5.95
 
 
 @pytest.mark.skipif(not REAL_EXTRACT, reason="OSM2ETS_REAL_EXTRACT nicht gesetzt")

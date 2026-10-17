@@ -303,6 +303,7 @@ public static class Interchanges
         pf.Look = def.Look;
         pf.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
         InwardDirections[pf] = WorldDirections(ppd, rotated);
+        PrefabFootprint.Register(pf, ppd);
         return pf;
     }
 
@@ -336,6 +337,87 @@ public static class Interchanges
         return v.Length();
     }
 
+    /// <summary>Mindestabstand der Achsen gegenüberliegender Anschluss-Prefabs (m).
+    /// Annahme: aufgeweitete Prefabs je etwa 9 m halbe Breite.</summary>
+    public const float OppositeMinGap = 19f;
+
+    /// <summary>
+    /// Ausfahrt und Einfahrt der Gegenrichtung liegen oft auf gleicher Höhe nebeneinander;
+    /// ihre aufgeweiteten Prefabs überlappen dann. Beide Anker seitlich auseinanderrücken.
+    /// </summary>
+    public static int SeparateOpposite(List<Plan> plans)
+    {
+        int n = 0;
+        for (int i = 0; i < plans.Count; i++)
+        for (int j = i + 1; j < plans.Count; j++)
+        {
+            var a = plans[i]; var b = plans[j];
+            var da = new Vector2(a.Direction.X, a.Direction.Z); var db = new Vector2(b.Direction.X, b.Direction.Z);
+            if (da.LengthSquared() < 1e-6f || db.LengthSquared() < 1e-6f) continue;
+            da = Vector2.Normalize(da); db = Vector2.Normalize(db);
+            if (Vector2.Dot(da, db) > -0.8f) continue;
+            var d = new Vector2(b.Anchor.X - a.Anchor.X, b.Anchor.Z - a.Anchor.Z);
+            if (d.Length() > 160) continue;
+            var nrm = new Vector2(-da.Y, da.X);
+            float lat = Vector2.Dot(d, nrm);
+            float need = OppositeMinGap - MathF.Abs(lat);
+            if (need <= 0) continue;
+            float sgn = lat >= 0 ? 1 : -1;
+            var shift = nrm * (sgn * need / 2);
+            b.Anchor += new Vector3(shift.X, 0, shift.Y);
+            a.Anchor -= new Vector3(shift.X, 0, shift.Y);
+            n++;
+        }
+        return n;
+    }
+
+    private static void DropInside(RoadEntry ramp, bool atStart, RoadEntry main, Vector3 node)
+    {
+        var mp = main.Points.Select(P).ToList();
+        float Dist(Vector2 q)
+        {
+            float best = float.MaxValue;
+            for (int i = 0; i < mp.Count - 1; i++)
+            {
+                var ab = mp[i + 1] - mp[i]; float l2 = ab.LengthSquared();
+                float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - mp[i], ab) / l2, 0, 1) : 0;
+                best = MathF.Min(best, Vector2.Distance(mp[i] + ab * t, q));
+            }
+            return best;
+        }
+        float need = Dist(new Vector2(node.X, node.Z)) + 1f;
+        var pts = ramp.Points;
+        int drop = 0;
+        while (pts.Count - drop > 2)
+        {
+            var q = P(atStart ? pts[drop] : pts[^(1 + drop)]);
+            if (Dist(q) >= need) break;
+            drop++;
+        }
+        if (drop == 0) return;
+        if (atStart)
+        {
+            pts.RemoveRange(0, drop);
+            ramp.Runs = ramp.Runs.Select(x => { x.From = Math.Max(0, x.From - drop); x.To = Math.Max(1, x.To - drop); return x; }).Where(x => x.To > x.From).ToList();
+        }
+        else
+        {
+            pts.RemoveRange(pts.Count - drop, drop);
+            int last = pts.Count - 1;
+            ramp.Runs = ramp.Runs.Select(x => { x.From = Math.Min(x.From, last - 1); x.To = Math.Min(x.To, last); return x; }).Where(x => x.To > x.From).ToList();
+        }
+        Dropped += drop;
+    }
+    public static int Dropped;
+
+    private static Vector3 Flat(Vector3 v, Vector3 fallback)
+    {
+        v.Y = 0;
+        if (v.LengthSquared() < 1e-6f) return fallback;
+        v = Vector3.Normalize(v);
+        return Vector3.Dot(v, fallback) < 0 ? -v : v;
+    }
+
     public sealed record Placed(Plan Plan, Prefab First, ushort FirstIn, Prefab Last, ushort LastOut, Prefab RampPrefab, ushort RampNode);
 
     /// <summary>Kürzt die Straßen für einen Plan; false = Plan nicht umsetzbar (Straßen zu kurz).</summary>
@@ -365,14 +447,17 @@ public static class Interchanges
         {
             // Teilung so, dass ihr Hauptausgang auf dem OSM-Knoten liegt; Aufweitung davor
             var split = Place(map, src, Split, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor, p.Grade);
-            var widen = Place(map, src, Widen, WidenIn, WidenOut, p.Direction, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
+            // Richtung an der Fuge aus dem gesetzten Nachbar-Prefab übernehmen (sonst Keil in der Fuge)
+            var dSplit = Flat(InwardDirections[split][SplitIn], p.Direction);
+            var widen = Place(map, src, Widen, WidenIn, WidenOut, dSplit, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
             widen.Attach(WidenOut, split, SplitIn);
             return new Placed(p, widen, WidenIn, split, SplitMain, split, SplitRamp);
         }
         else
         {
             var join = Place(map, src, Join, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
-            var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, p.Direction, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
+            var dJoin = Flat(-InwardDirections[join][JoinOut], p.Direction);
+            var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, dJoin, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
             join.Attach(JoinOut, narrow, NarrowIn);
             return new Placed(p, join, JoinMain, narrow, NarrowOut, join, JoinRamp);
         }
@@ -383,13 +468,30 @@ public static class Interchanges
     public const float Lead = 20f;   // so lang läuft die Straße gerade in den Prefab-Knoten ein
 
     /// <summary>Lässt eine Straße genau am Prefab-Knoten enden und in dessen Richtung einlaufen.</summary>
-    public static void SetTail(RoadEntry r, Vector3 node, Vector3 dirInto, float leadLen = Lead)
+    public static void SetTail(RoadEntry r, Vector3 node, Vector3 dirInto, float leadLen = Lead, float curve = 0)
     {
         var lead = node - dirInto * leadLen;
         int k = r.Points.Count - 1;
-        while (k > 0 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < leadLen + 10) k--;
+        float cut = MathF.Max(leadLen + 10, curve);
+        while (k > 0 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k--;
+        // Punkte, die schon jenseits des Einlaufpunkts liegen, ebenfalls weg (sonst Rücklauf)
+        while (k > 0 && Vector2.Dot(P(r.Points[k]) - new Vector2(lead.X, lead.Z), new Vector2(dirInto.X, dirInto.Z)) > -2) k--;
         var pts = r.Points.Take(k + 1).ToList();
         lead.Y = Between(node, pts[^1], leadLen);
+        if (curve > 0 && pts.Count >= 2)
+        {
+            // Bogen vom letzten behaltenen Punkt (mit dessen Richtung) zum Einlaufpunkt
+            var p3 = MapWriter.ToVector(pts[^1]); var p2 = MapWriter.ToVector(pts[^2]);
+            var tIn = p3 - p2; tIn.Y = 0; tIn = Vector3.Normalize(tIn);
+            foreach (var q in Bezier(p3, tIn, lead, dirInto))
+            {
+                // nur Punkte vor dem Einlauf und mit Abstand zum Vorgänger (keine Schleifen)
+                var dq = q - lead; dq.Y = 0;
+                if (Vector3.Dot(dq, dirInto) > -3) continue;
+                if (Vector2.Distance(P(pts[^1]), new Vector2(q.X, q.Z)) < 4) continue;
+                pts.Add(V(q));
+            }
+        }
         if (Vector2.Distance(P(pts[^1]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
         pts.Add(V(node));
         int segs = pts.Count - 1;
@@ -402,15 +504,30 @@ public static class Interchanges
     }
 
     /// <summary>Lässt eine Straße genau am Prefab-Knoten beginnen und in dessen Richtung auslaufen.</summary>
-    public static void SetHead(RoadEntry r, Vector3 node, Vector3 dirOut, float leadLen = Lead)
+    public static void SetHead(RoadEntry r, Vector3 node, Vector3 dirOut, float leadLen = Lead, float curve = 0)
     {
         var lead = node + dirOut * leadLen;
         int k = 0;
-        while (k < r.Points.Count - 1 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < leadLen + 10) k++;
+        float cut = MathF.Max(leadLen + 10, curve);
+        while (k < r.Points.Count - 1 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k++;
+        while (k < r.Points.Count - 1 && Vector2.Dot(P(r.Points[k]) - new Vector2(lead.X, lead.Z), new Vector2(dirOut.X, dirOut.Z)) < 2) k++;
         var rest = r.Points.Skip(k).ToList();
         var pts = new List<double[]> { V(node) };
         lead.Y = Between(node, rest[0], leadLen);
         if (Vector2.Distance(P(rest[0]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
+        if (curve > 0 && rest.Count >= 2)
+        {
+            var p3 = MapWriter.ToVector(rest[0]); var p4 = MapWriter.ToVector(rest[1]);
+            var tOut = p4 - p3; tOut.Y = 0; tOut = Vector3.Normalize(tOut);
+            foreach (var q in Bezier(lead, dirOut, p3, tOut))
+            {
+                var dq = q - lead; dq.Y = 0;
+                if (Vector3.Dot(dq, dirOut) < 3) continue;
+                if (Vector2.Distance(P(pts[^1]), new Vector2(q.X, q.Z)) < 4) continue;
+                if (Vector2.Distance(P(rest[0]), new Vector2(q.X, q.Z)) < 4) continue;
+                pts.Add(V(q));
+            }
+        }
         int added = pts.Count;
         pts.AddRange(rest);
         int shift = added - k;
@@ -423,6 +540,22 @@ public static class Interchanges
     }
 
     private static double[] V(Vector3 v) => [v.X, v.Y, v.Z];
+
+    /// <summary>Innere Punkte eines kubischen Bogens von a (Richtung ta) nach b (Richtung tb), etwa alle 10 m.</summary>
+    private static IEnumerable<Vector3> Bezier(Vector3 a, Vector3 ta, Vector3 b, Vector3 tb)
+    {
+        float d = Vector2.Distance(new Vector2(a.X, a.Z), new Vector2(b.X, b.Z));
+        if (d < 15) yield break;
+        var c1 = a + ta * (d / 3); var c2 = b - tb * (d / 3);
+        int n = Math.Max(2, (int)(d / 10));
+        for (int i = 1; i < n; i++)
+        {
+            float t = i / (float)n, u = 1 - t;
+            var q = u * u * u * a + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * b;
+            q.Y = a.Y + (b.Y - a.Y) * t;
+            yield return q;
+        }
+    }
 
     /// <summary>Höhe des Einlaufpunkts: linear zwischen Prefab-Knoten und erstem behaltenen Punkt.</summary>
     private static float Between(Vector3 node, double[] keep, float leadLen)
@@ -443,6 +576,19 @@ public static class Interchanges
         Vector3.Normalize(new Vector3(horizontal.X, grade, horizontal.Z));
 
     /// <summary>Passt die Straßen an die gesetzten Prefabs an (vor dem Bau der Straßen).</summary>
+    /// <summary>Knotendrehungen ohne Rollen: nur Gier und Längsneigung.</summary>
+    public static void FixRotations(Placed pl)
+    {
+        var p = pl.Plan;
+        var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];
+        pl.First.Nodes[pl.FirstIn].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], p.Grade));
+        pl.Last.Nodes[pl.LastOut].Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], p.Grade));
+        pl.RampPrefab.Nodes[pl.RampNode].Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            foreach (var n in new[] { pl.First.Nodes[pl.FirstIn], pl.Last.Nodes[pl.LastOut], pl.RampPrefab.Nodes[pl.RampNode] })
+                Console.Error.WriteLine($"   rot {n.Position} right {Vector3.Transform(Vector3.UnitX, n.Rotation)} up {Vector3.Transform(Vector3.UnitY, n.Rotation)}");
+    }
+
     public static void Adjust(Placed pl)
     {
         var p = pl.Plan;
@@ -453,6 +599,10 @@ public static class Interchanges
         SetTail(p.MainIn, inNode.Position, InwardDirections[pl.First][pl.FirstIn]);
         SetHead(p.MainOut, outNode.Position, -InwardDirections[pl.Last][pl.LastOut]);
         var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];
+        // Das Prefab zweigt schneller ab als die OSM-Rampe: Rampenpunkte, die noch näher an der
+        // Hauptfahrbahn liegen als der Rampenknoten, entfernen (sonst schwenkt die Rampe zurück
+        // und kreuzt die Hauptfahrbahn)
+        DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
         if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn);
         else SetTail(p.Ramp, rampNode.Position, rampIn);
 

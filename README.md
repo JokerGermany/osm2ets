@@ -20,36 +20,48 @@ flowchart LR
 
 ## Status (October 2026) – please read first
 
-Early development version. Tested in game with ETS2 1.61 (Linux, Proton) on an extract
-near Bayreuth (A 9, A 70, B 85); larger areas have not been tested.
+Early development version. Tested in the ETS2 1.61 editor (Linux, Proton) on an extract
+near Bayreuth (A 9, A 70, B 85); larger areas have not been tested. Test map history:
+v1–v46 (see commits).
 
 | Area | Status |
 |---|---|
 | Road network L1–L4 from OSM, scale 1:N, fixed origin | implemented, tested |
 | Real road templates (ger13/ger16 motorway, ger2 ramp, ger1/ger5/ger9/ger29) | implemented, drivable in game |
 | Through roads connected at nodes, no invisible walls | implemented, checked in game |
-| Motorway exit/entry with prefabs (2 lanes, ramp on the right) | implemented, AI traffic uses them |
-| At-grade T/X junctions with prefabs | implemented (v7), only part of the junctions, see below |
-| Heights from a terrain model, bridges, tunnels | implemented (v8), not yet checked in game – see "Known issues" |
+| Motorway exit/entry with prefabs (2 lanes, ramp on the right) | implemented, checked in editor |
+| At-grade T/X/fork junctions with prefabs | implemented, 39 of ~46 in the test area |
+| Heights from a terrain model, bridges, tunnels, `maxheight` | implemented, checked against Street View at one crossing |
+| Area-wide terrain between roads from the terrain model | implemented, gaps remain (see below) |
 | 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
-| Bridge structures (models), area-wide terrain, vegetation, cities, companies | not yet |
+| Bridge models, vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
 
-### Known issues (from in-game tests)
+### Area-wide terrain
 
-- **Heights:** With `--dem` (e.g. Copernicus GLO-30) roads follow the terrain. Because
-  Copernicus is a surface model (trees, buildings), a ground-biased percentile along the
-  road is taken first and then smoothed; all roads meeting at a node share the same
-  height, and the grade is limited network-wide to `terrain_max_grade` (6 %).
-  Interchange prefabs are pitched accordingly, junction prefabs stay level. Terrain still
-  exists only as strips beside the road (60–80 m) – beyond that there is nothing. Where
-  ramps, connecting roads and junctions lie at different heights, steps and overlaps occur.
-- **Junctions without a prefab** (32 of 46 in the test area): road piece between two
-  nearby junctions too short, a one-way ramp starts at the side arm (TruckLib can only
-  attach a road *end* to prefab node 0), or an angle more than 40° off T/X (Y shapes).
-  There the roads still overlap.
+With `--dem` the intermediate file carries a `terrain_grid` (10 m cells, ground-filtered,
+at road height up to 24 m from a road, blended into the terrain up to 110 m). The writer
+fills the space between roads with ETS2 terrain items in west–east rows (40 m, plus finer
+rows down to 1 m for leftovers next to roads). Vertex offsets follow the grid across each
+strip. The fill mask uses the real lanes of placed prefabs (nav curves from the `.ppd`).
+
+Findings from editor tests that shaped this (useful if you work on it):
+- Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),
+  not deltas. For road terrain they are measured from the **road centre** along the road.
+- Widening road terrain to 150 m does not work: the game bends it with the curve and it folds.
+- After `Prefab.Attach`, node rotations must be reset without roll – otherwise the first
+  road piece is twisted and its edge folds down (this caused the "broken" exits).
+
+### Known issues
+
+- Gaps (black areas in the editor) remain in narrow gores between ramp and main road and
+  close to some prefabs; fill rows run west–east and cannot follow diagonal gaps exactly.
+- Where a minor road is lowered under a motorway, the terrain beside it has no cut slope yet.
+- Junctions without a prefab: road piece between two junctions too short, or angle more
+  than 40° off T/X. There the roads still overlap.
 - Node clusters at motorway triangles are not yet handled as a whole.
-- The junction prefabs are "narrow" templates; width jumps to the road are possible.
+- **Overlap check:** only a bridge or tunnel may overlap another road surface. The writer
+  reports every violation (`<input>.overlaps.geojson`).
 - TruckLib does not compute bounding boxes: always run "Map → Recompute map" in the editor.
 
 ## Requirements
@@ -174,23 +186,21 @@ means Bundesstraße.
 Computed on a shared graph of all roads; at an OSM node all roads have the same height.
 
 1. Terrain along the road from the terrain model (`--dem`, GeoTIFF/VRT): ground-biased
-   percentile (25 %, 60 m window), then smoothed (120 m window); grade limited
+   percentile (25 %), then smoothed (120 m; motorway 200 m, trunk 180 m, ramps 140 m;
+   bridges are bridged over so their ends are not pulled into the valley). Grade limited
    network-wide to `terrain_max_grade` (6 %). Without a model everything is at height 0.
-2. Bridges of at least `min_bridge_length_m` (8 m; shorter ones are mostly culverts) are
-   raised by `bridge_clearance_m × layer` (default 6.5 m). The lift falls off along the
-   network at no more than `max_ramp_grade` (5 %) – creating ramps, also across
-   junctions. This also applies to bridges over rivers or railways that are not (yet)
-   part of the map.
-3. Each connected structure is interpolated as a whole between its abutments or portals –
-   even if a ramp joins inside it. Bridge decks therefore do not sag into the valley,
-   tunnels do not climb over the hill. Structure ends cut off by the extract take the
-   height of their neighbour.
-4. If two roads cross without a shared node with less than 6.5 m clearance: a tunnel
-   below is lowered; otherwise the upper road is raised (priority: higher `layer`, then
-   bridge, then current height, then ramp), at most `max_bridge_levels` levels.
+2. Parallel carriageways of motorways/trunk roads within 25 m are tied to the same height
+   (no step in the median).
+3. Bridges of at least `min_bridge_length_m` (8 m) are raised by `bridge_clearance_m × layer`
+   (6.0 m) – except motorway/trunk bridges. The lift falls off at no more than
+   `max_ramp_grade` (5 %).
+4. Each structure is interpolated as a whole between its abutments or portals.
+5. Grade-separated crossings need `maxheight` (from OSM, lower road first, then the bridge)
+   + 1.2 m deck, otherwise 6.0 m. A tunnel below is lowered; a minor road under a
+   motorway/trunk road is **lowered** (the motorway stays on the terrain, as in reality,
+   e.g. B 85 under A 70); otherwise the upper road is raised.
 
-This is an approximation from OSM tags, not a survey. In the test area all 10
-grade-separated crossings keep at least 4.5 m clearance.
+This is an approximation from OSM tags, not a survey.
 
 ## Intermediate format (`osm2ets/intermediate`, version 1)
 
@@ -222,22 +232,21 @@ With `--game <ETS2 game folder>` (or extracted `.ppd` files in `--prefab-dir`) t
 places SCS prefabs. Game files are only read, never bundled. Single files can be copied
 from the `.scs` archives with `osm2ets-writer extract --game … --paths list.txt --out …`.
 
-- Exit: widening 2→3 (`ger_hw2-hw2_exit_mirrored_tmpl_v02`) + split 3→2+1
-  (`ger_hw2_exit_joint_mirrored_tmpl_v02`); entry mirrored.
-- Junctions: `ger_r1_x_r1_t_narrow_tmpl` (T), `ger_r1_x_r1_narrow_tmpl` (X); for
-  four-lane roads (ger29) the `ger_r2_no_offset_x_r1_narrow*` variants.
+- Exit: widening 2→3 + split 3→2+1; entry mirrored. The second prefab takes its direction
+  from the joint of the first. Opposite exit/entry pairs are moved apart to ≥ 19 m.
+  Ramp points closer to the main road than the prefab's ramp node are dropped (otherwise
+  the ramp swings back across the main road). Road terrain is cleared only on the gore side.
+- Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits. Arms
+  meeting at a sharp angle are bent onto an arc; junctions closer than their prefab radii
+  are connected prefab-to-prefab; one-way arms via `ChangeOrigin`.
 - Node roles and directions come from the `.ppd` files, variants/looks from the `.pmd`.
-  The writer rotates each prefab so its arms lie as close as possible to the OSM roads,
-  trims the roads and leads them straight into the prefab nodes.
 
 ## Roadmap
 
-1. Area-wide terrain between roads (terrain items from the terrain model), pitched
-   junction prefabs.
-2. Remaining junctions: merge short pieces, Y prefabs, alternative T prefabs for one-way
-   side arms, roundabouts.
-3. 3-lane interchanges, left-hand ramps, lane changes without ramps, motorway interchanges.
-4. Bridge models, terrain/vegetation from OSM land use.
+1. Close remaining terrain gaps (gores, prefab edges), cut slopes next to lowered roads.
+2. Remaining junctions: Y prefabs, roundabouts.
+3. 3-lane interchanges, left-hand ramps, motorway interchanges.
+4. Bridge models, terrain material/vegetation from OSM land use, higher-resolution DGM1.
 5. Larger areas: measure run time and memory for a federal state or all of Germany.
 
 ## Licences

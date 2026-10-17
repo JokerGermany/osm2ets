@@ -96,9 +96,18 @@ def test_viaduct_junction_follows_deck(tmp_path, profile):
     # nahe der Talkante etwas herunter, daher nicht exakt 300 + 6,5 m.
     main = next(r for r in model["roads"] if r["end"].get("osm_node") == 3 and r["runs"][0]["highway"] == "motorway")
     abutment = next(main["points"][run["from"]][1] for run in main["runs"] if run["bridge"])
-    assert abutment > 295.0
+    assert abutment > 294.0  # Autobahn-Glättung (400 m) und 4-%-Grenze ziehen etwas mehr
     # Kreuzung im Bauwerk liegt auf Deckhöhe, nicht auf Talboden + 6,5 m (= 266,5 m)
     assert j3["position"][1] == pytest.approx(abutment, abs=0.5)
     # Die im Ausschnitt endende Rampe hängt nicht ins Tal
     ramp = next(r for r in model["roads"] if r["runs"][0]["highway"] == "motorway_link")
-    assert min(p[1] for p in ramp["points"]) > 295.0
+    assert min(p[1] for p in ramp["points"]) > abutment - 1.0
+
+
+def test_parse_maxheight():
+    from osm2ets.elevation import parse_maxheight
+    assert parse_maxheight("3.8") == 3.8
+    assert parse_maxheight("4,2 m") == 4.2
+    assert parse_maxheight("12'6\"") == 3.81
+    for v in (None, "", "none", "default", "below_default", "abc", "40"):
+        assert parse_maxheight(v) is None

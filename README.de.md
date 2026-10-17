@@ -20,38 +20,49 @@ flowchart LR
 
 ## Stand (Oktober 2026) – bitte zuerst lesen
 
-Frühe Entwicklungsversion. Im Spiel getestet mit ETS2 1.61 (Linux, Proton) an einem
-Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet.
+Frühe Entwicklungsversion. Getestet im Editor von ETS2 1.61 (Linux, Proton) an einem
+Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind ungetestet. Testkarten
+v1–v46 (siehe Commits).
 
 | Bereich | Stand |
 |---|---|
 | Straßennetz L1–L4 aus OSM, Maßstab 1:N, fester Ursprung | umgesetzt, getestet |
 | Echte Straßenvorlagen (ger13/ger16 Autobahn, ger2 Rampe, ger1/ger5/ger9/ger29) | umgesetzt, im Spiel befahrbar |
 | Durchgehende Straßen an Knoten verbunden, keine unsichtbaren Wände | umgesetzt, im Spiel geprüft |
-| Autobahn-Ausfahrt/-Einfahrt mit Prefabs (2 Spuren, Rampe rechts) | umgesetzt, Verkehr fährt darüber |
-| Ebenerdige T-/X-Kreuzungen mit Prefabs | umgesetzt (v7), nur ein Teil der Kreuzungen, siehe unten |
-| Höhen aus Geländemodell, Brücken, Tunnel | umgesetzt (v8), im Spiel noch nicht geprüft – siehe „Bekannte Probleme" |
+| Autobahn-Aus-/Einfahrt mit Prefabs (2 Spuren, Rampe rechts) | umgesetzt, im Editor geprüft |
+| Ebenerdige T-/X-/Gabel-Kreuzungen mit Prefabs | umgesetzt, 39 von ~46 im Testgebiet |
+| Höhen aus Geländemodell, Brücken, Tunnel, `maxheight` | umgesetzt, an einer Kreuzung mit Street View abgeglichen |
+| Flächiges Gelände zwischen den Straßen aus dem Geländemodell | umgesetzt, Lücken bleiben (siehe unten) |
 | 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
-| Brückenbauwerke (Modelle), Gelände flächig, Vegetation, Städte, Firmen | noch nicht |
+| Brückenmodelle, Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
 
-### Bekannte Probleme (aus dem Spieltest)
+### Flächiges Gelände
 
-- **Höhen:** Mit `--dem` (z. B. Copernicus GLO-30) folgen die Straßen dem Gelände.
-  Weil Copernicus ein Oberflächenmodell ist (Bäume, Gebäude), wird zuerst ein bodennahes
-  Perzentil entlang der Straße genommen, dann geglättet; an Knoten treffen sich alle
-  Straßen auf derselben Höhe, und die Steigung wird netzweit auf `terrain_max_grade`
-  (6 %) begrenzt. Anschlussstellen-Prefabs werden entsprechend geneigt, Kreuzungs-Prefabs
-  bleiben waagerecht. Gelände gibt es weiterhin nur als Streifen neben der Straße
-  (60–80 m) – dahinter ist nichts. Wo Rampen, Anschlussstraßen und Kreuzungen
-  unterschiedlich hoch liegen, entstehen Stufen und Durchdringungen.
-- **Kreuzungen ohne Prefab** (im Testgebiet 32 von 46): Straßenstück zwischen zwei
-  nahen Kreuzungen zu kurz, Einbahn-Rampe beginnt am Seitenarm (TruckLib kann an
-  Prefab-Knoten 0 nur ein Straßenende anschließen), oder Winkel > 40° von T/X (Y-Formen).
-  Dort liegen die Straßen weiter übereinander.
+Mit `--dem` enthält das Zwischenformat ein `terrain_grid` (10-m-Zellen, bodennah gefiltert,
+bis 24 m neben einer Straße auf Straßenhöhe, bis 110 m weich ins Gelände). Der Writer füllt
+den Raum zwischen den Straßen mit Terrain-Items in West-Ost-Reihen (40 m, dazu feinere Reihen
+bis 1 m für Reste an Straßen). Höhenpunkte folgen dem Raster quer über jeden Streifen. Die
+Freifläche berücksichtigt die echten Fahrspuren gesetzter Prefabs (Navigationskurven aus der `.ppd`).
+
+Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
+- Höhenpunkte (vertex offsets) sind **absolute** Lagen (Zeilenabstände 1,1,1,2,6,6,10,10,10,20,40,50… m),
+  keine Verschiebungen. Beim Straßengelände zählen sie ab **Straßenmitte** entlang der Straße.
+- Straßengelände auf 150 m zu verbreitern funktioniert nicht: Das Spiel biegt es mit der Kurve, es faltet sich.
+- Nach `Prefab.Attach` müssen die Knotendrehungen ohne Rollen neu gesetzt werden – sonst ist
+  das erste Straßenstück verdreht und sein Rand klappt nach unten (Ursache der „kaputten" Ausfahrten).
+
+### Bekannte Probleme
+
+- Lücken (schwarz im Editor) bleiben in schmalen Zwickeln zwischen Rampe und Hauptfahrbahn
+  und an manchen Prefabs; die Füllreihen laufen West-Ost und folgen schrägen Lücken nicht genau.
+- Wo eine untergeordnete Straße unter einer Autobahn abgesenkt wird, fehlt noch die Einschnittsböschung.
+- Kreuzungen ohne Prefab: Straßenstück zwischen zwei Kreuzungen zu kurz oder Winkel mehr als
+  40° von T/X entfernt. Dort überlagern sich die Straßen weiterhin.
 - Knotenhäufungen an Autobahndreiecken werden noch nicht als Ganzes behandelt.
-- Die Kreuzungs-Prefabs sind „narrow"-Vorlagen; Breitensprünge zur Straße sind möglich.
-- TruckLib berechnet keine Bounding-Boxes: im Editor immer „Map → Recompute map".
+- **Überlagerungsprüfung:** Nur eine Brücke oder ein Tunnel darf eine andere Fahrbahn überlagern.
+  Der Writer meldet jeden Verstoß (`<input>.overlaps.geojson`).
+- TruckLib berechnet keine Bounding-Boxes: im Editor immer „Map → Recompute map" ausführen.
 
 ## Voraussetzungen
 
@@ -166,36 +177,24 @@ Bundesstraße bedeutet.
 
 ## Höhen, Brücken, Tunnel (Heuristik)
 
-Gerechnet wird auf einem gemeinsamen Graphen aller Straßen; an einem OSM-Knoten haben
-alle Straßen dieselbe Höhe.
+Berechnet auf einem gemeinsamen Graphen aller Straßen; an einem OSM-Knoten haben alle Straßen dieselbe Höhe.
 
-1. Gelände entlang der Straße aus dem Geländemodell (`--dem`, GeoTIFF/VRT): bodennahes
-   Perzentil (25 %, Fenster 60 m), dann geglättet (Fenster 120 m); Steigung netzweit
-   höchstens `terrain_max_grade` (6 %). Ohne Modell liegt alles auf Höhe 0.
-2. Brücken ab `min_bridge_length_m` (8 m, kürzere sind meist Durchlässe) werden um
-   `bridge_clearance_m × layer` angehoben (Standard 6,5 m). Die Anhebung fällt entlang
-   des Netzes mit höchstens `max_ramp_grade` (5 %) ab – so entstehen Rampen, auch über
-   Kreuzungen hinweg. Das gilt auch für Brücken über Flüsse oder Bahnstrecken, die in der
-   Karte (noch) nicht vorkommen.
-3. Jedes zusammenhängende Bauwerk wird als Ganzes zwischen seinen Widerlagern bzw.
-   Portalen interpoliert – auch wenn darin eine Rampe einmündet. Brückendecks hängen
-   dadurch nicht ins Tal, Tunnel steigen nicht über den Berg. Im Datenausschnitt
-   abgeschnittene Bauwerksenden übernehmen die Höhe ihres Nachbarn.
-4. Kreuzen sich zwei Straßen ohne gemeinsamen Knoten mit weniger als 6,5 m Abstand:
-   Liegt unten ein Tunnel, wird er abgesenkt; sonst wird die obere angehoben (Rangfolge:
-   höhere `layer`, dann Brücke, dann aktuelle Höhe, dann Rampe), höchstens
-   `max_bridge_levels` Ebenen.
+1. Gelände entlang der Straße aus dem Geländemodell (`--dem`, GeoTIFF/VRT): bodennahes Perzentil
+   (25 %), dann geglättet (120 m; Autobahn 200 m, Kraftfahrstraße 180 m, Rampen 140 m; unter
+   Brücken wird überbrückt, damit die Enden nicht ins Tal gezogen werden). Steigung netzweit
+   auf `terrain_max_grade` (6 %) begrenzt. Ohne Modell liegt alles auf Höhe 0.
+2. Parallele Richtungsfahrbahnen von Autobahnen/Kraftfahrstraßen bis 25 m Abstand liegen gleich
+   hoch (keine Stufe im Mittelstreifen).
+3. Brücken ab `min_bridge_length_m` (8 m) werden um `bridge_clearance_m × layer` (6,0 m) angehoben
+   – außer Brücken von Autobahnen/Kraftfahrstraßen. Die Anhebung fällt mit höchstens
+   `max_ramp_grade` (5 %) ab.
+4. Jedes Bauwerk wird als Ganzes zwischen Widerlagern bzw. Portalen interpoliert.
+5. Höhenfreie Kreuzungen brauchen `maxheight` (aus OSM, zuerst untere Straße, dann Brücke)
+   + 1,2 m Bauwerk, sonst 6,0 m. Ein Tunnel unten wird abgesenkt; eine untergeordnete Straße
+   unter einer Autobahn/Kraftfahrstraße wird **abgesenkt** (die Autobahn bleibt auf Geländehöhe,
+   wie in Wirklichkeit, z. B. B 85 unter A 70); sonst wird die obere Straße angehoben.
 
-Das ist eine Näherung aus OSM-Tags, keine Vermessung. Im Testgebiet (Dreieck
-Bayreuth/Kulmbach) haben danach alle 10 höhenfreien Kreuzungen ≥ 6,4 m Abstand;
-eine Überführung wurde dafür auf 10,6 m angehoben. Die Vereinfachung kann Steigungen
-stellenweise leicht erhöhen (Testgebiet: 5,2 % statt 5 %). Straßen, die nur durch
-Schritt 4 angehoben wurden, sind im Zwischenformat nicht als Brücke markiert (die
-Zuordnung lässt dort also Gelände stehen).
-
-Stücke zwischen zwei Kreuzungen, die kürzer als die Wunschlänge von 5 m sind, werden als
-ein einzelnes Straßenstück geschrieben, solange sie das Spielminimum von 1,25 m erreichen;
-noch kürzere stehen im Bericht unter `qa.dropped_short_pieces`.
+Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 
 ## Zwischenformat (`osm2ets/intermediate`, Version 1)
 
@@ -224,28 +223,27 @@ Der Writer legt diese Sektoren selbst an; ein Regressionstest deckt das ab.
 
 ## Prefabs (Anschlussstellen und Kreuzungen)
 
-Mit `--game <ETS2-Spielordner>` (oder entpackten `.ppd`-Dateien in `--prefab-dir`) setzt
-der Writer SCS-Prefabs ein. Die Spieldateien werden nur gelesen, nicht mitgeliefert.
-Einzelne Dateien lassen sich mit `osm2ets-writer extract --game … --paths liste.txt --out …`
-aus den `.scs`-Archiven kopieren.
+Mit `--game <ETS2-Spielordner>` (oder entpackten `.ppd`-Dateien in `--prefab-dir`) setzt der
+Writer SCS-Prefabs. Spieldateien werden nur gelesen, nie mitgeliefert. Einzelne Dateien lassen
+sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den `.scs`-Archiven kopieren.
 
-- Ausfahrt: Aufweitung 2→3 (`ger_hw2-hw2_exit_mirrored_tmpl_v02`) + Teilung 3→2+1
-  (`ger_hw2_exit_joint_mirrored_tmpl_v02`); Einfahrt spiegelbildlich.
-- Kreuzungen: `ger_r1_x_r1_t_narrow_tmpl` (T), `ger_r1_x_r1_narrow_tmpl` (X), für
-  vierspurige Straßen (ger29) die `ger_r2_no_offset_x_r1_narrow*`-Varianten.
-- Knotenrollen und Richtungen stammen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.
-  Der Writer dreht jedes Prefab so, dass seine Arme möglichst auf den OSM-Straßen liegen,
-  kürzt die Straßen und führt sie gerade in die Prefab-Knoten ein.
+- Ausfahrt: Aufweitung 2→3 + Teilung 3→2+1; Einfahrt gespiegelt. Das zweite Prefab übernimmt
+  die Richtung an der Fuge vom ersten. Gegenüberliegende Aus-/Einfahrten werden auf ≥ 19 m
+  auseinandergerückt. Rampenpunkte, die näher an der Hauptfahrbahn liegen als der Rampenknoten
+  des Prefabs, entfallen (sonst schwenkt die Rampe über die Hauptfahrbahn zurück).
+  Straßengelände wird nur zur Zwickelseite entfernt.
+- Kreuzungen: T/X (`ger_r1_x_r1_*_narrow_tmpl`), vierstreifige Varianten, Gabelungen.
+  Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
+  verbunden; Einbahn-Arme über `ChangeOrigin`.
+- Knotenrollen und Richtungen kommen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.
 
 ## Nächste Ausbaustufen
 
-1. Flächiges Gelände zwischen den Straßen (Terrain-Items aus dem Geländemodell),
-   geneigte Kreuzungs-Prefabs.
-2. Restliche Kreuzungen: kurze Stücke zusammenfassen, Y-Prefabs, alternative T-Prefabs
-   für Einbahn-Seitenarme, Kreisverkehre.
-3. 3-spurige Anschlussstellen, Rampen links, Spurwechsel ohne Rampe, Autobahnkreuze.
-4. Brückenmodelle, Gelände/Vegetation aus OSM-Landnutzung.
-5. Größere Gebiete: Laufzeit und Speicher für ein Bundesland bzw. ganz Deutschland messen.
+1. Restliche Geländelücken schließen (Zwickel, Prefab-Ränder), Einschnittsböschungen neben abgesenkten Straßen.
+2. Restliche Kreuzungen: Y-Prefabs, Kreisverkehre.
+3. 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze.
+4. Brückenmodelle, Geländematerial/Bewuchs aus OSM-Landnutzung, höher aufgelöstes DGM1.
+5. Größere Gebiete: Laufzeit und Speicher für ein Bundesland oder ganz Deutschland messen.
 
 ## Lizenzen
 
