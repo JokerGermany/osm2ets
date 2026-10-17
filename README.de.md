@@ -35,6 +35,14 @@ Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet
 | Brückenbauwerke (Modelle), Gelände flächig, Vegetation, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
 
+### Flächiges Gelände (v16)
+
+Mit `--dem` enthält das Zwischenformat zusätzlich ein `terrain_grid` (20 m, bodennah
+gefiltert, im Abstand 12–80 m zu Straßen weich auf Straßenhöhe übergeblendet). Der Writer
+füllt die Flächen zwischen den Straßen mit ETS2-Terrain-Items in West-Ost-Reihen alle 40 m.
+Jeder Streifen ist quer eben, am Hang sind daher kleine Stufen zwischen den Reihen möglich
+(≈0,8 m bei 4 %).
+
 ### Bekannte Probleme (aus dem Spieltest)
 
 - **Höhen:** Mit `--dem` (z. B. Copernicus GLO-30) folgen die Straßen dem Gelände.

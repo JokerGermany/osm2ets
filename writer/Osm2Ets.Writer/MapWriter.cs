@@ -211,6 +211,12 @@ public static class MapWriter
             }
         }
 
+        if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg)
+        {
+            var tf = TerrainFill.Build(map, tg, valid, styles, obstacles);
+            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km²");
+        }
+
         int prefabCount = 0;
         foreach (var pl in placed)
         {

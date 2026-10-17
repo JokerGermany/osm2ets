@@ -17,6 +17,8 @@ public sealed class IntermediateFile
     public ProjectionInfo Projection { get; set; } = new();
     public List<RoadEntry> Roads { get; set; } = [];
     public List<JunctionEntry> Junctions { get; set; } = [];
+    /// <summary>Optional: Geländeraster (nur mit Geländemodell erzeugt).</summary>
+    public TerrainGridEntry? TerrainGrid { get; set; }
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -94,4 +96,25 @@ public sealed class JunctionEntry
     public string Kind { get; set; } = "";
     public int Degree { get; set; }
     public double[] Position { get; set; } = [];
+}
+
+public sealed class TerrainGridEntry
+{
+    public double[] Origin { get; set; } = [0, 0];   // x, z der ersten Rasterzelle
+    public double Cell { get; set; }
+    public int Nx { get; set; }
+    public int Nz { get; set; }
+    public float[] Heights { get; set; } = [];        // zeilenweise: z, dann x
+
+    /// <summary>Bilineare Höhe; außerhalb des Rasters NaN.</summary>
+    public float HeightAt(float x, float z)
+    {
+        double fx = (x - Origin[0]) / Cell, fz = (z - Origin[1]) / Cell;
+        int i = (int)Math.Floor(fx), j = (int)Math.Floor(fz);
+        if (i < 0 || j < 0 || i >= Nx - 1 || j >= Nz - 1) return float.NaN;
+        float tx = (float)(fx - i), tz = (float)(fz - j);
+        float h00 = Heights[j * Nx + i], h10 = Heights[j * Nx + i + 1];
+        float h01 = Heights[(j + 1) * Nx + i], h11 = Heights[(j + 1) * Nx + i + 1];
+        return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+    }
 }

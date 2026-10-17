@@ -35,6 +35,13 @@ near Bayreuth (A 9, A 70, B 85); larger areas have not been tested.
 | Bridge structures (models), area-wide terrain, vegetation, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
 
+### Area-wide terrain (v16)
+
+With `--dem` the intermediate file also carries a `terrain_grid` (20 m, ground-filtered,
+blended into road heights within 12–80 m of a road). The writer fills the space between
+roads with ETS2 terrain items in west–east rows every 40 m. Each strip is flat across its
+width, so on slopes small steps between rows are possible (≈0.8 m at 4 %).
+
 ### Known issues (from in-game tests)
 
 - **Heights:** With `--dem` (e.g. Copernicus GLO-30) roads follow the terrain. Because
