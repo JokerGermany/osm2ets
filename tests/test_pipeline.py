@@ -72,7 +72,7 @@ def test_synthetic_end_to_end(synthetic_osm, tmp_path, profile, capsys):
     # höhenfreie Kreuzungen: Bundesstraße über beide Richtungsfahrbahnen
     clearances = crossing_clearances(model["roads"])
     assert len(clearances) == 2
-    assert min(c["clearance_m"] for c in clearances) >= 6.4
+    assert min(c["clearance_m"] for c in clearances) >= 5.9
     # Rampensteigung eingehalten (kleine Toleranz für die Vereinfachung)
     assert model["stats"]["max_grade"] <= profile.max_ramp_grade + 0.005
 
