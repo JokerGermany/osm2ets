@@ -23,6 +23,15 @@ public static class Junctions
     public static readonly Def TR2 = new(new("2i03c", "/prefab2/cross_temp/ger/ger_r2_no_offset_x_r1_narrow_t_tmpl.ppd", "default", "ger_1"), [1, 2], [0]);
     public static readonly Def XR2 = new(new("ger_2i03f", "/prefab2/cross_temp/ger/ger_r2_no_offset_x_r1_narrow_tmpl.ppd", "default", "ger_1"), [1, 3], [0, 2]);
 
+    // Gabelungen einspuriger Einbahnstraßen (Rampen): Knoten 0 = Stamm, 1/2 = Äste (±30°).
+    // Variante/Look ungeprüft (keine .pmd vorhanden) – "default"/"ger_1" wie bei den Anschlussstellen.
+    public static readonly Def FSPLIT = new(new("ch_4202n", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
+    public static readonly Def FJOIN = new(new("ch_4202o", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_mirrored_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
+
+    // Zweirichtungsstraße teilt sich in zwei Einbahnstraßen (z. B. Rampe, die zur
+    // getrennten Fahrbahn wird): Knoten 0 = beide Richtungen, 1 = Einbahn hinein, 2 = Einbahn heraus (±15°).
+    public static readonly Def SPLIT2 = new(new("ch_42029", "/prefab2/fork_temp/ger/ger_r1_split_short.ppd", "default", "ger_1"), [1, 2], [0]);
+
     /// <summary>Größte erlaubte Abweichung eines Arms von der Prefab-Richtung (Grad).</summary>
     public const float MaxDeviation = 40f;
 
@@ -45,6 +54,7 @@ public static class Junctions
         public required Def Def;
         public required Arm[] Arms;           // Arms[i] gehört zu Prefab-Knoten NodeOf[i]
         public ushort[] NodeOf = [];
+        public ushort[]? ForceNodes;           // feste Zuordnung Arm → Knoten (Einbahn-Rollen)
         public Quaternion Rotation;
         public Vector3 Position;               // Lage von Knoten 0 (für Prefab.Add)
         public Vector3[] NodePos = [];
@@ -74,6 +84,42 @@ public static class Junctions
             if (runs.Any(x => x.Highway is "motorway" or "trunk" && x.Oneway)) continue; // Autobahnknoten
             if (list.Any(e => e.R.Closed)) continue;
             int oneway = runs.Count(x => x.Oneway);
+            if (list.Count == 3 && oneway == 2)
+            {
+                int two = runs.FindIndex(x => !x.Oneway);
+                int inc = Enumerable.Range(0, 3).FirstOrDefault(i => i != two && !list[i].AtStart, -1);   // endet hier = fährt hinein
+                int outg = Enumerable.Range(0, 3).FirstOrDefault(i => i != two && list[i].AtStart, -1);
+                bool twoWayNarrow = runs[two].Lanes is null or <= 2;
+                if (inc >= 0 && outg >= 0 && twoWayNarrow
+                    && runs[inc].Lanes is null or 1 && runs[outg].Lanes is null or 1)
+                {
+                    var fa = list.Select(e => new Arm(e.R, Away(e.R, e.AtStart))).ToArray();
+                    if (fa.All(a => a.Away.LengthSquared() > 0.5f))
+                    {
+                        var anc = MapWriter.ToVector(list[0].AtStart ? list[0].R.Points[0] : list[0].R.Points[^1]);
+                        plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = SPLIT2,
+                                             Arms = [fa[inc], fa[outg], fa[two]], ForceNodes = [1, 2, 0] });
+                        continue;
+                    }
+                }
+            }
+            if (list.Count == 3 && oneway == 3 && runs.All(x => x.Lanes is null or 1))
+            {
+                // Gabelung: ein Stamm, zwei Äste
+                int incoming = list.Count(e => !e.AtStart);
+                if (incoming is 1 or 2)
+                {
+                    bool split = incoming == 1;
+                    int stem = list.FindIndex(e => split ? !e.AtStart : e.AtStart);
+                    var fa = list.Select(e => new Arm(e.R, Away(e.R, e.AtStart))).ToArray();
+                    if (fa.Any(a => a.Away.LengthSquared() < 0.5f)) continue;
+                    var ord = Enumerable.Range(0, 3).Where(i => i != stem).Append(stem).ToList();
+                    var anc = MapWriter.ToVector(list[0].AtStart ? list[0].R.Points[0] : list[0].R.Points[^1]);
+                    plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = split ? FSPLIT : FJOIN,
+                                         Arms = ord.Select(i => fa[i]).ToArray() });
+                }
+                continue;
+            }
             if (oneway > list.Count - 2) continue;  // Rampengabelung o. Ä.
 
             var arms = list.Select(e => new Arm(e.R, Away(e.R, e.AtStart))).ToArray();
@@ -154,6 +200,11 @@ public static class Junctions
                 if (sideArms.Length > p.Def.Side.Length) continue;
                 var nodes = new List<ushort> { p.Def.Through[flip ? 1 : 0], p.Def.Through[flip ? 0 : 1] };
                 nodes.AddRange(perm.Take(sideArms.Length).Select(k => p.Def.Side[k]));
+                if (p.ForceNodes is not null)
+                {
+                    if (flip || perm[0] != 0) continue;
+                    nodes = p.ForceNodes.ToList();
+                }
                 // mittlere Drehung (Kreismittel der Winkeldifferenzen)
                 float sx = 0, sy = 0;
                 for (int i = 0; i < nodes.Count; i++)
@@ -187,7 +238,9 @@ public static class Junctions
         p.Rotation = Interchanges.YawTo(ppd, unit, new Vector3(v0.X, 0, v0.Y), new Vector3(target.X, 0, target.Y));
         var placed = Interchanges.CalibrateNodes(ppd, unit, p.Rotation);
         // Kreuzungsmitte = Mitte der beiden durchgehenden Knoten
-        var center = (placed[p.Def.Through[0]] + placed[p.Def.Through[1]]) / 2;
+        var center = p.Def == FSPLIT || p.Def == FJOIN || p.Def == SPLIT2
+            ? (placed[0] + placed[1] + placed[2]) / 3
+            : (placed[p.Def.Through[0]] + placed[p.Def.Through[1]]) / 2;
         var shift = p.Anchor - center;
         p.NodePos = placed.Select(v => v + shift).ToArray();
         p.Position = p.NodePos[0];
