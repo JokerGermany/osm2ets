@@ -335,6 +335,17 @@ public static class MapWriter
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted})");
         }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_ONLYBOX") is { } ob)
+        {
+            var q = ob.Split(',').Select(float.Parse).ToArray(); // x0,z0,x1,z1
+            bool In(Vector3 v) => v.X >= q[0] && v.X <= q[2] && v.Z >= q[1] && v.Z <= q[3];
+            foreach (var it in map.MapItems.Values.ToList())
+            {
+                bool keep = it is Terrain t ? In(t.Node.Position) || In(t.ForwardNode.Position)
+                          : it is Road r ? In(r.Node.Position) || In(r.ForwardNode.Position) : false;
+                if (!keep) map.Delete(it);
+            }
+        }
         if (Environment.GetEnvironmentVariable("OSM2ETS_TPROBE") is { } tp)
         {
             var q = tp.Split(',').Select(float.Parse).ToArray();
