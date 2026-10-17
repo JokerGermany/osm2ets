@@ -177,7 +177,7 @@ def clamp_grade(z: np.ndarray, ea, eb, elen, grade: float, iterations: int = 200
 
 
 # Höchste Längsneigung nach RAA (Entwurfsklassen): EKA 1A 4 %, EKA 1B/2 4,5 %, Rampen ~6 %
-GRADE_BY_HIGHWAY = {"motorway": 0.04, "trunk": 0.045}
+GRADE_BY_HIGHWAY = {"motorway": 0.06, "trunk": 0.06}
 # Glättungsfenster der Geländehöhe längs der Straße (m): Autobahnen weiträumiger
 WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, "trunk_link": 140.0}
 
