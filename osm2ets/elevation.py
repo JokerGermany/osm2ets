@@ -183,6 +183,33 @@ GRADE_BY_HIGHWAY = {"motorway": 0.06, "trunk": 0.06}
 WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, "trunk_link": 140.0}
 
 
+DECK_THICKNESS_M = 1.2
+
+
+def parse_maxheight(value) -> Optional[float]:
+    """OSM maxheight → Meter; None bei fehlend/ungültig/none/default.
+    Erlaubt: "3.8", "3,8", "3.8 m", "12'6\"" (Fuß/Zoll)."""
+    if not value:
+        return None
+    v = str(value).strip().lower().split(";")[0]
+    if v in ("none", "default", "below_default", "no_sign", "no_indications", "unsigned"):
+        return None
+    import re
+    m = re.fullmatch(r"(\d+)\s*'\s*(?:(\d+)\s*\"?)?", v)
+    if m:
+        return round(int(m.group(1)) * 0.3048 + int(m.group(2) or 0) * 0.0254, 2)
+    m = re.fullmatch(r"(\d+(?:[.,]\d+)?)\s*(m)?", v)
+    if m:
+        h = float(m.group(1).replace(",", "."))
+        return h if 1.5 <= h <= 10 else None
+    return None
+
+
+def _maxheight(piece: Piece, seg: int) -> Optional[float]:
+    tags = piece.chain.parts[piece.dense.seg_part[seg]].edge.way.tags
+    return parse_maxheight(tags.get("maxheight") or tags.get("maxheight:physical"))
+
+
 def _highway(piece: Piece, seg: int) -> str:
     return piece.chain.parts[piece.dense.seg_part[seg]].edge.highway
 
@@ -605,6 +632,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     # --- 4. höhenfreie Kreuzungen
     crossings = find_crossings([p.dense.xy_game for p in pieces])
     raised = sunk = 0
+    maxheight_used = 0
     iterations = 0
     for iterations in range(1, max_iterations + 1):
         z = heights()
@@ -621,7 +649,14 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
                 up, low, h_up, h_low, f_low = (a0, a1), (b0, b1), ha, hb, fb
             else:
                 up, low, h_up, h_low, f_low = (b0, b1), (a0, a1), hb, ha, fa
-            deficit = h_low + clearance - h_up
+            # eingetragene Durchfahrtshöhe (untere Straße, sonst Brücke) + Bauwerksdicke
+            mh = _maxheight(pieces[la], sa) if ra < rb else _maxheight(pieces[lb], sb)
+            if mh is None:
+                mh = _maxheight(pieces[lb], sb) if ra < rb else _maxheight(pieces[la], sa)
+            need = mh + DECK_THICKNESS_M if mh is not None else clearance
+            if mh is not None:
+                maxheight_used += 1
+            deficit = h_low + need - h_up
             if deficit <= 1e-6:
                 continue
             hw_up = _highway(pieces[la if ra >= rb else lb], sa if ra >= rb else sb)
@@ -694,6 +729,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
                                            if st.operator is None and len(st.interior)),
         "crossings_dense": len(crossings),
         "crossing_raised_points": raised,
+        "crossing_maxheight_used": maxheight_used,
         "crossing_sunk_points": sunk,
         "crossing_iterations": iterations,
         "overlap_ties": overlap_stats[0],
