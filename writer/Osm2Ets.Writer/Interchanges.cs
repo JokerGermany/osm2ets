@@ -371,6 +371,45 @@ public static class Interchanges
         return n;
     }
 
+    private static void DropInside(RoadEntry ramp, bool atStart, RoadEntry main, Vector3 node)
+    {
+        var mp = main.Points.Select(P).ToList();
+        float Dist(Vector2 q)
+        {
+            float best = float.MaxValue;
+            for (int i = 0; i < mp.Count - 1; i++)
+            {
+                var ab = mp[i + 1] - mp[i]; float l2 = ab.LengthSquared();
+                float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - mp[i], ab) / l2, 0, 1) : 0;
+                best = MathF.Min(best, Vector2.Distance(mp[i] + ab * t, q));
+            }
+            return best;
+        }
+        float need = Dist(new Vector2(node.X, node.Z)) + 1f;
+        var pts = ramp.Points;
+        int drop = 0;
+        while (pts.Count - drop > 2)
+        {
+            var q = P(atStart ? pts[drop] : pts[^(1 + drop)]);
+            if (Dist(q) >= need) break;
+            drop++;
+        }
+        if (drop == 0) return;
+        if (atStart)
+        {
+            pts.RemoveRange(0, drop);
+            ramp.Runs = ramp.Runs.Select(x => { x.From = Math.Max(0, x.From - drop); x.To = Math.Max(1, x.To - drop); return x; }).Where(x => x.To > x.From).ToList();
+        }
+        else
+        {
+            pts.RemoveRange(pts.Count - drop, drop);
+            int last = pts.Count - 1;
+            ramp.Runs = ramp.Runs.Select(x => { x.From = Math.Min(x.From, last - 1); x.To = Math.Min(x.To, last); return x; }).Where(x => x.To > x.From).ToList();
+        }
+        Dropped += drop;
+    }
+    public static int Dropped;
+
     private static Vector3 Flat(Vector3 v, Vector3 fallback)
     {
         v.Y = 0;
@@ -547,6 +586,10 @@ public static class Interchanges
         SetTail(p.MainIn, inNode.Position, InwardDirections[pl.First][pl.FirstIn]);
         SetHead(p.MainOut, outNode.Position, -InwardDirections[pl.Last][pl.LastOut]);
         var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];
+        // Das Prefab zweigt schneller ab als die OSM-Rampe: Rampenpunkte, die noch näher an der
+        // Hauptfahrbahn liegen als der Rampenknoten, entfernen (sonst schwenkt die Rampe zurück
+        // und kreuzt die Hauptfahrbahn)
+        DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
         if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn);
         else SetTail(p.Ramp, rampNode.Position, rampIn);
 

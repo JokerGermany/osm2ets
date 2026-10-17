@@ -124,7 +124,7 @@ public static class MapWriter
                     Console.Error.WriteLine($"IC {plan.OsmNode} {plan.Kind} anchor {plan.Anchor} grade {plan.Grade:0.000}");
                     foreach (var pf in new[] { pl.First, pl.Last }.Distinct()) for (int k = 0; k < pf.Nodes.Count; k++)
                         Console.Error.WriteLine($"   node {k} {pf.Nodes[k].Position} fwd {Vector3.Transform(Vector3.UnitZ * -1, pf.Nodes[k].Rotation)}");
-                    Console.Error.WriteLine("   in  " + R(plan.MainIn)); Console.Error.WriteLine("   out " + R(plan.MainOut)); Console.Error.WriteLine("   ramp " + R(plan.Ramp));
+                    foreach (var (nm, rr, st) in new[] { ("in", plan.MainIn, false), ("out", plan.MainOut, true), ("ramp", plan.Ramp, plan.Kind == "exit") }) { var pts = st ? rr.Points.Take(6) : rr.Points.TakeLast(6); Console.Error.WriteLine($"   {nm} {rr.Id}: " + string.Join(" | ", pts.Select(q => $"{q[0]:0.0},{q[1]:0.00},{q[2]:0.0}"))); }
                 }
                 placed.Add(pl);
             }
