@@ -66,7 +66,7 @@ public static class TerrainFill
                 var right = new Vector2(-dir.Y, dir.X);
                 float hw = st[k].Width / 2;
                 // Füllgelände darf 3 m über den Geländestreifen der Straße reichen (keine Lücke)
-                float wl = hw + MathF.Min(MathF.Max(1, st[k].TerrainLeft - 3), MaskTerrain), wr = hw + MathF.Min(MathF.Max(1, st[k].TerrainRight - 3), MaskTerrain);
+                float wl = hw + MathF.Min(MathF.Max(0, st[k].TerrainLeft - 3), MaskTerrain), wr = hw + MathF.Min(MathF.Max(0, st[k].TerrainRight - 3), MaskTerrain);
                 for (float s = 0; s <= len; s += MaskCell / 2)
                 {
                     var c = a + dir * s;
@@ -85,9 +85,9 @@ public static class TerrainFill
                 var a = new Vector2(n.X, n.Z);
                 float len = Vector2.Distance(a, c);
                 for (float s2 = 0; s2 <= len; s2 += MaskCell / 2)
-                    Mark(Vector2.Lerp(a, c, len > 0 ? s2 / len : 0), hw + 2);
+                    Mark(Vector2.Lerp(a, c, len > 0 ? s2 / len : 0), hw);
             }
-            Mark(c, hw + 2);
+            Mark(c, hw);
         }
 
         bool Free(float x, float z)
