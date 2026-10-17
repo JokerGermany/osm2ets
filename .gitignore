@@ -1,0 +1,10 @@
+# Python
+__pycache__/
+*.egg-info/
+.pytest_cache/
+.venv/
+# .NET
+bin/
+obj/
+# Arbeitsordner von scripts/build_map.sh
+build/
