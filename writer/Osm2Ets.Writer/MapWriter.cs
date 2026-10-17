@@ -231,6 +231,9 @@ public static class MapWriter
                 {
                     if (!firstItem.TryGetValue(entry, out var it)) continue;
                     var hw = styles[entry][0].Width / 2;
+                    var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
+                    TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'A';
+                    TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
                     for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
                     {
                         rd.Recalculate();
@@ -244,8 +247,10 @@ public static class MapWriter
                 }
                 warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}");
             }
+            if (Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null) {
             var tf = TerrainFill.Build(map, tg, valid, styles, obstacles);
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}");
+            }
         }
 
         int prefabCount = 0;

@@ -24,7 +24,7 @@ public static class TerrainFill
     /// <summary>Höhenpunkte quer setzen (ungeprüft im Spiel); sonst ebene Streifen wie v17.</summary>
     public static bool Shape = true;
     /// <summary>Straßengelände breit (bis zur Nachbarstraße) und an das Höhenraster angepasst.</summary>
-    public static bool WideRoadTerrain = true;
+    public static bool WideRoadTerrain = Environment.GetEnvironmentVariable("OSM2ETS_WIDE") is not null;
     /// <summary>Annahme: Offsets des Straßengeländes zählen ab Straßenmitte (true) oder ab Geländebeginn (false).</summary>
     public static bool RoadEdgeInData = false;
     public static int Mismatch;
@@ -288,9 +288,15 @@ public static class TerrainFill
                 float roadY = pa.Y + (pb.Y - pa.Y) * (cols > 1 ? (float)i / (cols - 1) : 0);
                 float t = Math.Clamp(rowsD[j] / 10f, 0, 1);
                 h = roadY + (h - roadY) * t;
-                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(x, h - pa.Y, zSign * d) });
+                var off = Mode is 'C' or 'D'
+                    ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen
+                    : new Vector3(x, h - pa.Y, zSign * d);                 // lokal
+                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = off });
                 n++;
             }
         return n;
     }
+
+    /// <summary>Testvariante: A lokal ab Geländebeginn, B lokal ab Straßenmitte, C Weltachsen.</summary>
+    [ThreadStatic] public static char Mode;
 }
