@@ -13,7 +13,7 @@ import numpy as np
 
 
 def build_grid(roads: list[dict], dem, profile, cell: float = 20.0, margin: float = 150.0,
-               blend_from: float = 12.0, blend_to: float = 80.0) -> dict | None:
+               blend_from: float = 24.0, blend_to: float = 110.0) -> dict | None:
     if dem is None or not roads:
         return None
     from scipy import ndimage
