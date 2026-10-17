@@ -576,6 +576,19 @@ public static class Interchanges
         Vector3.Normalize(new Vector3(horizontal.X, grade, horizontal.Z));
 
     /// <summary>Passt die Straßen an die gesetzten Prefabs an (vor dem Bau der Straßen).</summary>
+    /// <summary>Knotendrehungen ohne Rollen: nur Gier und Längsneigung.</summary>
+    public static void FixRotations(Placed pl)
+    {
+        var p = pl.Plan;
+        var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];
+        pl.First.Nodes[pl.FirstIn].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], p.Grade));
+        pl.Last.Nodes[pl.LastOut].Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], p.Grade));
+        pl.RampPrefab.Nodes[pl.RampNode].Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            foreach (var n in new[] { pl.First.Nodes[pl.FirstIn], pl.Last.Nodes[pl.LastOut], pl.RampPrefab.Nodes[pl.RampNode] })
+                Console.Error.WriteLine($"   rot {n.Position} right {Vector3.Transform(Vector3.UnitX, n.Rotation)} up {Vector3.Transform(Vector3.UnitY, n.Rotation)}");
+    }
+
     public static void Adjust(Placed pl)
     {
         var p = pl.Plan;

@@ -305,6 +305,7 @@ public static class MapWriter
                 pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
                 if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
                 else pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
+                Interchanges.FixRotations(pl);   // Attach übernimmt sonst die gekippte Prefab-Knotendrehung
                 foreach (var pf in new[] { pl.First, pl.Last })
                     RegisterSector(map, pf.Nodes[0].Position);
                 prefabCount += 2;
