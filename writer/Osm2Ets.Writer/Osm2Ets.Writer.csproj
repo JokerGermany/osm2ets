@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>osm2ets-writer</AssemblyName>
+    <RootNamespace>Osm2Ets.Writer</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <Version>0.1.0</Version>
+    <!-- GPL-2.0-or-later, weil TruckLib unter GPL v2 steht (siehe README) -->
+    <PackageLicenseExpression>GPL-2.0-or-later</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- TruckLib 0.5.1 schreibt Kartenformat 907 = ETS2 1.59–1.61 -->
+    <PackageReference Include="TruckLib" Version="0.5.1" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="mapping.jsonc" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Osm2Ets.Writer.Tests" />
+  </ItemGroup>
+
+</Project>

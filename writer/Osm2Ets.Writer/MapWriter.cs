@@ -1,0 +1,390 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+using System.Numerics;
+using TruckLib;
+using TruckLib.ScsMap;
+
+namespace Osm2Ets.Writer;
+
+public sealed record WriteResult(
+    int RoadsWritten,
+    int RoadsSkipped,
+    int Items,
+    int StyleChanges,
+    Vector3 StartPosition,
+    string? StartRoad,
+    List<string> Warnings,
+    int Connections = 0,
+    int Reversed = 0,
+    int TerrainClamped = 0);
+
+/// <summary>Baut aus dem Zwischenformat eine TruckLib-Karte.</summary>
+public static class MapWriter
+{
+    // Spielgrenzen (TruckLib: Road.MinLength bei HighPoly, Road.MaxLength).
+    // TruckLib prüft beides NICHT selbst; doppelte Punkte bringen den Prozess
+    // sogar zum Absturz (Stapelüberlauf). Daher hier streng prüfen.
+    public const float MinSegment = 1.25f;
+    public const float MaxSegment = 1000f;
+
+    public static (Map Map, WriteResult Result) Build(IntermediateFile input, MappingConfig mapping,
+        Interchanges.PpdSource? prefabs = null)
+    {
+        var map = new Map
+        {
+            NormalScale = mapping.Map.NormalScale ?? (float)input.Projection.Scale,
+            CityScale = mapping.Map.CityScale ?? (float)input.Projection.Scale,
+        };
+
+        var warnings = new List<string>();
+        int written = 0, skipped = 0, items = 0, styleChanges = 0;
+        RoadEntry? startRoad = null;
+
+        var valid = new List<RoadEntry>();
+        foreach (var entry in input.Roads)
+        {
+            var problem = Validate(entry, out _, out _);
+            if (problem is not null)
+            {
+                skipped++;
+                warnings.Add($"{entry.Id}: übersprungen – {problem}");
+                continue;
+            }
+            valid.Add(entry);
+        }
+        // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
+        foreach (var entry in valid) LaneSmoothing.Apply(entry);
+        var interchangePlans = new List<Interchanges.Plan>();
+        if (prefabs is not null)
+        {
+            foreach (var plan in Interchanges.Find(valid, warnings))
+            {
+                bool ok;
+                try { ok = Interchanges.Prepare(plan, prefabs); }
+                catch (Exception ex) { warnings.Add($"Knoten {plan.OsmNode}: {ex.Message}"); ok = false; }
+                if (!ok) { warnings.Add($"Knoten {plan.OsmNode} ({plan.Kind}): Straßen zu kurz für Prefabs – übersprungen"); continue; }
+                plan.MainIn.End = new EndInfo { Kind = "prefab" };
+                plan.MainOut.Start = new EndInfo { Kind = "prefab" };
+                if (plan.Kind == "exit") plan.Ramp.Start = new EndInfo { Kind = "prefab" };
+                else plan.Ramp.End = new EndInfo { Kind = "prefab" };
+                interchangePlans.Add(plan);
+            }
+        }
+
+        // ebenerdige Kreuzungen normaler Straßen (T/X-Prefabs)
+        var junctionPlans = new List<Junctions.Plan>();
+        Junctions.Fixed.Clear();
+        if (prefabs is not null)
+        {
+            string TypeAt(RoadEntry r, bool atStart) => mapping.Resolve(atStart ? r.Runs[0] : r.Runs[^1]).RoadType;
+            foreach (var jp in Junctions.Find(valid, TypeAt, warnings))
+            {
+                try
+                {
+                    if (Junctions.Prepare(jp, prefabs, out var reason)) junctionPlans.Add(jp);
+                    else warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): kein Prefab – {reason}");
+                }
+                catch (Exception ex) { warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): {ex.GetType().Name}: {ex.Message}"); }
+            }
+        }
+
+        var (pairs, reversed) = Connector.Plan(valid, Junctions.Fixed);
+        var firstItem = new Dictionary<RoadEntry, Road>();
+        var lastItem = new Dictionary<RoadEntry, Road>();
+
+        // Prefabs zuerst setzen, dann die Straßen tangential an ihre Knoten heranführen
+        var placed = new List<Interchanges.Placed>();
+        foreach (var plan in interchangePlans)
+        {
+            try
+            {
+                var pl = Interchanges.Build(map, plan, prefabs!);
+                Interchanges.Adjust(pl);
+                placed.Add(pl);
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Knoten {plan.OsmNode} ({plan.Kind}): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+
+        // Stile je Abschnitt auflösen, dann Gelände an Nachbarstraßen anpassen
+        var styles = new Dictionary<RoadEntry, ResolvedStyle[]>();
+        foreach (var entry in valid)
+        {
+            Validate(entry, out var pts, out var ros);
+            styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
+        }
+        int separated = CarriagewaySeparation.Apply(valid, styles);
+        if (separated > 0) warnings.Add($"Info: {separated} Richtungsfahrbahnen seitlich verschoben (OSM-Abstand kleiner als Vorlagenbreite)");
+        int terrainClamped = TerrainClearance.Apply(valid, styles);
+
+        foreach (var entry in valid)
+        {
+            Validate(entry, out var points, out var runOfSegment);
+
+            Road? road = null;
+            ResolvedStyle? previous = null;
+            for (int i = 0; i < points.Count - 1; i++)
+            {
+                var style = styles[entry][i];
+                // Auflösung mit zu großer Mindestlänge für dieses Stück: HighPoly nehmen
+                float length = Vector3.Distance(points[i], points[i + 1]);
+                if (length < MinLengthFor(style.Resolution))
+                    style = style with { Resolution = RoadResolution.HighPoly };
+                if (road is null)
+                {
+                    road = Road.Add(map, points[0], points[1], style.RoadType, style.TerrainLeft, style.TerrainRight);
+                    ApplyStyle(road, style);
+                }
+                else if (style == previous)
+                {
+                    road = road.Append(points[i + 1]);
+                }
+                else
+                {
+                    road = road.Append(points[i + 1], style.RoadType, style.TerrainLeft, style.TerrainRight);
+                    ApplyStyle(road, style);
+                    styleChanges++;
+                }
+                RegisterSector(map, road);
+                if (i == 0) firstItem[entry] = road;
+                previous = style;
+                items++;
+            }
+            lastItem[entry] = road!;
+            written++;
+
+            if (IsBetterStart(entry, startRoad))
+                startRoad = entry;
+        }
+
+        var startPos = Vector3.Zero;
+        if (startRoad is not null)
+        {
+            int k = StartSegment(startRoad);
+            var a = ToVector(startRoad.Points[k]);
+            var b = ToVector(startRoad.Points[k + 1]);
+            startPos = (a + b) / 2f;  // Mitte des Abschnitts, nicht an einem Bauwerksende
+            map.StartPosition = startPos;
+            map.StartRotation = MathEx.GetNodeRotation(a, b);
+        }
+
+        // Durchgehende Fahrbahnen an Knoten verbinden (Ende von A = Anfang von B)
+        int connections = 0;
+        foreach (var (a, b) in pairs)
+        {
+            try
+            {
+                lastItem[a].ForwardNode.Merge(firstItem[b].Node);
+                connections++;
+            }
+            catch (InvalidOperationException ex)
+            {
+                warnings.Add($"{a.Id} → {b.Id}: nicht verbunden – {ex.Message}");
+            }
+        }
+
+        int prefabCount = 0;
+        foreach (var pl in placed)
+        {
+            var plan = pl.Plan;
+            try
+            {
+                pl.First.Attach(pl.FirstIn, lastItem[plan.MainIn].ForwardNode);
+                pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
+                if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
+                else pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
+                foreach (var pf in new[] { pl.First, pl.Last })
+                    RegisterSector(map, pf.Nodes[0].Position);
+                prefabCount += 2;
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Knoten {plan.OsmNode} ({plan.Kind}): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+        int junctionsSet = 0;
+        foreach (var jp in junctionPlans)
+        {
+            try
+            {
+                var pf = Junctions.Build(map, jp, prefabs!);
+                try
+                {
+                    // Knoten 0 zuerst, damit ein Fehler dort nichts halb verbunden zurücklässt
+                    foreach (int i in Enumerable.Range(0, jp.Arms.Length).OrderBy(i => jp.NodeOf[i]))
+                    {
+                        var a = jp.Arms[i];
+                        var at = pf.Nodes[jp.NodeOf[i]].Position;
+                        if (Junctions.StartsAt(a.Road, at)) pf.Attach(jp.NodeOf[i], firstItem[a.Road].Node);
+                        else pf.Attach(jp.NodeOf[i], lastItem[a.Road].ForwardNode);
+                    }
+                }
+                catch { map.Delete(pf); throw; }
+                RegisterSector(map, pf.Nodes[0].Position);
+                foreach (var n in pf.Nodes) RegisterSector(map, n.Position);
+                junctionsSet++;
+            }
+            catch (Exception ex)
+            {
+                warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+        if (prefabs is not null)
+            warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt");
+        if (prefabs is not null)
+            warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
+
+        return (map, new WriteResult(written, skipped, items, styleChanges, startPos, startRoad?.Id, warnings,
+                                     connections, reversed, terrainClamped));
+    }
+
+    private static void ApplyStyle(Road road, ResolvedStyle style)
+    {
+        // flaches Gelände neben der Straße (Standard wäre 100 % Rauschen)
+        road.Left.Terrain.Noise = TerrainNoise.Percent0;
+        road.Right.Terrain.Noise = TerrainNoise.Percent0;
+        if (road.Resolution != style.Resolution)
+        {
+            road.Resolution = style.Resolution;
+            // TruckLib hat das Geländeraster schon für HighPoly berechnet
+            road.Recalculate();
+        }
+        style.Left?.ApplyTo(road.Left);
+        style.Right?.ApplyTo(road.Right);
+        road.Boundary = style.Boundary;
+        // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
+        // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
+        road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
+    }
+
+    /// <summary>Mindestlänge eines Straßenstücks je Auflösung (TruckLib Road.MinLength).</summary>
+    internal static float MinLengthFor(RoadResolution resolution) => resolution switch
+    {
+        RoadResolution.Superfine => 0.4f,
+        RoadResolution.Normal => 3.75f,
+        _ => 1.25f,
+    };
+
+    /// <summary>
+    /// TruckLib 0.5.1 legt beim Anhängen keinen Sektor für den Mittelpunkt des
+    /// neuen Stücks an; Map.Save schreibt nur angelegte Sektoren. Ein Stück,
+    /// dessen Mittelpunkt in einem Sektor ohne Knoten liegt, ginge sonst beim
+    /// Speichern verloren.
+    /// </summary>
+    private static void RegisterSector(Map map, Road road) =>
+        map.AddSector(Map.GetSectorOfCoordinate((road.Node.Position + road.ForwardNode.Position) / 2f));
+
+    private static void RegisterSector(Map map, Vector3 pos) => map.AddSector(Map.GetSectorOfCoordinate(pos));
+
+    /// <summary>Startpunkt für "Run Map": möglichst eine lange Autobahn-Richtungsfahrbahn.</summary>
+    private static bool IsBetterStart(RoadEntry candidate, RoadEntry? current)
+    {
+        static int Rank(RoadEntry r) =>
+            r.Runs.Any(x => x.Highway == "motorway") ? 0 :
+            r.Role == "core" ? 1 : 2;
+        if (candidate.Points.Count < 2) return false;
+        if (current is null) return true;
+        int rc = Rank(candidate), rr = Rank(current);
+        return rc < rr || (rc == rr && candidate.LengthM > current.LengthM);
+    }
+
+    /// <summary>
+    /// Legt für jeden Sektor ohne .layer-Datei eine leere an (Kopf der .base-Datei
+    /// + EOF-Marker). Hintergrund: Laut SCS-Modding-Wiki braucht ein Sektor die
+    /// Dateien .aux, .base, .data, .desc und .layer; TruckLib schreibt .layer nur,
+    /// wenn ein Item eine Editor-Ebene hat (die map-docs nennen die Datei optional).
+    /// Eine leere Datei ist in beiden Lesarten unschädlich.
+    /// </summary>
+    public static int EnsureLayerFiles(string sectorDirectory)
+    {
+        const int headerSize = 16; // u32 Formatversion, Token "euro2", u32 game_map_version
+        int created = 0;
+        foreach (var basePath in Directory.EnumerateFiles(sectorDirectory, "*.base"))
+        {
+            var layerPath = Path.ChangeExtension(basePath, ".layer");
+            if (File.Exists(layerPath)) continue;
+            var header = new byte[headerSize];
+            using (var input = File.OpenRead(basePath))
+                input.ReadExactly(header);
+            using var output = File.Create(layerPath);
+            output.Write(header);
+            output.Write(BitConverter.GetBytes(ulong.MaxValue)); // EOF-Marker 0xFFFFFFFFFFFFFFFF
+            created++;
+        }
+        return created;
+    }
+
+    /// <summary>
+    /// Abschnitt möglichst in Straßenmitte, der selbst und dessen Nachbarn weder
+    /// auf einer Brücke noch im Tunnel liegen (ersatzweise nur er selbst).
+    /// </summary>
+    internal static int StartSegment(RoadEntry road)
+    {
+        int segments = road.Points.Count - 1;
+        int mid = segments / 2;
+        bool Plain(int k)
+        {
+            if (k < 0 || k >= segments) return true;
+            var run = road.Runs.FirstOrDefault(r => r.From <= k && k < r.To);
+            return run is not null && !run.Bridge && !run.Tunnel;
+        }
+        foreach (bool strict in new[] { true, false })
+        {
+            for (int d = 0; d <= segments; d++)
+            {
+                foreach (var k in new[] { mid + d, mid - d })
+                {
+                    if (k < 0 || k >= segments || !Plain(k)) continue;
+                    if (!strict || (Plain(k - 1) && Plain(k + 1)))
+                        return k;
+                }
+            }
+        }
+        return Math.Clamp(mid, 0, segments - 1);
+    }
+
+    public static Vector3 ToVector(double[] p) => new((float)p[0], (float)p[1], (float)p[2]);
+
+    /// <summary>Prüft ein Straßenstück und liefert Punkte und Lauf je Abschnitt.</summary>
+    internal static string? Validate(RoadEntry entry, out List<Vector3> points, out int[] runOfSegment)
+    {
+        points = [];
+        runOfSegment = [];
+        if (entry.Points.Count < 2)
+            return "weniger als zwei Punkte";
+        foreach (var p in entry.Points)
+        {
+            if (p.Length != 3 || p.Any(v => double.IsNaN(v) || double.IsInfinity(v)))
+                return "ungültige Koordinate";
+            points.Add(ToVector(p));
+        }
+        int segments = points.Count - 1;
+        for (int i = 0; i < segments; i++)
+        {
+            float len = Vector3.Distance(points[i], points[i + 1]);
+            if (len < MinSegment)
+                return $"Abschnitt {i} ist {len:0.###} m kurz (Minimum {MinSegment} m)";
+            if (len > MaxSegment)
+                return $"Abschnitt {i} ist {len:0.#} m lang (Maximum {MaxSegment} m)";
+        }
+        runOfSegment = new int[segments];
+        Array.Fill(runOfSegment, -1);
+        for (int r = 0; r < entry.Runs.Count; r++)
+        {
+            var run = entry.Runs[r];
+            if (run.From < 0 || run.To > segments || run.From >= run.To)
+                return $"Lauf {r} hat ungültige Grenzen {run.From}..{run.To}";
+            for (int s = run.From; s < run.To; s++)
+            {
+                if (runOfSegment[s] != -1)
+                    return $"Abschnitt {s} gehört zu mehreren Läufen";
+                runOfSegment[s] = r;
+            }
+        }
+        if (runOfSegment.Any(r => r == -1))
+            return "nicht alle Abschnitte haben Attribute";
+        return null;
+    }
+}
