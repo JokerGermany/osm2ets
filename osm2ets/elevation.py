@@ -177,6 +177,7 @@ def clamp_grade(z: np.ndarray, ea, eb, elen, grade: float, iterations: int = 200
 
 
 # Höchste Längsneigung nach RAA (Entwurfsklassen): EKA 1A 4 %, EKA 1B/2 4,5 %, Rampen ~6 %
+MAJOR = {"motorway", "trunk"}
 GRADE_BY_HIGHWAY = {"motorway": 0.06, "trunk": 0.06}
 # Glättungsfenster der Geländehöhe längs der Straße (m): Autobahnen weiträumiger
 WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, "trunk_link": 140.0}
@@ -574,7 +575,15 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     max_offset = clearance * profile.max_bridge_levels
     lift = np.zeros(total)
     sink = np.zeros(total)
+    # Autobahn-/Kraftfahrstraßen-Brücken nicht pauschal anheben: dort wird stattdessen
+    # die untere Straße abgesenkt (siehe höhenfreie Kreuzungen)
+    major_edge = []
+    for p in pieces:
+        for j in range(len(p.dense.xy) - 1):
+            major_edge.append(_highway(p, j) in MAJOR)
     for st in bridges:
+        if all(major_edge[e] for e in st.edges):
+            continue
         for e in st.edges:
             value = min(clearance * max(flags_l[e][2], 1), max_offset)
             lift[ea[e]] = max(lift[ea[e]], value)
@@ -615,7 +624,10 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             deficit = h_low + clearance - h_up
             if deficit <= 1e-6:
                 continue
-            if f_low[1]:  # unten liegt ein Tunnel: absenken
+            hw_up = _highway(pieces[la if ra >= rb else lb], sa if ra >= rb else sb)
+            hw_low = _highway(pieces[lb if ra >= rb else la], sb if ra >= rb else sa)
+            if f_low[1] or (hw_up in MAJOR and hw_low not in MAJOR):
+                # Tunnel oder untergeordnete Straße unter Autobahn: unten absenken
                 target, values, seeds = low, sink, sink_seeds
             else:          # sonst die obere Straße anheben
                 target, values, seeds = up, lift, lift_seeds
