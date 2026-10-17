@@ -73,6 +73,16 @@ network:
   # service-Wege dieser Arten zählen nicht als Straße.
   exclude_service: [parking_aisle, driveway, drive-through, emergency_access]
 
+# Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen
+industry:
+  enabled: true
+  # Straßenklassen, über die eine Zufahrt führen darf
+  highway: [tertiary, unclassified, residential, service, living_street]
+  # Höchstens so weit (Echtmeter, Weg entlang der Straße) vom gewählten Netz entfernt
+  max_distance_m: 300
+  # So weit wird noch ins Gebiet hineingefahren (Platz für ein Firmen-Prefab)
+  inside_m: 150
+
 lods:
   L1:
     description: >-

@@ -80,6 +80,7 @@ class Profile:
     exclude_access: frozenset
     exclude_service: frozenset
     lods: dict = field(default_factory=dict)
+    industry: dict = field(default_factory=dict)
 
     def lod(self, name: str) -> LodConfig:
         try:
@@ -216,6 +217,13 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         exclude_access=_str_set(net.get("exclude_access", []), "network.exclude_access"),
         exclude_service=_str_set(net.get("exclude_service", []), "network.exclude_service"),
         lods=lods,
+        industry={
+            "enabled": bool((data.get("industry") or {}).get("enabled", True)),
+            "highway": _str_set((data.get("industry") or {}).get(
+                "highway", ["tertiary", "unclassified", "residential", "service", "living_street"]), "industry.highway"),
+            "max_distance_m": float((data.get("industry") or {}).get("max_distance_m", 300.0)),
+            "inside_m": float((data.get("industry") or {}).get("inside_m", 150.0)),
+        },
     )
     validate_geometry(profile)
     return profile
