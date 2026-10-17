@@ -238,6 +238,7 @@ public static class TerrainFill
             var pb = new Vector3(run[b].X, grid.HeightAt(run[b].X, z), z);
             t = t is null ? Terrain.Add(map, pa, pb, material, l, r) : t.Append(pb, material, l, r);
             t.Boundary = false;
+            t.IgnoreCutPlanes = true;   // Prefabs schneiden sonst Gelände in ihrer Umgebung weg
             t.ViewDistance = 1000;
             t.Left.Terrain.Noise = TerrainNoise.Percent0;
             t.Right.Terrain.Noise = TerrainNoise.Percent0;
