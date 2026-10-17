@@ -150,6 +150,25 @@ public static class MapWriter
             styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
         }
         int separated = CarriagewaySeparation.Apply(valid, styles);
+        // An Anschluss-Prefabs kein Straßengelände auf den ersten 30 m: die Geländestreifen von
+        // Rampe und Hauptfahrbahn kreuzen sich dort im spitzen Winkel und falten sich ins Prefab
+        foreach (var pl in interchangePlans)
+        {
+            void Clear(RoadEntry r, bool atStart)
+            {
+                if (!styles.TryGetValue(r, out var st)) return;
+                double acc = 0;
+                int n = r.Points.Count - 1;
+                for (int k = 0; k < n && acc < IcTerrainGap; k++)
+                {
+                    int i = atStart ? k : n - 1 - k;
+                    st[i] = st[i] with { TerrainLeft = 0, TerrainRight = 0 };
+                    acc += Vector3.Distance(ToVector(r.Points[i]), ToVector(r.Points[i + 1]));
+                }
+            }
+            Clear(pl.MainIn, false); Clear(pl.MainOut, true);
+            Clear(pl.Ramp, pl.Kind == "exit");
+        }
         if (separated > 0) warnings.Add($"Info: {separated} Richtungsfahrbahnen seitlich verschoben (OSM-Abstand kleiner als Vorlagenbreite)");
         // Prefab-Flächen als Hindernisse: Strecken von jedem Knoten zur Prefab-Mitte
         var obstacles = new List<(Vector3[] Nodes, float HalfWidth)>();
@@ -402,6 +421,8 @@ public static class MapWriter
         foreach (var run in r.Runs) { run.From = map[run.From]; run.To = map[run.To]; }
         r.Points = np;
     }
+
+    public const float IcTerrainGap = 30f;
 
     private static void ApplyStyle(Road road, ResolvedStyle style)
     {
