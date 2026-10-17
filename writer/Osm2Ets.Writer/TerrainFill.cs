@@ -23,6 +23,10 @@ public static class TerrainFill
 
     /// <summary>Höhenpunkte quer setzen (ungeprüft im Spiel); sonst ebene Streifen wie v17.</summary>
     public static bool Shape = true;
+    /// <summary>Straßengelände breit (bis zur Nachbarstraße) und an das Höhenraster angepasst.</summary>
+    public static bool WideRoadTerrain = true;
+    /// <summary>Annahme: Offsets des Straßengeländes zählen ab Straßenmitte (true) oder ab Geländebeginn (false).</summary>
+    public static bool RoadEdgeInData = false;
     public static int Mismatch;
     public static double Uncovered;
 
@@ -246,6 +250,45 @@ public static class TerrainFill
                 float h = grid.HeightAt(pa.X + x, z);
                 if (float.IsNaN(h)) continue;
                 q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(x, h - pa.Y, zSign * rowsD[j]) });
+                n++;
+            }
+        return n;
+    }
+
+    /// <summary>
+    /// Wie ShapeSide, aber für das Gelände eines Straßenstücks beliebiger Richtung.
+    /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
+    /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
+    /// </summary>
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge)
+    {
+        var q = side.QuadData;
+        q.Offsets.Clear();
+        if (size <= 0) return 0;
+        var rowsD = RowDistances(size);
+        int rows = q.Rows, cols = q.Cols;
+        if (rows < 1 || cols < 1) return 0;
+        if (rowsD.Count != rows + 1 && rowsD.Count != rows) return -1;
+        var f = new Vector2(pb.X - pa.X, pb.Z - pa.Z);
+        float len = f.Length();
+        if (len < 1e-3f) return 0;
+        f /= len;
+        var rn = new Vector2(-f.Y, f.X);
+        int n = 0;
+        // Höhe am Straßenrand (Zeile 0) folgt der Straße; nur äußere Zeilen anpassen,
+        // die ersten ~10 m weich überblenden
+        for (int j = 1; j < rowsD.Count; j++)
+            for (int i = 0; i < cols; i++)
+            {
+                float x = cols > 1 ? len * i / (cols - 1) : 0;
+                float d = edge + rowsD[j];
+                var w = new Vector2(pa.X, pa.Z) + f * x + rn * (zSign * d);
+                float h = grid.HeightAt(w.X, w.Y);
+                if (float.IsNaN(h)) continue;
+                float roadY = pa.Y + (pb.Y - pa.Y) * (cols > 1 ? (float)i / (cols - 1) : 0);
+                float t = Math.Clamp(rowsD[j] / 10f, 0, 1);
+                h = roadY + (h - roadY) * t;
+                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(x, h - pa.Y, zSign * d) });
                 n++;
             }
         return n;

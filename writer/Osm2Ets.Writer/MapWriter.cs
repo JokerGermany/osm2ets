@@ -126,6 +126,11 @@ public static class MapWriter
         // Abzweige ohne Prefab bis an den Fahrbahnrand der anderen Straße zurücknehmen
         int branchesTrimmed = Overlaps.TrimBranches(valid, pairs, run => mapping.Resolve(run).Width / 2, warnings);
 
+        // lange Abschnitte teilen, damit die Geländebreite nicht über hunderte Meter
+        // an der engsten Stelle hängt
+        if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } && TerrainFill.WideRoadTerrain)
+            foreach (var entry in valid) Subdivide(entry, 40f);
+
         // Stile je Abschnitt auflösen, dann Gelände an Nachbarstraßen anpassen
         var styles = new Dictionary<RoadEntry, ResolvedStyle[]>();
         foreach (var entry in valid)
@@ -141,8 +146,14 @@ public static class MapWriter
             foreach (var pf in new[] { pl.First, pl.Last }.Distinct())
                 obstacles.Add((pf.Nodes.Select(n => n.Position).ToArray(), 8f));
         foreach (var jp in junctionPlans) obstacles.Add((jp.NodePos, 6f));
+        TerrainClearance.Share = false; TerrainClearance.SearchRadius = 80f;
+        if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } && TerrainFill.WideRoadTerrain) TerrainClearance.Widen(styles);
+        string Stat(string n) { var all = styles.Values.SelectMany(x => x).ToList(); return $"{n}: L {all.Average(x => x.TerrainLeft):0.0} R {all.Average(x => x.TerrainRight):0.0} L0 {all.Count(x => x.TerrainLeft <= 0)} R0 {all.Count(x => x.TerrainRight <= 0)}"; }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("vor"));
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("enforce"));
         var overlaps = Overlaps.Report(valid, styles, pairs, obstacles);
 
         foreach (var entry in valid)
@@ -213,6 +224,26 @@ public static class MapWriter
 
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg)
         {
+            if (TerrainFill.WideRoadTerrain)
+            {
+                int shaped = 0, bad = 0;
+                foreach (var entry in valid)
+                {
+                    if (!firstItem.TryGetValue(entry, out var it)) continue;
+                    var hw = styles[entry][0].Width / 2;
+                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
+                    {
+                        rd.Recalculate();
+                        float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
+                        var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
+                        if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg, pa, pb, rd.Left.Terrain.Size, -1, e) < 0) bad++;
+                        if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg, pa, pb, rd.Right.Terrain.Size, +1, e) < 0) bad++;
+                        shaped++;
+                        if (rd == lastItem[entry]) break;
+                    }
+                }
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}");
+            }
             var tf = TerrainFill.Build(map, tg, valid, styles, obstacles);
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}");
         }
@@ -282,6 +313,39 @@ public static class MapWriter
 
         return (map, new WriteResult(written, skipped, items, styleChanges, startPos, startRoad?.Id, warnings,
                                      connections, reversed, terrainClamped, overlaps, branchesTrimmed));
+    }
+
+    /// <summary>
+    /// Abschnitte länger als maxLen teilen. Neue Punkte auf einer Catmull-Rom-Kurve durch
+    /// die Nachbarpunkte (nähert die Spielkurve), Höhe linear. Runs werden umnummeriert.
+    /// </summary>
+    internal static void Subdivide(RoadEntry r, float maxLen)
+    {
+        var p = r.Points;
+        if (p.Count < 2) return;
+        var np = new List<double[]> { p[0] };
+        var map = new int[p.Count];
+        static Vector2 V(double[] a) => new((float)a[0], (float)a[2]);
+        for (int i = 0; i < p.Count - 1; i++)
+        {
+            var a = p[i]; var b = p[i + 1];
+            float len = Vector2.Distance(V(a), V(b));
+            int n = (int)MathF.Ceiling(len / maxLen);
+            var p0 = i > 0 ? V(p[i - 1]) : 2 * V(a) - V(b);
+            var p3 = i + 2 < p.Count ? V(p[i + 2]) : 2 * V(b) - V(a);
+            var p1 = V(a); var p2 = V(b);
+            for (int k = 1; k < n; k++)
+            {
+                float t = (float)k / n, t2 = t * t, t3 = t2 * t;
+                var q = 0.5f * (2 * p1 + (-p0 + p2) * t + (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 + (-p0 + 3 * p1 - 3 * p2 + p3) * t3);
+                np.Add([q.X, a[1] + (b[1] - a[1]) * t, q.Y]);
+            }
+            np.Add(b);
+            map[i + 1] = np.Count - 1;
+        }
+        if (np.Count == p.Count) return;
+        foreach (var run in r.Runs) { run.From = map[run.From]; run.To = map[run.To]; }
+        r.Points = np;
     }
 
     private static void ApplyStyle(Road road, ResolvedStyle style)

@@ -286,7 +286,8 @@ public static class Overlaps
                 var o = segs[b];
                 if (o.Road is not null && o.Road == sg.Road && Math.Abs(o.Index - sg.Index) <= 1) continue;
                 var (d, pa, pb) = SegSeg(P2(sg.A), P2(sg.B), P2(o.A), P2(o.B));
-                float reach = sg.HalfWidth + MathF.Max(left, right) + o.HalfWidth;
+                // weiter entfernte Straßen begrenzt schon TerrainClearance (Gelände endet dort)
+                float reach = sg.HalfWidth + MathF.Min(MathF.Max(left, right), 40f) + o.HalfWidth;
                 if (d >= reach) continue;
                 float dz = MathF.Abs(HeightAt(sg, pa) - HeightAt(o, pb));
                 if (dz < minDz) continue;   // gleiche Höhe: Gelände darf anschließen

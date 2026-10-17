@@ -13,8 +13,26 @@ namespace Osm2Ets.Writer;
 public static class TerrainClearance
 {
     public const float Margin = 0f;
-    public const float SearchRadius = 80f;
+    public static float SearchRadius = 80f;
     private const float Cell = 100f;
+    /// <summary>Lücken zwischen zwei Straßen teilen (je Straße bis zur Mitte) – bei breitem Gelände.</summary>
+    public static bool Share = false;
+    /// <summary>Wunschbreite je Seite, wenn flächiges Gelände aus dem Höhenraster kommt.</summary>
+    public const float WideTerrain = 150f;
+
+    /// <summary>Straßengelände (wo vorhanden) auf breite Wunschbreite setzen.</summary>
+    public static void Widen(Dictionary<RoadEntry, ResolvedStyle[]> styles)
+    {
+        foreach (var st in styles.Values)
+            for (int i = 0; i < st.Length; i++)
+                st[i] = st[i] with
+                {
+                    TerrainLeft = st[i].TerrainLeft > 0 ? MathF.Max(st[i].TerrainLeft, WideTerrain) : 0,
+                    TerrainRight = st[i].TerrainRight > 0 ? MathF.Max(st[i].TerrainRight, WideTerrain) : 0,
+                };
+        Share = true;
+        SearchRadius = WideTerrain * 2 + 40;
+    }
 
     private readonly record struct Seg(RoadEntry Road, int Index, Vector2 A, Vector2 B, float HalfWidth);
 
@@ -90,7 +108,11 @@ public static class TerrainClearance
                     float cos = MathF.Abs(Vector2.Dot(odir, dir));
                     if (cos >= 0.7f)
                     {
+                        // nur, wenn die Nachbarstraße wirklich seitlich liegt (nicht weit voraus)
+                        if (MathF.Abs(Vector2.Dot(d, rightN)) < 0.5f * dist) continue;
                         float free = MathF.Max(0, dist - s.HalfWidth - o.HalfWidth - Margin);
+                        // beide Straßen füllen die Lücke: jede bis zur Mitte
+                        if (Share && o.Road is not null) free /= 2;
                         if (Vector2.Dot(d, rightN) >= 0) right = MathF.Min(right, free);
                         else left = MathF.Min(left, free);
                         continue;
@@ -107,13 +129,14 @@ public static class TerrainClearance
                         float reach = s.HalfWidth + want + o.HalfWidth / sin + Margin;
                         if (u > reach) continue;
                         float free = MathF.Max(0, u - s.HalfWidth - o.HalfWidth / sin - Margin);
+                        if (Share && o.Road is not null) free /= 2;
                         if (isRight) right = MathF.Min(right, free); else left = MathF.Min(left, free);
                     }
                 }
             }
             if (left < style.TerrainLeft - 0.01f || right < style.TerrainRight - 0.01f)
             {
-                styles[s.Road][s.Index] = style with { TerrainLeft = MathF.Round(left, 1), TerrainRight = MathF.Round(right, 1) };
+                styles[s.Road][s.Index] = style with { TerrainLeft = MathF.Floor(left), TerrainRight = MathF.Floor(right) };
                 clamped++;
             }
         }
