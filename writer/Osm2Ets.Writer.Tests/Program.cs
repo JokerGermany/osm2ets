@@ -87,16 +87,16 @@ static void MappingResolve()
 {
     var cfg = MappingConfig.Load(ShippedMapping());
     var mw = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true));
-    Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 80, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
+    Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 30, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
     var bridge = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true, bridge: true));
     Check(bridge.TerrainLeft == mw.TerrainLeft, "Brücke vorläufig mit Gelände wie die Straße");
     Check(bridge.RoadType == mw.RoadType, "Brücke behält Straßentyp");
     var link = cfg.Resolve(MakeRun(0, 1, "motorway_link", role: "link", oneway: true));
-    Check(link.TerrainLeft == 60, "Rampe");
+    Check(link.TerrainLeft == 10, "Rampe");
     var conn = cfg.Resolve(MakeRun(0, 1, "residential", role: "connector"));
-    Check(conn.TerrainLeft == 60, "Anschlussstraße");
+    Check(conn.TerrainLeft == 10, "Anschlussstraße");
     var other = cfg.Resolve(MakeRun(0, 1, "tertiary", role: "core"));
-    Check(other.TerrainLeft == 80 && other.Resolution == RoadResolution.HighPoly, "Standard");
+    Check(other.TerrainLeft == 20 && other.Resolution == RoadResolution.HighPoly, "Standard");
     Check(cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true)) == mw, "Wertgleichheit der Stile");
 }
 

@@ -43,7 +43,7 @@ Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet
   Straßen auf derselben Höhe, und die Steigung wird netzweit auf `terrain_max_grade`
   (6 %) begrenzt. Anschlussstellen-Prefabs werden entsprechend geneigt, Kreuzungs-Prefabs
   bleiben waagerecht. Gelände gibt es weiterhin nur als Streifen neben der Straße
-  (60–80 m) – dahinter ist nichts. Wo Rampen, Anschlussstraßen und Kreuzungen
+  (4–30 m) – dahinter ist nichts. Wo Rampen, Anschlussstraßen und Kreuzungen
   unterschiedlich hoch liegen, entstehen Stufen und Durchdringungen.
 - **Kreuzungen ohne Prefab** (im Testgebiet 32 von 46): Straßenstück zwischen zwei
   nahen Kreuzungen zu kurz, Einbahn-Rampe beginnt am Seitenarm (TruckLib kann an

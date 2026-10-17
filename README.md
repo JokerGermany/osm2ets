@@ -42,7 +42,7 @@ near Bayreuth (A 9, A 70, B 85); larger areas have not been tested.
   road is taken first and then smoothed; all roads meeting at a node share the same
   height, and the grade is limited network-wide to `terrain_max_grade` (6 %).
   Interchange prefabs are pitched accordingly, junction prefabs stay level. Terrain still
-  exists only as strips beside the road (60–80 m) – beyond that there is nothing. Where
+  exists only as strips beside the road (4–30 m) – beyond that there is nothing. Where
   ramps, connecting roads and junctions lie at different heights, steps and overlaps occur.
 - **Junctions without a prefab** (32 of 46 in the test area): road piece between two
   nearby junctions too short, a one-way ramp starts at the side arm (TruckLib can only
