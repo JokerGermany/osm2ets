@@ -371,6 +371,14 @@ public static class Interchanges
         return n;
     }
 
+    private static Vector3 Flat(Vector3 v, Vector3 fallback)
+    {
+        v.Y = 0;
+        if (v.LengthSquared() < 1e-6f) return fallback;
+        v = Vector3.Normalize(v);
+        return Vector3.Dot(v, fallback) < 0 ? -v : v;
+    }
+
     public sealed record Placed(Plan Plan, Prefab First, ushort FirstIn, Prefab Last, ushort LastOut, Prefab RampPrefab, ushort RampNode);
 
     /// <summary>Kürzt die Straßen für einen Plan; false = Plan nicht umsetzbar (Straßen zu kurz).</summary>
@@ -400,14 +408,17 @@ public static class Interchanges
         {
             // Teilung so, dass ihr Hauptausgang auf dem OSM-Knoten liegt; Aufweitung davor
             var split = Place(map, src, Split, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor, p.Grade);
-            var widen = Place(map, src, Widen, WidenIn, WidenOut, p.Direction, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
+            // Richtung an der Fuge aus dem gesetzten Nachbar-Prefab übernehmen (sonst Keil in der Fuge)
+            var dSplit = Flat(InwardDirections[split][SplitIn], p.Direction);
+            var widen = Place(map, src, Widen, WidenIn, WidenOut, dSplit, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
             widen.Attach(WidenOut, split, SplitIn);
             return new Placed(p, widen, WidenIn, split, SplitMain, split, SplitRamp);
         }
         else
         {
             var join = Place(map, src, Join, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
-            var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, p.Direction, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
+            var dJoin = Flat(-InwardDirections[join][JoinOut], p.Direction);
+            var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, dJoin, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
             join.Attach(JoinOut, narrow, NarrowIn);
             return new Placed(p, join, JoinMain, narrow, NarrowOut, join, JoinRamp);
         }
