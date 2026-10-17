@@ -244,10 +244,11 @@ public static class TerrainFill
             // gröberes Raster (16 m statt 4 m): flaches Feld braucht keine feinen Quads
             // kurze Stücke brauchen feinere Schritte, sonst nur eine Rasterspalte (= unsichtbar)
             float plen = pb.X - pa.X;
-            t.StepSize = plen >= 16 ? StepSize.Meters16 : plen >= 12 ? StepSize.Meters12
-                       : plen >= 4 ? StepSize.Meters4 : StepSize.Meters2;
+            // kurze Stücke: Standard-Schrittweite und eben (ohne Höhenpunkte) – mit eigenen
+            // Höhenpunkten wurden sie im Editor teils nicht gezeichnet
+            if (plen >= 16) t.StepSize = StepSize.Meters16;
             t.Recalculate();
-            if (Shape)
+            if (Shape && plen >= 16)
             {
                 if (ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1, 16) < 0) Mismatch++;
                 if (ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1, 16) < 0) Mismatch++;
