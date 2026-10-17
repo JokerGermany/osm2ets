@@ -73,6 +73,7 @@ class Profile:
     smoothing_window_m: float
     bridge_clearance_m: float
     max_ramp_grade: float
+    terrain_max_grade: float
     max_bridge_levels: int
     min_bridge_length_m: float
     implied_oneway: frozenset
@@ -208,6 +209,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         smoothing_window_m=_float(ele, "smoothing_window_m", "elevation", default=120.0),
         bridge_clearance_m=_float(ele, "bridge_clearance_m", "elevation", default=6.5),
         max_ramp_grade=_float(ele, "max_ramp_grade", "elevation", default=0.05),
+        terrain_max_grade=_float(ele, "terrain_max_grade", "elevation", default=0.06),
         max_bridge_levels=int(_float(ele, "max_bridge_levels", "elevation", default=4)),
         min_bridge_length_m=_float(ele, "min_bridge_length_m", "elevation", default=8.0, positive=False),
         implied_oneway=_str_set(net.get("implied_oneway", ["motorway", "motorway_link"]), "network.implied_oneway"),

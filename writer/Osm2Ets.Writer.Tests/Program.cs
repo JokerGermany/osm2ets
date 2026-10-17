@@ -87,7 +87,7 @@ static void MappingResolve()
 {
     var cfg = MappingConfig.Load(ShippedMapping());
     var mw = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true));
-    Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 30, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
+    Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 80, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
     var bridge = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true, bridge: true));
     Check(bridge.TerrainLeft == mw.TerrainLeft, "Brücke vorläufig mit Gelände wie die Straße");
     Check(bridge.RoadType == mw.RoadType, "Brücke behält Straßentyp");
