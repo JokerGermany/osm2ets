@@ -337,6 +337,40 @@ public static class Interchanges
         return v.Length();
     }
 
+    /// <summary>Mindestabstand der Achsen gegenüberliegender Anschluss-Prefabs (m).
+    /// Annahme: aufgeweitete Prefabs je etwa 9 m halbe Breite.</summary>
+    public const float OppositeMinGap = 19f;
+
+    /// <summary>
+    /// Ausfahrt und Einfahrt der Gegenrichtung liegen oft auf gleicher Höhe nebeneinander;
+    /// ihre aufgeweiteten Prefabs überlappen dann. Beide Anker seitlich auseinanderrücken.
+    /// </summary>
+    public static int SeparateOpposite(List<Plan> plans)
+    {
+        int n = 0;
+        for (int i = 0; i < plans.Count; i++)
+        for (int j = i + 1; j < plans.Count; j++)
+        {
+            var a = plans[i]; var b = plans[j];
+            var da = new Vector2(a.Direction.X, a.Direction.Z); var db = new Vector2(b.Direction.X, b.Direction.Z);
+            if (da.LengthSquared() < 1e-6f || db.LengthSquared() < 1e-6f) continue;
+            da = Vector2.Normalize(da); db = Vector2.Normalize(db);
+            if (Vector2.Dot(da, db) > -0.8f) continue;
+            var d = new Vector2(b.Anchor.X - a.Anchor.X, b.Anchor.Z - a.Anchor.Z);
+            if (d.Length() > 160) continue;
+            var nrm = new Vector2(-da.Y, da.X);
+            float lat = Vector2.Dot(d, nrm);
+            float need = OppositeMinGap - MathF.Abs(lat);
+            if (need <= 0) continue;
+            float sgn = lat >= 0 ? 1 : -1;
+            var shift = nrm * (sgn * need / 2);
+            b.Anchor += new Vector3(shift.X, 0, shift.Y);
+            a.Anchor -= new Vector3(shift.X, 0, shift.Y);
+            n++;
+        }
+        return n;
+    }
+
     public sealed record Placed(Plan Plan, Prefab First, ushort FirstIn, Prefab Last, ushort LastOut, Prefab RampPrefab, ushort RampNode);
 
     /// <summary>Kürzt die Straßen für einen Plan; false = Plan nicht umsetzbar (Straßen zu kurz).</summary>

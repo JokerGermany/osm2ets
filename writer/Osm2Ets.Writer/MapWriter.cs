@@ -71,6 +71,8 @@ public static class MapWriter
                 interchangePlans.Add(plan);
             }
         }
+        int icSep = Interchanges.SeparateOpposite(interchangePlans);
+        if (icSep > 0) warnings.Add($"Info: {icSep} gegenüberliegende Anschlussstellen-Prefabs seitlich auseinandergerückt");
 
         // ebenerdige Kreuzungen normaler Straßen (T/X-Prefabs)
         var junctionPlans = new List<Junctions.Plan>();
@@ -116,6 +118,14 @@ public static class MapWriter
             {
                 var pl = Interchanges.Build(map, plan, prefabs!);
                 Interchanges.Adjust(pl);
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                {
+                    string R(RoadEntry r) => $"{r.Id} start {string.Join('/', r.Points[0].Select(v => v.ToString("0.0")))} next {string.Join('/', r.Points[1].Select(v => v.ToString("0.0")))} end {string.Join('/', r.Points[^1].Select(v => v.ToString("0.0")))} prev {string.Join('/', r.Points[^2].Select(v => v.ToString("0.0")))}";
+                    Console.Error.WriteLine($"IC {plan.OsmNode} {plan.Kind} anchor {plan.Anchor} grade {plan.Grade:0.000}");
+                    foreach (var pf in new[] { pl.First, pl.Last }.Distinct()) for (int k = 0; k < pf.Nodes.Count; k++)
+                        Console.Error.WriteLine($"   node {k} {pf.Nodes[k].Position} fwd {Vector3.Transform(Vector3.UnitZ * -1, pf.Nodes[k].Rotation)}");
+                    Console.Error.WriteLine("   in  " + R(plan.MainIn)); Console.Error.WriteLine("   out " + R(plan.MainOut)); Console.Error.WriteLine("   ramp " + R(plan.Ramp));
+                }
                 placed.Add(pl);
             }
             catch (Exception ex)
