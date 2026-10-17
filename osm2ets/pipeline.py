@@ -84,7 +84,18 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
             if e.highway in ind["highway"]:
                 cand.update(e.node_ids())
         loc = read_node_locations(input_path, cand)
-        industry_stats = connect(net2, nn, targets, loc, ind["highway"], ind["max_distance_m"], ind["inside_m"])
+        major = {"motorway", "trunk", "motorway_link", "trunk_link"}
+        on_major = set()
+        for e in selected:
+            if e.highway in major:
+                ids = e.node_ids()
+                on_major.update(ids[1:-1] if e.highway.endswith("_link") else ids)
+        # Knoten, an denen auch eine nicht-autobahnartige Netzstraße endet, bleiben Start
+        for e in selected:
+            if e.highway not in major:
+                on_major.difference_update(e.node_ids())
+        industry_stats = connect(net2, nn, targets, loc, ind["highway"], ind["max_distance_m"], ind["inside_m"],
+                                 no_start=on_major)
         new = [e for e in net2.edges if e.role not in (None, "taken")]
         if new:
             # Netzkanten an den neuen Einmündungen teilen: Auswahl aus net2 übernehmen

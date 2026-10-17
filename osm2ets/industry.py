@@ -85,7 +85,8 @@ def _near(pt, poly, tol) -> bool:
 
 
 def connect(net, network_nodes: set[int], targets: list[Target], loc: dict, classes: frozenset,
-            max_dist: float, inside: float, point_radius: float = 80.0, edge_tol: float = 40.0) -> dict:
+            max_dist: float, inside: float, point_radius: float = 80.0, edge_tol: float = 40.0,
+            no_start: set[int] | None = None, area_cap: float = 5000.0) -> dict:
     """Markiert Kanten als Zufahrt (Rolle 'connector'). Gibt Kennzahlen zurück."""
     from .network import ROLE_CONNECTOR
 
@@ -139,6 +140,9 @@ def connect(net, network_nodes: set[int], targets: list[Target], loc: dict, clas
         return None
 
     # Dijkstra vom Netz aus über Zufahrtsklassen; Abstand begrenzt
+    # Start nur an Knoten, an denen öffentlich abgebogen werden kann (nicht mitten auf der
+    # Autobahn: eine Firma neben der Autobahn ohne nahe Ausfahrt wird nicht angebunden)
+    network_nodes = set(network_nodes) - (no_start or set())
     dist = {n: 0.0 for n in network_nodes}
     prev: dict = {}
     heap = [(0.0, n) for n in network_nodes]
@@ -179,9 +183,27 @@ def connect(net, network_nodes: set[int], targets: list[Target], loc: dict, clas
             continue
         connected += 1
         mark(n)
-        # ein Stück weiter ins Gebiet hinein (fernster erreichbarer Knoten im Umriss)
         t = targets[ti]
         if len(t.poly) > 1:
+            # ganzes Gebiet: alle Zufahrtsstraßen im/am Umriss, die vom Eintritt aus
+            # zusammenhängend erreichbar sind (höchstens area_cap Meter)
+            seen, todo, total = {n}, [n], 0.0
+            while todo:
+                a = todo.pop()
+                for ei, end in net.adjacency.get(a, ()):
+                    L = usable.get(ei)
+                    if L is None or ei in marked:
+                        continue
+                    b = net.other_end(net.edges[ei], end)
+                    pb = xy.get(b)
+                    if pb is None or not (_inside(pb, t.poly) or _near(pb, t.poly, edge_tol)):
+                        continue
+                    if total + L > area_cap:
+                        continue
+                    marked.add(ei); total += L
+                    if b not in seen:
+                        seen.add(b); todo.append(b)
+        if False:
             best, bd = n, d
             for m, dm in dist.items():
                 if d < dm <= d + inside and dm > bd and _inside(xy[m], t.poly):
