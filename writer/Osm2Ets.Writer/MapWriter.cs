@@ -154,7 +154,7 @@ public static class MapWriter
         // Rampe und Hauptfahrbahn kreuzen sich dort im spitzen Winkel und falten sich ins Prefab
         foreach (var pl in interchangePlans)
         {
-            void Clear(RoadEntry r, bool atStart)
+            void Clear(RoadEntry r, bool atStart, bool left)
             {
                 if (!styles.TryGetValue(r, out var st)) return;
                 double acc = 0;
@@ -162,12 +162,13 @@ public static class MapWriter
                 for (int k = 0; k < n && acc < IcTerrainGap; k++)
                 {
                     int i = atStart ? k : n - 1 - k;
-                    st[i] = st[i] with { TerrainLeft = 0, TerrainRight = 0 };
+                    st[i] = left ? st[i] with { TerrainLeft = 0 } : st[i] with { TerrainRight = 0 };
                     acc += Vector3.Distance(ToVector(r.Points[i]), ToVector(r.Points[i + 1]));
                 }
             }
-            Clear(pl.MainIn, false); Clear(pl.MainOut, true);
-            Clear(pl.Ramp, pl.Kind == "exit");
+            // nur die Seite zum Zwickel: Hauptfahrbahn rechts, Rampe links (Rechtsverkehr)
+            Clear(pl.MainIn, false, false); Clear(pl.MainOut, true, false);
+            Clear(pl.Ramp, pl.Kind == "exit", true);
         }
         if (separated > 0) warnings.Add($"Info: {separated} Richtungsfahrbahnen seitlich verschoben (OSM-Abstand kleiner als Vorlagenbreite)");
         // Prefab-Flächen als Hindernisse: Strecken von jedem Knoten zur Prefab-Mitte
