@@ -15,7 +15,9 @@ public sealed record WriteResult(
     List<string> Warnings,
     int Connections = 0,
     int Reversed = 0,
-    int TerrainClamped = 0);
+    int TerrainClamped = 0,
+    List<Overlaps.Violation>? Overlaps = null,
+    int BranchesTrimmed = 0);
 
 /// <summary>Baut aus dem Zwischenformat eine TruckLib-Karte.</summary>
 public static class MapWriter
@@ -107,6 +109,8 @@ public static class MapWriter
             }
         }
 
+        // Abzweige ohne Prefab bis an den Fahrbahnrand der anderen Straße zurücknehmen
+        int branchesTrimmed = Overlaps.TrimBranches(valid, pairs, run => mapping.Resolve(run).Width / 2, warnings);
 
         // Stile je Abschnitt auflösen, dann Gelände an Nachbarstraßen anpassen
         var styles = new Dictionary<RoadEntry, ResolvedStyle[]>();
@@ -124,6 +128,7 @@ public static class MapWriter
                 obstacles.Add((pf.Nodes.Select(n => n.Position).ToArray(), 8f));
         foreach (var jp in junctionPlans) obstacles.Add((jp.NodePos, 6f));
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        var overlaps = Overlaps.Report(valid, styles, pairs, obstacles);
 
         foreach (var entry in valid)
         {
@@ -243,7 +248,7 @@ public static class MapWriter
             warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
 
         return (map, new WriteResult(written, skipped, items, styleChanges, startPos, startRoad?.Id, warnings,
-                                     connections, reversed, terrainClamped));
+                                     connections, reversed, terrainClamped, overlaps, branchesTrimmed));
     }
 
     private static void ApplyStyle(Road road, ResolvedStyle style)

@@ -134,6 +134,17 @@ public static class Program
                           $"Straßenstücke {result.Items}, Typwechsel {result.StyleChanges}");
         Console.WriteLine($"  Verbindungen an Knoten {result.Connections} (umgedrehte Zweirichtungsstraßen {result.Reversed})");
         Console.WriteLine($"  Gelände wegen Nachbarstraßen verkleinert: {result.TerrainClamped} Abschnitte");
+        Console.WriteLine($"  Abzweige ohne Prefab bis zum Fahrbahnrand gekürzt: {result.BranchesTrimmed}");
+        if (result.Overlaps is { } ov)
+        {
+            Console.WriteLine($"  Überlagerungsprüfung (nur Brücke/Tunnel darf überlagern): {ov.Count} Verstöße");
+            foreach (var g in ov.GroupBy(v => v.Kind)) Console.WriteLine($"    {g.Key}: {g.Count()}");
+            foreach (var v in ov.Take(10))
+                Console.WriteLine($"    {v.A} × {v.B} bei ({v.At.X:0}, {v.At.Y:0}, {v.At.Z:0}): {v.Overlap:0.0} m überlappt, Höhenabstand {v.HeightDiff:0.0} m");
+            var gj = Path.ChangeExtension(inputPath, null) + ".overlaps.geojson";
+            Overlaps.WriteGeoJson(gj, ov);
+            Console.WriteLine($"    Liste: {gj}");
+        }
         Console.WriteLine($"  Sektoren {Directory.EnumerateFiles(sectorDir, "*.base").Count()}, " +
                           $"leere .layer-Dateien angelegt: {layerFiles}");
         Console.WriteLine($"  Maßstab NormalScale={map.NormalScale:0.###} CityScale={map.CityScale:0.###}");

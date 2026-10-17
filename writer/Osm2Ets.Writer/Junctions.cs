@@ -223,6 +223,10 @@ public static class Junctions
                 Fixed.Add(a.Road);
             }
             bool atStart = StartsAt(a.Road, p.Anchor);
+            // erst den Teil im Prefab entfernen (bis zum Prefab-Knoten), sonst liefe die
+            // Straße vom Prefab-Knoten zurück zur Kreuzungsmitte
+            float rad = Vector2.Distance(new Vector2(n.X, n.Z), new Vector2(p.Anchor.X, p.Anchor.Z));
+            Overlaps.CutEnd(a.Road, atStart, rad);
             if (atStart) Interchanges.SetHead(a.Road, n, -inward, Lead);
             else Interchanges.SetTail(a.Road, n, inward, Lead);
             if (atStart) a.Road.Start = new EndInfo { Kind = "prefab" };
