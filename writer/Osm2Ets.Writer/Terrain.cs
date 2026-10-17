@@ -17,6 +17,7 @@ public static class TerrainClearance
     private const float Cell = 100f;
     /// <summary>Lücken zwischen zwei Straßen teilen (je Straße bis zur Mitte) – bei breitem Gelände.</summary>
     public static bool Share = false;
+    public const float MedianExtra = 1.5f;
     /// <summary>Wunschbreite je Seite, wenn flächiges Gelände aus dem Höhenraster kommt.</summary>
     public const float WideTerrain = 150f;
 
@@ -113,6 +114,9 @@ public static class TerrainClearance
                         float free = MathF.Max(0, dist - s.HalfWidth - o.HalfWidth - Margin);
                         // beide Straßen füllen die Lücke: jede bis zur Mitte
                         if (Share && o.Road is not null) free /= 2;
+                        // Mittelstreifen: das Fahrbahnmodell ist schmaler als die Vorlagenbreite,
+                        // deshalb etwas unter die Nachbarfahrbahn reichen (sonst bleibt ein Spalt)
+                        else if (o.Road is not null) free += MedianExtra;
                         if (Vector2.Dot(d, rightN) >= 0) right = MathF.Min(right, free);
                         else left = MathF.Min(left, free);
                         continue;

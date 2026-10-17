@@ -154,6 +154,16 @@ public static class MapWriter
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("enforce"));
+        if (Environment.GetEnvironmentVariable("OSM2ETS_PROBE") is { } probe)
+        {
+            var pp = probe.Split(',').Select(float.Parse).ToArray();
+            foreach (var e in valid) for (int i = 0; i < e.Points.Count - 1; i++)
+            {
+                var m = new Vector2((float)(e.Points[i][0] + e.Points[i + 1][0]) / 2, (float)(e.Points[i][2] + e.Points[i + 1][2]) / 2);
+                if (Vector2.Distance(m, new Vector2(pp[0], pp[1])) < 400)
+                    Console.Error.WriteLine($"{e.Id}[{i}] mid {m} y {e.Points[i][1]:0.0} w {styles[e][i].Width} L {styles[e][i].TerrainLeft} R {styles[e][i].TerrainRight}");
+            }
+        }
         var overlaps = Overlaps.Report(valid, styles, pairs, obstacles);
 
         foreach (var entry in valid)

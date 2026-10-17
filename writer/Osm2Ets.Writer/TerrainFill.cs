@@ -18,7 +18,7 @@ public static class TerrainFill
     public const float RowSpacing = 40f;   // Abstand der Reihen (m)
     /// <summary>So weit neben der Fahrbahn bleibt das Füllgelände weg (Rest überlappt das Straßengelände).</summary>
     public const float MaskTerrain = 2f;
-    public const float FineSpacing = 4f;   // Reihenabstand für die Reste neben Straßen (m)
+    public const float FineSpacing = 1f;   // Reihenabstand für die Reste neben Straßen (m)
     public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
     public const float Sample = 2.5f;       // Abtastung entlang der Reihe (m)
     public const float MaxPiece = 200f;    // längstes Terrain-Stück (m)
