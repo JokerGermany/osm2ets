@@ -39,6 +39,7 @@ public static class Interchanges
         public required RoadEntry MainIn, MainOut, Ramp;
         public required Vector3 Anchor;     // Lage des OSM-Knotens
         public required Vector3 Direction;  // Fahrtrichtung der Hauptfahrbahn (x/z)
+        public float Grade;                  // Steigung der Hauptfahrbahn über die Prefab-Länge (m/m)
     }
 
     /// <summary>Lädt .ppd-Dateien aus einem entpackten Ordner oder den .scs-Archiven des Spiels.</summary>
@@ -196,6 +197,26 @@ public static class Interchanges
         return r.Points.Count >= 2;
     }
 
+    /// <summary>Höhe der Straße im Abstand dist (Draufsicht) vom Ende bzw. Anfang.</summary>
+    private static float HeightFromEnd(RoadEntry r, float dist) => HeightAlong(Enumerable.Reverse(r.Points).ToList(), dist);
+    private static float HeightFromStart(RoadEntry r, float dist) => HeightAlong(r.Points, dist);
+
+    private static float HeightAlong(List<double[]> pts, float dist)
+    {
+        double acc = 0;
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            double s = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+            if (acc + s >= dist && s > 0)
+            {
+                double t = (dist - acc) / s;
+                return (float)(pts[i][1] + t * (pts[i + 1][1] - pts[i][1]));
+            }
+            acc += s;
+        }
+        return (float)pts[^1][1];
+    }
+
     private static double ArcLength(RoadEntry r)
     {
         double acc = 0;
@@ -257,10 +278,24 @@ public static class Interchanges
 
     /// <summary>Setzt ein Prefab so, dass Knoten <paramref name="anchorNode"/> auf <paramref name="target"/> liegt.</summary>
     private static Prefab Place(Map map, PpdSource src, PrefabDef def, ushort fromNode, ushort toNode,
-                                Vector3 dir, ushort anchorNode, Vector3 target)
+                                Vector3 dir, ushort anchorNode, Vector3 target, float grade = 0)
     {
         var ppd = src.Get(def.PpdPath);
         var rot = Orientation(ppd, def.Unit, fromNode, toNode, dir);
+        if (MathF.Abs(grade) > 1e-4f)
+        {
+            // Neigung um die waagerechte Querachse; Vorzeichen am echten Einsatz prüfen
+            var axis = Vector3.Normalize(Vector3.Cross(dir, Vector3.UnitY));
+            float ang = MathF.Atan(grade);
+            foreach (var sgn in new[] { 1f, -1f })
+            {
+                var q = Quaternion.Normalize(Quaternion.Concatenate(rot, Quaternion.CreateFromAxisAngle(axis, sgn * ang)));
+                var pl = Calibrate(ppd, def.Unit, q);
+                float rise = pl[toNode].Y - pl[fromNode].Y;
+                var run = pl[toNode] - pl[fromNode]; run.Y = 0;
+                if (MathF.Abs(rise / run.Length() - grade) < 0.2f * MathF.Abs(grade) + 1e-3f) { rot = q; break; }
+            }
+        }
         var rotated = Calibrate(ppd, def.Unit, rot);
         var pos = target - rotated[anchorNode] + rotated[0];
         var pf = Prefab.Add(map, pos, def.Unit, ppd, rot);
@@ -311,12 +346,14 @@ public static class Interchanges
         {
             float len = Length(src, Widen, WidenIn, WidenOut) + Length(src, Split, SplitIn, SplitMain);
             if (ArcLength(p.MainIn) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
+            p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
             return TrimEnd(p.MainIn, len + Slack) && TrimStart(p.Ramp, RampTrim);
         }
         else
         {
             float len = Length(src, Join, JoinMain, JoinOut) + Length(src, Narrow, NarrowIn, NarrowOut);
             if (ArcLength(p.MainOut) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
+            p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
             return TrimStart(p.MainOut, len + Slack) && TrimEnd(p.Ramp, RampTrim);
         }
     }
@@ -327,15 +364,15 @@ public static class Interchanges
         if (p.Kind == "exit")
         {
             // Teilung so, dass ihr Hauptausgang auf dem OSM-Knoten liegt; Aufweitung davor
-            var split = Place(map, src, Split, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor);
-            var widen = Place(map, src, Widen, WidenIn, WidenOut, p.Direction, WidenOut, split.Nodes[SplitIn].Position);
+            var split = Place(map, src, Split, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor, p.Grade);
+            var widen = Place(map, src, Widen, WidenIn, WidenOut, p.Direction, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
             widen.Attach(WidenOut, split, SplitIn);
             return new Placed(p, widen, WidenIn, split, SplitMain, split, SplitRamp);
         }
         else
         {
-            var join = Place(map, src, Join, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor);
-            var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, p.Direction, NarrowIn, join.Nodes[JoinOut].Position);
+            var join = Place(map, src, Join, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
+            var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, p.Direction, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
             join.Attach(JoinOut, narrow, NarrowIn);
             return new Placed(p, join, JoinMain, narrow, NarrowOut, join, JoinRamp);
         }
@@ -352,6 +389,7 @@ public static class Interchanges
         int k = r.Points.Count - 1;
         while (k > 0 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < leadLen + 10) k--;
         var pts = r.Points.Take(k + 1).ToList();
+        lead.Y = Between(node, pts[^1], leadLen);
         if (Vector2.Distance(P(pts[^1]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
         pts.Add(V(node));
         int segs = pts.Count - 1;
@@ -371,6 +409,7 @@ public static class Interchanges
         while (k < r.Points.Count - 1 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < leadLen + 10) k++;
         var rest = r.Points.Skip(k).ToList();
         var pts = new List<double[]> { V(node) };
+        lead.Y = Between(node, rest[0], leadLen);
         if (Vector2.Distance(P(rest[0]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
         int added = pts.Count;
         pts.AddRange(rest);
@@ -385,6 +424,13 @@ public static class Interchanges
 
     private static double[] V(Vector3 v) => [v.X, v.Y, v.Z];
 
+    /// <summary>Höhe des Einlaufpunkts: linear zwischen Prefab-Knoten und erstem behaltenen Punkt.</summary>
+    private static float Between(Vector3 node, double[] keep, float leadLen)
+    {
+        float d = Vector2.Distance(new Vector2(node.X, node.Z), P(keep));
+        return d <= leadLen ? node.Y : node.Y + ((float)keep[1] - node.Y) * leadLen / d;
+    }
+
     /// <summary>Fahrtrichtung an einem Prefab-Knoten, so orientiert, dass sie zu <paramref name="hint"/> passt.</summary>
     public static Vector3 NodeDirection(INode n, Vector3 hint)
     {
@@ -392,6 +438,9 @@ public static class Interchanges
         d = Vector3.Normalize(d);
         return Vector3.Dot(d, hint) < 0 ? -d : d;
     }
+
+    private static Vector3 Sloped(Vector3 horizontal, float grade) =>
+        Vector3.Normalize(new Vector3(horizontal.X, grade, horizontal.Z));
 
     /// <summary>Passt die Straßen an die gesetzten Prefabs an (vor dem Bau der Straßen).</summary>
     public static void Adjust(Placed pl)
@@ -410,8 +459,8 @@ public static class Interchanges
         // Knotendrehungen auf die Fahrtrichtung setzen (aus der ppd-Geometrie). TruckLib
         // liefert für schräge Knoten nach dem Drehen eines Prefabs eine gespiegelte
         // Richtung; die Straßenkurve würde sonst am Knoten abknicken.
-        inNode.Rotation = MathEx.GetNodeRotation(InwardDirections[pl.First][pl.FirstIn]);
-        outNode.Rotation = MathEx.GetNodeRotation(-InwardDirections[pl.Last][pl.LastOut]);
+        inNode.Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], p.Grade));
+        outNode.Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], p.Grade));
         rampNode.Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
     }
 }

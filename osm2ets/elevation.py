@@ -123,6 +123,84 @@ def smooth_along(s: np.ndarray, h: np.ndarray, window: float) -> np.ndarray:
     return np.interp(s, grid, smoothed)
 
 
+def low_percentile_along(s: np.ndarray, h: np.ndarray, window: float, q: float) -> np.ndarray:
+    """Gleitendes Perzentil q (0–100) über die Bogenlänge – unterdrückt Bäume/Gebäude im DSM."""
+    if len(s) < 3 or window <= 0:
+        return h.copy()
+    out = np.empty_like(h)
+    half = window / 2
+    lo = 0
+    hi = 0
+    for i, si in enumerate(s):
+        while s[lo] < si - half:
+            lo += 1
+        while hi < len(s) and s[hi] <= si + half:
+            hi += 1
+        out[i] = np.percentile(h[lo:hi], q)
+    return out
+
+
+def clamp_grade(z: np.ndarray, ea, eb, elen, grade: float, iterations: int = 200,
+                fixed: Optional[np.ndarray] = None) -> int:
+    """Begrenzt die Steigung jeder Kante auf grade, indem beide Enden aufeinander zu
+    rücken (Relaxation über den gemeinsamen Graphen). Gibt die Zahl der Durchläufe zurück."""
+    if grade <= 0:
+        return 0
+    a = np.asarray(ea, np.int64)
+    b = np.asarray(eb, np.int64)
+    w = np.maximum(np.asarray(elen, float), 1e-6)
+    for it in range(iterations):
+        dz = z[b] - z[a]
+        excess = np.abs(dz) - grade * w
+        bad = excess > 1e-3
+        if not bad.any():
+            return it
+        fa = fixed[a] if fixed is not None else np.zeros(len(a), bool)
+        fb = fixed[b] if fixed is not None else np.zeros(len(b), bool)
+        both = fa & fb
+        bad &= ~both
+        if not bad.any():
+            return it
+        # Anteil je Ende: fest = 0, sonst halb bzw. ganz
+        share_a = np.where(fa, 0.0, np.where(fb, 1.0, 0.5))
+        share_b = np.where(fb, 0.0, np.where(fa, 1.0, 0.5))
+        corr = np.where(bad, np.sign(dz) * excess, 0.0)
+        delta = np.zeros_like(z)
+        cnt = np.zeros_like(z)
+        np.add.at(delta, a, corr * share_a)
+        np.add.at(delta, b, -corr * share_b)
+        np.add.at(cnt, a, (bad & ~fa).astype(float))
+        np.add.at(cnt, b, (bad & ~fb).astype(float))
+        z += np.where(cnt > 0, delta / np.maximum(cnt, 1), 0.0)
+    return iterations
+
+
+def lipschitz_envelope(z: np.ndarray, adj: dict, grade: float) -> np.ndarray:
+    """Mittel aus oberer und unterer Steigungs-Hülle (beide höchstens grade steil,
+    also auch ihr Mittel). Dijkstra auf dem Punktgraphen."""
+    import heapq
+
+    def envelope(sign: float) -> np.ndarray:
+        # sign=+1: obere Hülle min_j(z_j + g·d), sign=-1: untere max_j(z_j - g·d)
+        val = sign * z.copy()  # minimieren in transformierter Form
+        heap = [(v, i) for i, v in enumerate(val)]
+        heapq.heapify(heap)
+        done = np.zeros(len(z), bool)
+        while heap:
+            v, i = heapq.heappop(heap)
+            if done[i] or v > val[i]:
+                continue
+            done[i] = True
+            for j, w in adj.get(i, ()):
+                nv = v + grade * w
+                if nv < val[j]:
+                    val[j] = nv
+                    heapq.heappush(heap, (nv, j))
+        return sign * val
+
+    return (envelope(1.0) + envelope(-1.0)) / 2
+
+
 def pin_ends(s: np.ndarray, h: np.ndarray, start: float, end: float) -> np.ndarray:
     """Verschiebt das Profil linear so, dass es an den Enden die Pin-Werte trifft."""
     if s[-1] <= 0:
@@ -259,14 +337,33 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
                 first_by_key[key] = vid
 
     # --- 1. Gelände (Spielmeter)
+    # Copernicus & Co. sind Oberflächenmodelle (Bäume, Gebäude): erst ein
+    # bodennahes Perzentil, dann glätten. Enden auf den Mittelwert aller an
+    # einem Knoten treffenden Straßen setzen (nicht auf Rohwerte – sonst Spitzen).
     base = np.zeros(total)
+    smoothed = []
+    end_sum: dict[int, float] = {}
+    end_cnt: dict[int, int] = {}
     for p, off in zip(pieces, offsets):
         d = p.dense
         if dem is None:
+            smoothed.append(None)
             continue
         raw = dem.sample(d.xy)
-        sm = smooth_along(d.s, raw, profile.smoothing_window_m)
-        base[canon[off:off + len(d.xy)]] = pin_ends(d.s, sm, raw[0], raw[-1]) / profile.scale_v
+        ground = low_percentile_along(d.s, raw, profile.smoothing_window_m / 2, 25.0)
+        sm = smooth_along(d.s, ground, profile.smoothing_window_m)
+        smoothed.append(sm)
+        for idx in (0, len(d.xy) - 1):
+            c = int(canon[off + idx])
+            end_sum[c] = end_sum.get(c, 0.0) + float(sm[idx])
+            end_cnt[c] = end_cnt.get(c, 0) + 1
+    for p, off, sm in zip(pieces, offsets, smoothed):
+        if sm is None:
+            continue
+        d = p.dense
+        c0, c1 = int(canon[off]), int(canon[off + len(d.xy) - 1])
+        pinned = pin_ends(d.s, sm, end_sum[c0] / end_cnt[c0], end_sum[c1] / end_cnt[c1])
+        base[canon[off:off + len(d.xy)]] = pinned / profile.scale_v
 
     # --- Kanten
     ea_l, eb_l, elen_l, flags_l = [], [], [], []
@@ -291,6 +388,11 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         incident.setdefault(a, []).append(e)
         incident.setdefault(b, []).append(e)
     degree = {v: len(es) for v, es in incident.items()}
+    if dem is not None:
+        # Kanten in Bauwerken nicht begrenzen – dort liegt das Tal unter der Brücke
+        keep = [e for e, f in enumerate(flags_l) if not (f[0] or f[1])]
+        clamp_grade(base, [ea_l[e] for e in keep], [eb_l[e] for e in keep], [elen_l[e] for e in keep],
+                    profile.terrain_max_grade, iterations=500)
 
     # --- Bauwerke
     bridge_edges = [e for e, f in enumerate(flags_l) if f[0]]
@@ -367,6 +469,19 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         _propagate(sink, adj, sink_seeds, grade)
 
     z = heights()
+    if dem is not None:
+        # Brückenrampen und Gelände zusammen dürfen nicht steiler werden als erlaubt;
+        # Bauwerke selbst bleiben, wie sie sind.
+        fixed = np.zeros(total, bool)
+        for e, f in enumerate(flags_l):
+            if f[0] or f[1]:
+                fixed[ea[e]] = fixed[eb[e]] = True
+        g = max(profile.terrain_max_grade, grade)
+        env = lipschitz_envelope(z, adj, g)
+        # Bauwerke nur festhalten, wo die Hülle sie absenken würde (Lichtraum bleibt);
+        # anheben darf sie sie, damit kurze Brücken nicht steiler sind als ihre Rampen.
+        z = np.where(fixed, np.maximum(z, env), env)
+        clamp_grade(z, ea_l, eb_l, elen_l, g, iterations=500)
     for p, off in zip(pieces, offsets):
         p.dense.z = z[canon[off:off + len(p.dense.xy)]]
 

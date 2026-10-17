@@ -35,9 +35,13 @@ Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet
 
 ### Bekannte Probleme (aus dem Spieltest)
 
-- **Höhen:** Ohne Geländemodell liegt alles auf 0 m, nur Brücken und Rampen werden
-  angehoben. Gelände gibt es nur als Streifen neben der Straße – daneben ist nichts
-  (schwarze Flächen, steile Dammkanten). Wo Rampen, Anschlussstraßen und Kreuzungen
+- **Höhen:** Mit `--dem` (z. B. Copernicus GLO-30) folgen die Straßen dem Gelände.
+  Weil Copernicus ein Oberflächenmodell ist (Bäume, Gebäude), wird zuerst ein bodennahes
+  Perzentil entlang der Straße genommen, dann geglättet; an Knoten treffen sich alle
+  Straßen auf derselben Höhe, und die Steigung wird netzweit auf `terrain_max_grade`
+  (6 %) begrenzt. Anschlussstellen-Prefabs werden entsprechend geneigt, Kreuzungs-Prefabs
+  bleiben waagerecht. Gelände gibt es weiterhin nur als Streifen neben der Straße
+  (60–80 m) – dahinter ist nichts. Wo Rampen, Anschlussstraßen und Kreuzungen
   unterschiedlich hoch liegen, entstehen Stufen und Durchdringungen.
 - **Kreuzungen ohne Prefab** (im Testgebiet 32 von 46): Straßenstück zwischen zwei
   nahen Kreuzungen zu kurz, Einbahn-Rampe beginnt am Seitenarm (TruckLib kann an
@@ -233,8 +237,8 @@ aus den `.scs`-Archiven kopieren.
 
 ## Nächste Ausbaustufen
 
-1. Höhen: Geländemodell als Standard (z. B. Copernicus DEM / Landesvermessung), flächiges
-   Gelände zwischen den Straßen, Prefabs und Anschlussstraßen auf gemeinsamer Höhe.
+1. Flächiges Gelände zwischen den Straßen (Terrain-Items aus dem Geländemodell),
+   geneigte Kreuzungs-Prefabs.
 2. Restliche Kreuzungen: kurze Stücke zusammenfassen, Y-Prefabs, alternative T-Prefabs
    für Einbahn-Seitenarme, Kreisverkehre.
 3. 3-spurige Anschlussstellen, Rampen links, Spurwechsel ohne Rampe, Autobahnkreuze.

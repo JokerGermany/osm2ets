@@ -54,6 +54,9 @@ elevation:
   bridge_clearance_m: 6.5
   # Maximale Steigung der Rampen vor und hinter Brücken (im Spiel).
   max_ramp_grade: 0.05
+  # Größte Steigung des Geländeprofils entlang der Straßen (vor Brückenrampen).
+  # Bundesautobahnen haben meist ≤ 4 %, Landstraßen selten > 8 %.
+  terrain_max_grade: 0.06
   # Höchstens so viele Brückenebenen übereinander (begrenzt das automatische
   # Anheben an Kreuzungen; was darüber hinaus nötig wäre, meldet der Bericht).
   max_bridge_levels: 4

@@ -219,6 +219,19 @@ public static class Program
                                     .OrderByDescending(g => g.Count());
         foreach (var g in roadTypes)
             Console.WriteLine($"  Straßentyp {g.Key}: {g.Count()}");
+        // Steigungen der Straßenstücke (Kontrolle für Höhenstufen)
+        var grades = map.MapItems.Values.OfType<Road>().Select(r =>
+        {
+            var d = r.ForwardNode.Position - r.Node.Position;
+            float h = MathF.Sqrt(d.X * d.X + d.Z * d.Z);
+            return (Grade: h > 0 ? MathF.Abs(d.Y) / h : 0, Len: h, Pos: r.Node.Position);
+        }).OrderByDescending(g => g.Grade).ToList();
+        if (grades.Count > 0)
+        {
+            Console.WriteLine($"  Steigung: max {grades[0].Grade:P1} bei {grades[0].Pos} ({grades[0].Len:0.0} m), " +
+                              $"> 8 %: {grades.Count(g => g.Grade > 0.08)}, > 12 %: {grades.Count(g => g.Grade > 0.12)}");
+            foreach (var g in grades.Take(5)) Console.WriteLine($"    {g.Grade:P1}  {g.Len,6:0.0} m  {g.Pos}");
+        }
         Console.WriteLine($"  NormalScale {map.NormalScale}, CityScale {map.CityScale}");
         Console.WriteLine($"  Startpunkt {map.StartPosition}");
         return 0;
