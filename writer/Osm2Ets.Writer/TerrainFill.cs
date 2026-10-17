@@ -24,6 +24,7 @@ public static class TerrainFill
     /// <summary>Höhenpunkte quer setzen (ungeprüft im Spiel); sonst ebene Streifen wie v17.</summary>
     public static bool Shape = true;
     public static int Mismatch;
+    public static double Uncovered;
 
     public sealed record Result(int Items, int Rows, double AreaKm2);
 
@@ -67,12 +68,19 @@ public static class TerrainFill
                 }
             }
         }
+        // Prefabs: Strecken Knoten → Mitte mit halber Breite (statt eines großen Kreises)
         foreach (var (nodes, hw) in prefabs)
         {
             var c3 = nodes.Aggregate(Vector3.Zero, (s, n) => s + n) / nodes.Length;
             var c = new Vector2(c3.X, c3.Z);
-            float rad = nodes.Max(n => Vector2.Distance(new Vector2(n.X, n.Z), c));
-            Mark(c, rad + hw + 4);
+            foreach (var n in nodes)
+            {
+                var a = new Vector2(n.X, n.Z);
+                float len = Vector2.Distance(a, c);
+                for (float s2 = 0; s2 <= len; s2 += MaskCell / 2)
+                    Mark(Vector2.Lerp(a, c, len > 0 ? s2 / len : 0), hw + 2);
+            }
+            Mark(c, hw + 2);
         }
 
         bool Free(float x, float z)
@@ -93,25 +101,48 @@ public static class TerrainFill
         var material = new Token(Road.Add(new Map(), Vector3.Zero, new Vector3(10, 0, 0), "ger1", 1, 1)
                                      .Right.Terrain.QuadData.BrushMaterials[0].Name.ToString());
         int items = 0, rows = 0; double area = 0;
-        for (float z = z0 + RowSpacing / 2 + 10; z < z1 - RowSpacing / 2 - 10; z += RowSpacing)
+        var covered = new bool[mw * mh];
+        bool Covered(float x, float z)
         {
-            // Läufe freier Abtastpunkte
+            int i = (int)MathF.Round((x - x0) / MaskCell), j = (int)MathF.Round((z - z0) / MaskCell);
+            return i < 0 || j < 0 || i >= mw || j >= mh || covered[j * mw + i];
+        }
+        void Cover(float xa, float xb, float zn, float zs)
+        {
+            int i0 = Math.Max(0, (int)((xa - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)((xb - x0) / MaskCell));
+            int j0 = Math.Max(0, (int)((zn - z0) / MaskCell)), j1 = Math.Min(mh - 1, (int)((zs - z0) / MaskCell));
+            for (int j = j0; j <= j1; j++) for (int i = i0; i <= i1; i++) covered[j * mw + i] = true;
+        }
+        // Durchgang 0: Reihen alle RowSpacing m. Weitere Durchgänge mit versetzten Reihen füllen
+        // nur noch, was frei UND noch nicht bedeckt ist (z. B. neben Straßen, deren Mittellinie
+        // eine Hauptreihe blockiert hat).
+        foreach (float offset in new[] { 0f, RowSpacing / 2, RowSpacing / 4, 3 * RowSpacing / 4 })
+        for (float z = z0 + RowSpacing / 2 + 10 + offset; z < z1 - RowSpacing / 2 - 10; z += RowSpacing)
+        {
             var run = new List<(float X, float L, float R)>();
             void Flush()
             {
-                if (run.Count >= 2) items += Emit(map, grid, run, z, material, ref area);
+                if (run.Count >= 2)
+                {
+                    items += Emit(map, grid, run, z, material, ref area);
+                    foreach (var p in run) Cover(p.X - Sample / 2, p.X + Sample / 2, z - p.L + 2, z + p.R - 2);
+                }
                 run.Clear();
             }
             bool any = false;
             for (float x = x0 + 10; x < x1 - 10; x += Sample)
             {
-                float l = Free(x, z) ? Extent(x, z, -1) : -1, r = Free(x, z) ? Extent(x, z, +1) : -1;
+                bool ok = Free(x, z) && (offset == 0 || !Covered(x, z));
+                float l = ok ? Extent(x, z, -1) : -1, r = ok ? Extent(x, z, +1) : -1;
                 if (l < 2 || r < 2 || float.IsNaN(grid.HeightAt(x, z))) { Flush(); continue; }
                 run.Add((x, l, r)); any = true;
             }
             Flush();
             if (any) rows++;
         }
+        int free = 0, open = 0;
+        for (int k = 0; k < mask.Length; k++) if (!mask[k]) { free++; if (!covered[k]) open++; }
+        Uncovered = free > 0 ? open / (double)free : 0;
         return new Result(items, rows, area / 1e6);
     }
 
