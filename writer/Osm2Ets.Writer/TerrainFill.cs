@@ -147,12 +147,12 @@ public static class TerrainFill
             {
                 if (run.Count >= 2)
                 {
-                    items += Emit(map, grid, run, z, material, ref area);
-                    foreach (var p in run)
+                    // Bedeckung nach den tatsächlich gesetzten Stücken (Breite = Minimum je Stück)
+                    items += Emit(map, grid, run, z, material, ref area, (xa, xb, l, r) =>
                     {
-                        Cover(p.X - Sample / 2, p.X + Sample / 2, z - p.L + 2, z + p.R - 2);
-                        Mark2(full, p.X - Sample / 2, p.X + Sample / 2, z - p.L, z + p.R);
-                    }
+                        Cover(xa, xb, z - l + 2, z + r - 2);
+                        Mark2(full, xa, xb, z - l, z + r);
+                    });
                 }
                 run.Clear();
             }
@@ -175,7 +175,7 @@ public static class TerrainFill
     }
 
     private static int Emit(Map map, TerrainGridEntry grid, List<(float X, float L, float R)> run, float z,
-                            Token material, ref double area)
+                            Token material, ref double area, Action<float, float, float, float> placed)
     {
         // Knoten gierig so weit wie möglich setzen: Höhe linear (±0,4 m), Breiten fast gleich,
         // höchstens MaxPiece m – spart viele Items auf flachem, freiem Feld
@@ -211,6 +211,7 @@ public static class TerrainFill
             int a = idx[k], b = idx[k + 1];
             float l = float.MaxValue, r = float.MaxValue;
             for (int i = a; i <= b; i++) { l = MathF.Min(l, run[i].L); r = MathF.Min(r, run[i].R); }
+            placed(run[a].X, run[b].X, l, r);
             var pa = new Vector3(run[a].X, grid.HeightAt(run[a].X, z), z);
             var pb = new Vector3(run[b].X, grid.HeightAt(run[b].X, z), z);
             t = t is null ? Terrain.Add(map, pa, pb, material, l, r) : t.Append(pb, material, l, r);
