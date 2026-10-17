@@ -15,7 +15,8 @@ namespace Osm2Ets.Writer;
 /// </summary>
 public static class TerrainFill
 {
-    public const float RowSpacing = 40f;   // Abstand der Reihen (m) = 2 × halbe Breite
+    public const float RowSpacing = 20f;   // Abstand der Reihen (m)
+    public const float Overlap = 4f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
     public const float Sample = 10f;       // Abtastung entlang der Reihe (m)
     public const float MaxPiece = 200f;    // längstes Terrain-Stück (m)
     private const float MaskCell = 4f;
@@ -75,7 +76,7 @@ public static class TerrainFill
             if (i < 0 || j < 0 || i >= mw || j >= mh) return false;
             return !mask[j * mw + i];
         }
-        float half = RowSpacing / 2;
+        float half = RowSpacing / 2 + Overlap;
         // freie Breite nach Norden (−z, links bei Fahrt nach Osten) bzw. Süden (+z, rechts)
         float Extent(float x, float z, float sign)
         {
@@ -87,7 +88,7 @@ public static class TerrainFill
         var material = new Token(Road.Add(new Map(), Vector3.Zero, new Vector3(10, 0, 0), "ger1", 1, 1)
                                      .Right.Terrain.QuadData.BrushMaterials[0].Name.ToString());
         int items = 0, rows = 0; double area = 0;
-        for (float z = z0 + half + 10; z < z1 - half - 10; z += RowSpacing)
+        for (float z = z0 + RowSpacing / 2 + 10; z < z1 - RowSpacing / 2 - 10; z += RowSpacing)
         {
             // Läufe freier Abtastpunkte
             var run = new List<(float X, float L, float R)>();

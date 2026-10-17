@@ -39,9 +39,9 @@ Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet
 
 Mit `--dem` enthält das Zwischenformat zusätzlich ein `terrain_grid` (20 m, bodennah
 gefiltert, im Abstand 12–80 m zu Straßen weich auf Straßenhöhe übergeblendet). Der Writer
-füllt die Flächen zwischen den Straßen mit ETS2-Terrain-Items in West-Ost-Reihen alle 40 m.
+füllt die Flächen zwischen den Straßen mit ETS2-Terrain-Items in West-Ost-Reihen alle 20 m (4 m Überlappung).
 Jeder Streifen ist quer eben, am Hang sind daher kleine Stufen zwischen den Reihen möglich
-(≈0,8 m bei 4 %).
+(≈0,4 m bei 4 %).
 
 ### Bekannte Probleme (aus dem Spieltest)
 
