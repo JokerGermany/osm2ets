@@ -12,7 +12,7 @@ from __future__ import annotations
 import numpy as np
 
 
-def build_grid(roads: list[dict], dem, profile, cell: float = 20.0, margin: float = 150.0,
+def build_grid(roads: list[dict], dem, profile, cell: float = 10.0, margin: float = 150.0,
                blend_from: float = 24.0, blend_to: float = 110.0) -> dict | None:
     if dem is None or not roads:
         return None
@@ -57,9 +57,13 @@ def build_grid(roads: list[dict], dem, profile, cell: float = 20.0, margin: floa
         d, idx = cKDTree(s).query(np.column_stack([X.ravel(), Z.ravel()]))
         d = d.reshape(nz, nx)
         road_h = sh[idx].reshape(nz, nx)
+        # Damm/Einschnitt: bis blend_from auf Straßenhöhe (Straßengelände ist dort flach),
+        # danach Böschung 1:1,5 bis zur Geländehöhe; ganz außen weich ins Gelände
+        run = np.maximum(d - blend_from, 0.0) / 1.5
+        dam = np.where(road_h > h, np.maximum(h, road_h - run), np.minimum(h, road_h + run))
         w = np.clip((d - blend_from) / (blend_to - blend_from), 0.0, 1.0)
-        w = w * w * (3 - 2 * w)                     # weicher Übergang
-        h = road_h * (1 - w) + h * w
+        w = w * w * (3 - 2 * w)
+        h = np.where(d <= blend_from, road_h, dam * (1 - w) + np.where(np.abs(dam - h) < 0.01, h, dam) * w)
 
     return {
         "origin": [round(float(x0), 2), round(float(z0), 2)],
