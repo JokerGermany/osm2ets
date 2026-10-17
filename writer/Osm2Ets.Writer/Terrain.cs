@@ -18,10 +18,32 @@ public static class TerrainClearance
 
     private readonly record struct Seg(RoadEntry Road, int Index, Vector2 A, Vector2 B, float HalfWidth);
 
-    public static int Apply(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles)
+    public static int Apply(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles,
+                            List<(Vector3[] Nodes, float HalfWidth)>? obstacles = null)
     {
         var segs = new List<Seg>();
         var grid = new Dictionary<(int, int), List<int>>();
+        void AddSeg(Seg sg)
+        {
+            int k = segs.Count;
+            segs.Add(sg);
+            var min = Vector2.Min(sg.A, sg.B) - new Vector2(SearchRadius);
+            var max = Vector2.Max(sg.A, sg.B) + new Vector2(SearchRadius);
+            for (int gx = (int)MathF.Floor(min.X / Cell); gx <= (int)MathF.Floor(max.X / Cell); gx++)
+            for (int gz = (int)MathF.Floor(min.Y / Cell); gz <= (int)MathF.Floor(max.Y / Cell); gz++)
+            {
+                if (!grid.TryGetValue((gx, gz), out var l)) grid[(gx, gz)] = l = [];
+                l.Add(k);
+            }
+        }
+        // Prefabs: Strecken Knoten → Mitte (Road = null, begrenzt nur fremdes Gelände)
+        foreach (var (nodes, hw) in obstacles ?? [])
+        {
+            var c = nodes.Aggregate(Vector3.Zero, (a, b) => a + b) / nodes.Length;
+            foreach (var n in nodes)
+                AddSeg(new Seg(null!, -1, new Vector2(n.X, n.Z), new Vector2(c.X, c.Z), hw));
+        }
+        int firstRoadSeg = segs.Count;
         foreach (var r in roads)
         {
             var st = styles[r];
@@ -29,21 +51,12 @@ public static class TerrainClearance
             {
                 var a = new Vector2((float)r.Points[i][0], (float)r.Points[i][2]);
                 var b = new Vector2((float)r.Points[i + 1][0], (float)r.Points[i + 1][2]);
-                int k = segs.Count;
-                segs.Add(new Seg(r, i, a, b, st[i].Width / 2));
-                var min = Vector2.Min(a, b) - new Vector2(SearchRadius);
-                var max = Vector2.Max(a, b) + new Vector2(SearchRadius);
-                for (int gx = (int)MathF.Floor(min.X / Cell); gx <= (int)MathF.Floor(max.X / Cell); gx++)
-                for (int gz = (int)MathF.Floor(min.Y / Cell); gz <= (int)MathF.Floor(max.Y / Cell); gz++)
-                {
-                    if (!grid.TryGetValue((gx, gz), out var l)) grid[(gx, gz)] = l = [];
-                    l.Add(k);
-                }
+                AddSeg(new Seg(r, i, a, b, st[i].Width / 2));
             }
         }
 
         int clamped = 0;
-        foreach (var s in segs)
+        foreach (var s in segs.Skip(firstRoadSeg))
         {
             var style = styles[s.Road][s.Index];
             float left = style.TerrainLeft, right = style.TerrainRight;
@@ -59,7 +72,7 @@ public static class TerrainClearance
                 if (grid.TryGetValue(((int)MathF.Floor(p.X / Cell), (int)MathF.Floor(p.Y / Cell)), out var l))
                     foreach (var k in l) cand.Add(k);
             }
-            foreach (var t in new[] { 0.1f, 0.5f, 0.9f })
+            foreach (var t in new[] { 0.05f, 0.25f, 0.5f, 0.75f, 0.95f })
             {
                 var p = Vector2.Lerp(s.A, s.B, t);
                 foreach (var k in cand)
@@ -72,11 +85,30 @@ public static class TerrainClearance
                     if (dist > SearchRadius) continue;
                     // nur Straßen, die etwa parallel daneben liegen; kreuzende Straßen
                     // (Brücken, Kreuzungen) begrenzen das Gelände nicht
+                    if ((o.B - o.A).LengthSquared() < 1e-4f) continue;
                     var odir = Vector2.Normalize(o.B - o.A);
-                    if (MathF.Abs(Vector2.Dot(odir, dir)) < 0.7f) continue;
-                    float free = MathF.Max(0, dist - s.HalfWidth - o.HalfWidth - Margin);
-                    if (Vector2.Dot(d, rightN) >= 0) right = MathF.Min(right, free);
-                    else left = MathF.Min(left, free);
+                    float cos = MathF.Abs(Vector2.Dot(odir, dir));
+                    if (cos >= 0.7f)
+                    {
+                        float free = MathF.Max(0, dist - s.HalfWidth - o.HalfWidth - Margin);
+                        if (Vector2.Dot(d, rightN) >= 0) right = MathF.Min(right, free);
+                        else left = MathF.Min(left, free);
+                        continue;
+                    }
+                    // schräg oder quer liegende Straße (Kreuzung, Rampe, Überführung): dort,
+                    // wo der Geländestreifen sie trifft, endet er – sonst ragt er mit seiner
+                    // eigenen Höhe über die fremde Fahrbahn
+                    float sin = MathF.Max(MathF.Sqrt(1 - cos * cos), 0.3f);
+                    foreach (var (n, isRight) in new[] { (rightN, true), (-rightN, false) })
+                    {
+                        float want = isRight ? right : left;
+                        if (want <= 0) continue;
+                        if (!RaySegment(p, n, o.A, o.B, out float u)) continue;
+                        float reach = s.HalfWidth + want + o.HalfWidth / sin + Margin;
+                        if (u > reach) continue;
+                        float free = MathF.Max(0, u - s.HalfWidth - o.HalfWidth / sin - Margin);
+                        if (isRight) right = MathF.Min(right, free); else left = MathF.Min(left, free);
+                    }
                 }
             }
             if (left < style.TerrainLeft - 0.01f || right < style.TerrainRight - 0.01f)
@@ -86,6 +118,19 @@ public static class TerrainClearance
             }
         }
         return clamped;
+    }
+
+    /// <summary>Schnitt des Strahls p + u·n (u ≥ 0) mit der Strecke a–b.</summary>
+    private static bool RaySegment(Vector2 p, Vector2 n, Vector2 a, Vector2 b, out float u)
+    {
+        u = 0;
+        var e = b - a;
+        float den = n.X * e.Y - n.Y * e.X;
+        if (MathF.Abs(den) < 1e-6f) return false;
+        var w = a - p;
+        u = (w.X * e.Y - w.Y * e.X) / den;
+        float t = (w.X * n.Y - w.Y * n.X) / den;
+        return u >= 0 && t >= 0 && t <= 1;
     }
 
     private static Vector2 Closest(Vector2 a, Vector2 b, Vector2 p)
@@ -213,6 +258,19 @@ public static class CarriagewaySeparation
     }
 
     private static Vector2 P(double[] p) => new((float)p[0], (float)p[2]);
+
+    /// <summary>Schnitt des Strahls p + u·n (u ≥ 0) mit der Strecke a–b.</summary>
+    private static bool RaySegment(Vector2 p, Vector2 n, Vector2 a, Vector2 b, out float u)
+    {
+        u = 0;
+        var e = b - a;
+        float den = n.X * e.Y - n.Y * e.X;
+        if (MathF.Abs(den) < 1e-6f) return false;
+        var w = a - p;
+        u = (w.X * e.Y - w.Y * e.X) / den;
+        float t = (w.X * n.Y - w.Y * n.X) / den;
+        return u >= 0 && t >= 0 && t <= 1;
+    }
 
     private static Vector2 Closest(Vector2 a, Vector2 b, Vector2 p)
     {

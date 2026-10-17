@@ -117,7 +117,13 @@ public static class MapWriter
         }
         int separated = CarriagewaySeparation.Apply(valid, styles);
         if (separated > 0) warnings.Add($"Info: {separated} Richtungsfahrbahnen seitlich verschoben (OSM-Abstand kleiner als Vorlagenbreite)");
-        int terrainClamped = TerrainClearance.Apply(valid, styles);
+        // Prefab-Flächen als Hindernisse: Strecken von jedem Knoten zur Prefab-Mitte
+        var obstacles = new List<(Vector3[] Nodes, float HalfWidth)>();
+        foreach (var pl in placed)
+            foreach (var pf in new[] { pl.First, pl.Last }.Distinct())
+                obstacles.Add((pf.Nodes.Select(n => n.Position).ToArray(), 8f));
+        foreach (var jp in junctionPlans) obstacles.Add((jp.NodePos, 6f));
+        int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
 
         foreach (var entry in valid)
         {
