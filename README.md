@@ -1,5 +1,7 @@
 # osm2ets – OpenStreetMap → Euro Truck Simulator 2
 
+**Deutsch** · [English](README.en.md)
+
 Erzeugt aus OpenStreetMap-Daten ETS2-Kartendateien in wählbarem Maßstab (Standard 1:1)
 und in Detailstufen. Die gröbste Stufe enthält nur das Fernstraßennetz – in Deutschland
 Autobahnen und Bundesstraßen – plus Rampen und die anschließenden Straßen bis zur
@@ -28,7 +30,7 @@ Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet
 | Durchgehende Straßen an Knoten verbunden, keine unsichtbaren Wände | umgesetzt, im Spiel geprüft |
 | Autobahn-Ausfahrt/-Einfahrt mit Prefabs (2 Spuren, Rampe rechts) | umgesetzt, Verkehr fährt darüber |
 | Ebenerdige T-/X-Kreuzungen mit Prefabs | umgesetzt (v7), nur ein Teil der Kreuzungen, siehe unten |
-| Höhen, Brücken, Tunnel | **größte offene Baustelle** – siehe „Bekannte Probleme" |
+| Höhen aus Geländemodell, Brücken, Tunnel | umgesetzt (v8), im Spiel noch nicht geprüft – siehe „Bekannte Probleme" |
 | 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
 | Brückenbauwerke (Modelle), Gelände flächig, Vegetation, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -111,8 +113,8 @@ osm2ets-writer write --input build/test/roads.ets.json \
 ```
 
 Benutzerordner laut TruckLib-Doku unter Windows `Dokumente\Euro Truck Simulator 2`;
-in der nativen Linux-Version üblicherweise `~/.local/share/Euro Truck Simulator 2`
-(nicht verifiziert, bitte prüfen). Der Writer legt je Sektor eine leere `.layer`-Datei an – das SCS-Wiki
+unter Proton (Linux) im Wine-Präfix:
+`steamapps/compatdata/227300/pfx/drive_c/users/steamuser/Documents/Euro Truck Simulator 2`. Der Writer legt je Sektor eine leere `.layer`-Datei an – das SCS-Wiki
 nennt fünf Pflichtdateien je Sektor, TruckLib schreibt `.layer` nur bei Bedarf.
 
 Rückgabewerte: 0 = alles geschrieben, 1 = geschrieben, aber Straßen übersprungen
@@ -125,8 +127,7 @@ Schritte 2 und 4 in einem: `scripts/build_map.sh test.osm.pbf osm_test --lod L1`
 Laut SCS-Modding-Wiki: Spiel mit dem Startparameter `-edit osm_test` starten (optional
 `-noworkshop`), dann **Map → Recompute map** (TruckLib berechnet keine Bounding-Boxes),
 speichern, mit **Run Map** losfahren. Alternativ im normalen Spiel über die Konsole
-`preview osm_test`. Ob der Editor in der nativen Linux-Version läuft, ist ungeklärt;
-das Wiki beschreibt nur Windows.
+`preview osm_test`.
 
 Startpunkt für Run Map: Mitte der längsten Autobahnfahrbahn, nicht auf einer Brücke.
 
@@ -168,8 +169,9 @@ Bundesstraße bedeutet.
 Gerechnet wird auf einem gemeinsamen Graphen aller Straßen; an einem OSM-Knoten haben
 alle Straßen dieselbe Höhe.
 
-1. Gelände entlang der Straße aus dem Geländemodell (`--dem`, GeoTIFF/VRT), geglättet
-   (Fenster 120 m). Ohne Modell liegt alles auf Höhe 0.
+1. Gelände entlang der Straße aus dem Geländemodell (`--dem`, GeoTIFF/VRT): bodennahes
+   Perzentil (25 %, Fenster 60 m), dann geglättet (Fenster 120 m); Steigung netzweit
+   höchstens `terrain_max_grade` (6 %). Ohne Modell liegt alles auf Höhe 0.
 2. Brücken ab `min_bridge_length_m` (8 m, kürzere sind meist Durchlässe) werden um
    `bridge_clearance_m × layer` angehoben (Standard 6,5 m). Die Anhebung fällt entlang
    des Netzes mit höchstens `max_ramp_grade` (5 %) ab – so entstehen Rampen, auch über
