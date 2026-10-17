@@ -12,7 +12,7 @@ namespace Osm2Ets.Writer;
 /// </summary>
 public static class TerrainClearance
 {
-    public const float Margin = 1.0f;
+    public const float Margin = 0f;
     public const float SearchRadius = 80f;
     private const float Cell = 100f;
 

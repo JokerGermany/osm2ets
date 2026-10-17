@@ -17,9 +17,9 @@ public static class TerrainFill
 {
     public const float RowSpacing = 40f;   // Abstand der Reihen (m)
     public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
-    public const float Sample = 5f;        // Abtastung entlang der Reihe (m)
+    public const float Sample = 2.5f;       // Abtastung entlang der Reihe (m)
     public const float MaxPiece = 200f;    // längstes Terrain-Stück (m)
-    private const float MaskCell = 4f;
+    private const float MaskCell = 2f;
 
     /// <summary>Höhenpunkte quer setzen (ungeprüft im Spiel); sonst ebene Streifen wie v17.</summary>
     public static bool Shape = true;
@@ -94,7 +94,7 @@ public static class TerrainFill
         float Extent(float x, float z, float sign)
         {
             float e = 0;
-            for (float d = 2; d <= half; d += 2) { if (!Free(x, z + sign * d)) break; e = d; }
+            for (float d = 1; d <= half; d += 1) { if (!Free(x, z + sign * d)) break; e = d; }
             return e;
         }
 
@@ -134,7 +134,7 @@ public static class TerrainFill
             {
                 bool ok = Free(x, z) && (offset == 0 || !Covered(x, z));
                 float l = ok ? Extent(x, z, -1) : -1, r = ok ? Extent(x, z, +1) : -1;
-                if (l < 2 || r < 2 || float.IsNaN(grid.HeightAt(x, z))) { Flush(); continue; }
+                if (l < 1 || r < 1 || float.IsNaN(grid.HeightAt(x, z))) { Flush(); continue; }
                 run.Add((x, l, r)); any = true;
             }
             Flush();
