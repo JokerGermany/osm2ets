@@ -259,8 +259,12 @@ static void ConnectsThroughRoads()
     var roads = map.MapItems.Values.OfType<Road>().ToList();
     // a→b durchgehend; c beginnt eigenständig; b→d verbunden
     var atNode7 = roads.Where(r => r.ForwardNode.Position == Vector3.Zero || r.Node.Position == Vector3.Zero).ToList();
-    var cFirst = roads.Single(r => r.Node.Position == Vector3.Zero && r.ForwardNode.Position.X > 1);
+    // Abzweig c ist bis zum Rand der Autobahn gekürzt (keine Überlagerung ohne Prefab)
+    var cFirst = roads.Where(r => r.Node.Position.X > 0.5f && r.Node.Position.Z > -45 && r.ForwardNode.Position.X > r.Node.Position.X)
+                      .MinBy(r => r.Node.Position.X)!;
     Check(cFirst.BackwardItem is null, "Abzweig bleibt offen");
+    Check(cFirst.Node.Position.X > 5, $"Abzweig gekürzt (Anfang x = {cFirst.Node.Position.X:0.0})");
+    Check(res.BranchesTrimmed == 1 && res.Overlaps!.Count == 0, $"gekürzt {res.BranchesTrimmed}, Überlagerungen {res.Overlaps!.Count}");
     var bFirst = roads.Single(r => r.Node.Position == Vector3.Zero && r.ForwardNode.Position.X == 0);
     Check(bFirst.BackwardItem is Road, "Geradeaus verbunden");
     var dir = MapWriter.Validate(d, out _, out _);

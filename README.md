@@ -50,6 +50,9 @@ near Bayreuth (A 9, A 70, B 85); larger areas have not been tested.
   There the roads still overlap.
 - Node clusters at motorway triangles are not yet handled as a whole.
 - The junction prefabs are "narrow" templates; width jumps to the road are possible.
+- **Overlap check:** only a bridge or tunnel may overlap another road surface. The writer
+  reports every violation (`<input>.overlaps.geojson`), cuts back branch ends without a
+  prefab to the edge of the road they meet, and keeps only one through connection per node.
 - TruckLib does not compute bounding boxes: always run "Map → Recompute map" in the editor.
 
 ## Requirements

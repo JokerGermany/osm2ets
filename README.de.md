@@ -51,6 +51,10 @@ Ausschnitt bei Bayreuth (A 9, A 70, B 85); größere Gebiete sind nicht getestet
   Dort liegen die Straßen weiter übereinander.
 - Knotenhäufungen an Autobahndreiecken werden noch nicht als Ganzes behandelt.
 - Die Kreuzungs-Prefabs sind „narrow"-Vorlagen; Breitensprünge zur Straße sind möglich.
+- **Überlagerungsprüfung:** Nur Brücken oder Tunnel dürfen sich mit einer anderen Fahrbahn
+  überlagern. Der Writer meldet jeden Verstoß (`<eingabe>.overlaps.geojson`), kürzt Abzweige
+  ohne Prefab bis zum Rand der anderen Fahrbahn und lässt je Knoten nur eine durchgehende
+  Verbindung bestehen.
 - TruckLib berechnet keine Bounding-Boxes: im Editor immer „Map → Recompute map".
 
 ## Voraussetzungen
