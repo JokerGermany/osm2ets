@@ -399,6 +399,7 @@ public static class Junctions
         }
         if (p.Origin != 0) pf.ChangeOrigin(p.Origin);
         p.Placed = pf;
+        PrefabFootprint.Register(pf, ppd);
         return pf;
     }
 }

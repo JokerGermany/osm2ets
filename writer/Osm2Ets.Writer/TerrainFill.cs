@@ -18,6 +18,7 @@ public static class TerrainFill
     public const float RowSpacing = 40f;   // Abstand der Reihen (m)
     /// <summary>So weit neben der Fahrbahn bleibt das Füllgelände weg (Rest überlappt das Straßengelände).</summary>
     public const float MaskTerrain = 2f;
+    public const float PrefabLaneRadius = 4f;
     public const float FineSpacing = 1f;   // Reihenabstand für die Reste neben Straßen (m)
     public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
     public const float Sample = 2.5f;       // Abtastung entlang der Reihe (m)
@@ -37,7 +38,8 @@ public static class TerrainFill
 
     public static Result Build(Map map, TerrainGridEntry grid, List<RoadEntry> roads,
                                Dictionary<RoadEntry, ResolvedStyle[]> styles,
-                               List<(Vector3[] Nodes, float HalfWidth)> prefabs)
+                               List<(Vector3[] Nodes, float HalfWidth)> prefabs,
+                               List<Vector2>? prefabLanes = null)
     {
         float x0 = (float)grid.Origin[0], z0 = (float)grid.Origin[1];
         float x1 = x0 + (float)grid.Cell * (grid.Nx - 1), z1 = z0 + (float)grid.Cell * (grid.Nz - 1);
@@ -75,7 +77,11 @@ public static class TerrainFill
                 }
             }
         }
-        // Prefabs: Strecken Knoten → Mitte mit halber Breite (statt eines großen Kreises)
+        // Prefabs: wo die Fahrspuren bekannt sind, nur diese (je Punkt 4 m Radius);
+        // sonst grob Strecken Knoten → Mitte
+        if (prefabLanes is { Count: > 0 })
+            foreach (var c in prefabLanes) Mark(c, PrefabLaneRadius);
+        else
         foreach (var (nodes, hw) in prefabs)
         {
             var c3 = nodes.Aggregate(Vector3.Zero, (s, n) => s + n) / nodes.Length;
@@ -167,6 +173,22 @@ public static class TerrainFill
             Flush();
             if (any) rows++;
         }
+        }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_MASKDUMP") is { } md)
+        {
+            var pp = md.Split(',').Select(float.Parse).ToArray();   // x,z,halbe Größe
+            int ci = (int)((pp[0] - x0) / MaskCell), cj = (int)((pp[1] - z0) / MaskCell), r = (int)(pp[2] / MaskCell);
+            using var w = new StreamWriter("maskdump.pgm");
+            w.Write($"P2 {2 * r} {2 * r} 2\n");
+            for (int j = cj - r; j < cj + r; j++)
+            {
+                for (int i = ci - r; i < ci + r; i++)
+                {
+                    int k = j * mw + i; bool ok = i >= 0 && j >= 0 && i < mw && j < mh;
+                    w.Write(!ok ? "0 " : mask[k] ? "1 " : full[k] ? "2 " : "0 ");
+                }
+                w.Write("\n");
+            }
         }
         int free = 0, open = 0;
         for (int k = 0; k < mask.Length; k++) if (!mask[k]) { free++; if (!full[k]) open++; }

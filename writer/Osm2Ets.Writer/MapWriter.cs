@@ -75,6 +75,7 @@ public static class MapWriter
         // ebenerdige Kreuzungen normaler Straßen (T/X-Prefabs)
         var junctionPlans = new List<Junctions.Plan>();
         Junctions.Reset();
+        PrefabFootprint.Reset();
         if (prefabs is not null)
         {
             string TypeAt(RoadEntry r, bool atStart) => mapping.Resolve(atStart ? r.Runs[0] : r.Runs[^1]).RoadType;
@@ -262,10 +263,6 @@ public static class MapWriter
                 }
                 warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}");
             }
-            if (Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null) {
-            var tf = TerrainFill.Build(map, tg, valid, styles, obstacles);
-            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}");
-            }
         }
 
         int prefabCount = 0;
@@ -331,6 +328,13 @@ public static class MapWriter
         if (prefabs is not null)
             warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
 
+        // Füllgelände zuletzt: dann sind alle Prefabs gesetzt und ihre Fahrspuren bekannt
+        if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg2 && Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null)
+        {
+            var lanes = PrefabFootprint.All(map);
+            var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
+            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted})");
+        }
         return (map, new WriteResult(written, skipped, items, styleChanges, startPos, startRoad?.Id, warnings,
                                      connections, reversed, terrainClamped, overlaps, branchesTrimmed));
     }

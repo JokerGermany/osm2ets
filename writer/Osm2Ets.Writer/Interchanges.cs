@@ -303,6 +303,7 @@ public static class Interchanges
         pf.Look = def.Look;
         pf.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
         InwardDirections[pf] = WorldDirections(ppd, rotated);
+        PrefabFootprint.Register(pf, ppd);
         return pf;
     }
 
