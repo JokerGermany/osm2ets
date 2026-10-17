@@ -234,6 +234,11 @@ public static class MapWriter
 
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg)
         {
+            if (!TerrainFill.WideRoadTerrain)
+            {
+                int sloped = MedianSlopes.Apply(valid, styles, firstItem, lastItem);
+                warnings.Insert(0, $"Info: Mittelstreifen-Böschungen: {sloped} Geländeseiten zur tieferen Nachbarfahrbahn geneigt");
+            }
             if (TerrainFill.WideRoadTerrain)
             {
                 int shaped = 0, bad = 0;
