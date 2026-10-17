@@ -242,7 +242,10 @@ public static class TerrainFill
             t.Left.Terrain.Noise = TerrainNoise.Percent0;
             t.Right.Terrain.Noise = TerrainNoise.Percent0;
             // gröberes Raster (16 m statt 4 m): flaches Feld braucht keine feinen Quads
-            t.StepSize = StepSize.Meters16;
+            // kurze Stücke brauchen feinere Schritte, sonst nur eine Rasterspalte (= unsichtbar)
+            float plen = pb.X - pa.X;
+            t.StepSize = plen >= 16 ? StepSize.Meters16 : plen >= 12 ? StepSize.Meters12
+                       : plen >= 4 ? StepSize.Meters4 : StepSize.Meters2;
             t.Recalculate();
             if (Shape)
             {

@@ -335,6 +335,16 @@ public static class MapWriter
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted})");
         }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_TPROBE") is { } tp)
+        {
+            var q = tp.Split(',').Select(float.Parse).ToArray();
+            foreach (var t in map.MapItems.Values.OfType<Terrain>())
+            {
+                var a = t.Node.Position; var b = t.ForwardNode.Position;
+                if (MathF.Max(a.X, b.X) < q[0] - 40 || MathF.Min(a.X, b.X) > q[0] + 40 || MathF.Abs(a.Z - q[1]) > 40) continue;
+                Console.Error.WriteLine($"T {a.X:0.0}..{b.X:0.0} z {a.Z:0.0} y {a.Y:0.0}/{b.Y:0.0} L {t.Left.Terrain.Size:0.0} R {t.Right.Terrain.Size:0.0} offs {t.Left.Terrain.QuadData.Offsets.Count}/{t.Right.Terrain.QuadData.Offsets.Count} cols {t.Left.Terrain.QuadData.Cols} rows {t.Left.Terrain.QuadData.Rows}/{t.Right.Terrain.QuadData.Rows}");
+            }
+        }
         return (map, new WriteResult(written, skipped, items, styleChanges, startPos, startRoad?.Id, warnings,
                                      connections, reversed, terrainClamped, overlaps, branchesTrimmed));
     }
