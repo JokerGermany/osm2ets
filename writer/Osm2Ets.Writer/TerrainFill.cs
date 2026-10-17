@@ -21,6 +21,10 @@ public static class TerrainFill
     public const float MaxPiece = 200f;    // längstes Terrain-Stück (m)
     private const float MaskCell = 4f;
 
+    /// <summary>Höhenpunkte quer setzen (ungeprüft im Spiel); sonst ebene Streifen wie v17.</summary>
+    public static bool Shape = true;
+    public static int Mismatch;
+
     public sealed record Result(int Items, int Rows, double AreaKm2);
 
     public static Result Build(Map map, TerrainGridEntry grid, List<RoadEntry> roads,
@@ -157,8 +161,11 @@ public static class TerrainFill
             // gröberes Raster (16 m statt 4 m): flaches Feld braucht keine feinen Quads
             t.StepSize = StepSize.Meters16;
             t.Recalculate();
-            ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1);
-            ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1);
+            if (Shape)
+            {
+                if (ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1, 16) < 0) Mismatch++;
+                if (ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1, 16) < 0) Mismatch++;
+            }
             map.AddSector(Map.GetSectorOfCoordinate((pa + pb) / 2));
             area += (pb.X - pa.X) * (l + r);
             n++;
@@ -166,31 +173,49 @@ public static class TerrainFill
         return n;
     }
 
+    /// <summary>Feste Reihenbreiten des Spiels quer zur Streifenrichtung (map-docs, „Quad Info Struct“).</summary>
+    private static readonly float[] RowSizes = [1, 1, 1, 2, 6, 6, 10, 10, 10, 20, 40, 50, 50, 50, 100];
+
+    /// <summary>Abstände der Rasterzeilen von der Mittellinie für eine Geländebreite.</summary>
+    internal static List<float> RowDistances(float size)
+    {
+        var d = new List<float> { 0 };
+        float acc = 0;
+        foreach (var r in RowSizes)
+        {
+            if (acc >= size - 1e-3f) break;
+            acc = MathF.Min(acc + r, size);
+            d.Add(acc);
+        }
+        return d;
+    }
+
     /// <summary>
-    /// Höhenpunkte eines Streifens auf das Geländeraster legen. Im Spieltest (osm_ttest)
-    /// ermittelt: Spalte X läuft vom Anfangs- zum Endknoten, Zeile Y von der Mittellinie
-    /// (0) zum Außenrand (Rows−1); Offset.Y hebt den Punkt an. Gleichmäßige Abstände sind
-    /// angenommen, nicht gemessen.
+    /// Höhenpunkte eines Streifens auf das Geländeraster legen. Laut map-docs speichert ein
+    /// Offset die ABSOLUTE Lage des Rasterpunkts relativ zum Anfangsknoten (nicht eine
+    /// Verschiebung). Zeilenabstände nach RowSizes, Spalten im Abstand der Schrittweite.
+    /// Die Streifen laufen genau nach Osten (+x); links = Norden (−z), rechts = Süden (+z).
     /// </summary>
-    private static void ShapeSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign)
+    internal static int ShapeSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float step)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
+        var rowsD = RowDistances(size);
         int rows = q.Rows, cols = q.Cols;
-        if (rows < 2 || cols < 2 || size <= 0) return;
-        for (int i = 0; i < cols; i++)
-        {
-            float u = i / (float)(cols - 1);
-            var c = Vector3.Lerp(pa, pb, u);
-            for (int j = 1; j < rows; j++)
+        if (rows < 1 || cols < 1 || size <= 0) return 0;
+        if (rowsD.Count != rows + 1 && rowsD.Count != rows) return -1;  // Raster passt nicht zur Annahme
+        float len = pb.X - pa.X;
+        int n = 0;
+        for (int j = 1; j < rowsD.Count; j++)
+            for (int i = 0; i < cols; i++)
             {
-                float z = c.Z + zSign * size * j / (rows - 1);
-                float h = grid.HeightAt(c.X, z);
+                float x = cols > 1 ? len * i / (cols - 1) : 0;
+                float z = pa.Z + zSign * rowsD[j];
+                float h = grid.HeightAt(pa.X + x, z);
                 if (float.IsNaN(h)) continue;
-                float dy = h - c.Y;
-                if (MathF.Abs(dy) < 0.05f) continue;
-                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(0, dy, 0) });
+                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(x, h - pa.Y, zSign * rowsD[j]) });
+                n++;
             }
-        }
+        return n;
     }
 }
