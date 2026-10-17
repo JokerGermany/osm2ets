@@ -128,6 +128,7 @@ public static class MapWriter
                 obstacles.Add((pf.Nodes.Select(n => n.Position).ToArray(), 8f));
         foreach (var jp in junctionPlans) obstacles.Add((jp.NodePos, 6f));
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
         var overlaps = Overlaps.Report(valid, styles, pairs, obstacles);
 
         foreach (var entry in valid)

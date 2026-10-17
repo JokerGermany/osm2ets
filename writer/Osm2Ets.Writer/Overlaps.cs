@@ -229,6 +229,82 @@ public static class Overlaps
         return found.Values.OrderByDescending(v => v.Overlap).ToList();
     }
 
+    /// <summary>
+    /// Geländestreifen dürfen keine fremde Fahrbahn auf anderer Höhe überdecken (Regel wie
+    /// bei Fahrbahnen; auch Brücken/Tunnel bekommen darüber/darunter kein Gelände).
+    /// Kürzt das Gelände der betroffenen Seite bis zum Rand der fremden Fahrbahn.
+    /// Gibt die Zahl der gekürzten Abschnitte zurück.
+    /// </summary>
+    public static int EnforceTerrain(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles,
+                                     List<(Vector3[] Nodes, float HalfWidth)> prefabs, float minDz = 0.3f)
+    {
+        var segs = new List<Seg>();
+        foreach (var r in roads)
+            for (int i = 0; i < r.Points.Count - 1; i++)
+                segs.Add(new Seg(r, i, MapWriter.ToVector(r.Points[i]), MapWriter.ToVector(r.Points[i + 1]),
+                                 styles[r][i].Width / 2, false));
+        foreach (var (nodes, hw) in prefabs)
+        {
+            var c = nodes.Aggregate(Vector3.Zero, (a, b) => a + b) / nodes.Length;
+            foreach (var n in nodes) segs.Add(new Seg(null, -1, n, c, hw, false));
+        }
+        const float cell = 50f;
+        var grid = new Dictionary<(int, int), List<int>>();
+        for (int k = 0; k < segs.Count; k++)
+        {
+            var sg = segs[k];
+            float pad = sg.HalfWidth + (sg.Road is null ? 0 : MathF.Max(styles[sg.Road][sg.Index].TerrainLeft, styles[sg.Road][sg.Index].TerrainRight));
+            int x0 = (int)MathF.Floor((MathF.Min(sg.A.X, sg.B.X) - pad) / cell), x1 = (int)MathF.Floor((MathF.Max(sg.A.X, sg.B.X) + pad) / cell);
+            int z0 = (int)MathF.Floor((MathF.Min(sg.A.Z, sg.B.Z) - pad) / cell), z1 = (int)MathF.Floor((MathF.Max(sg.A.Z, sg.B.Z) + pad) / cell);
+            for (int x = x0; x <= x1; x++) for (int z = z0; z <= z1; z++)
+            {
+                if (!grid.TryGetValue((x, z), out var l)) grid[(x, z)] = l = [];
+                l.Add(k);
+            }
+        }
+        int changed = 0;
+        for (int a = 0; a < segs.Count; a++)
+        {
+            var sg = segs[a];
+            if (sg.Road is null) continue;
+            var st = styles[sg.Road][sg.Index];
+            float left = st.TerrainLeft, right = st.TerrainRight;
+            if (left <= 0 && right <= 0) continue;
+            var dir = P2(sg.B) - P2(sg.A);
+            if (dir.LengthSquared() < 1e-6f) continue;
+            dir = Vector2.Normalize(dir);
+            var cand = new HashSet<int>();
+            foreach (var t in new[] { 0f, 0.5f, 1f })
+            {
+                var q = Vector2.Lerp(P2(sg.A), P2(sg.B), t);
+                if (grid.TryGetValue(((int)MathF.Floor(q.X / cell), (int)MathF.Floor(q.Y / cell)), out var l))
+                    foreach (var k in l) cand.Add(k);
+            }
+            foreach (var b in cand)
+            {
+                if (b == a) continue;
+                var o = segs[b];
+                if (o.Road is not null && o.Road == sg.Road && Math.Abs(o.Index - sg.Index) <= 1) continue;
+                var (d, pa, pb) = SegSeg(P2(sg.A), P2(sg.B), P2(o.A), P2(o.B));
+                float reach = sg.HalfWidth + MathF.Max(left, right) + o.HalfWidth;
+                if (d >= reach) continue;
+                float dz = MathF.Abs(HeightAt(sg, pa) - HeightAt(o, pb));
+                if (dz < minDz) continue;   // gleiche Höhe: Gelände darf anschließen
+                var side = pb - pa;
+                bool isRight = side.LengthSquared() < 1e-6f || (-dir.Y * side.X + dir.X * side.Y) >= 0;
+                float free = MathF.Max(0, d - sg.HalfWidth - o.HalfWidth - 1f);
+                if (d < sg.HalfWidth + o.HalfWidth) { left = 0; right = 0; continue; } // überdeckt direkt
+                if (isRight) right = MathF.Min(right, free); else left = MathF.Min(left, free);
+            }
+            if (left < st.TerrainLeft - 0.01f || right < st.TerrainRight - 0.01f)
+            {
+                styles[sg.Road][sg.Index] = st with { TerrainLeft = MathF.Round(left, 1), TerrainRight = MathF.Round(right, 1) };
+                changed++;
+            }
+        }
+        return changed;
+    }
+
     public static void WriteGeoJson(string path, List<Violation> vs)
     {
         var sb = new StringBuilder("{\"type\":\"FeatureCollection\",\"features\":[\n");
