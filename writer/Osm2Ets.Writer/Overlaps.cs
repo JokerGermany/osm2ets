@@ -30,6 +30,15 @@ public static class Overlaps
 
     // ------------------------------------------------------------------ Abzweige kürzen
 
+    /// <summary>Modellmitte rechts der Straßenlinie je Lauf (für asymmetrische Modelle).</summary>
+    public static Func<RunEntry, float> CenterOf = _ => 0f;
+
+    private static Vector2 Right(Vector2 a, Vector2 b)
+    {
+        var d = b - a;
+        return d.LengthSquared() > 1e-8f ? Vector2.Normalize(new Vector2(-d.Y, d.X)) : Vector2.Zero;
+    }
+
     public static int TrimBranches(List<RoadEntry> roads, List<(RoadEntry From, RoadEntry To)> pairs,
                                    Func<RunEntry, float> halfWidth, List<string> warnings)
     {
@@ -109,7 +118,10 @@ public static class Overlaps
             for (float t = 0; t < len; t += 1f)
             {
                 var p = Vector2.Lerp(a, b, len > 0 ? t / len : 0);
-                if (!Touches(p, hw, o, halfWidth)) return acc + t;
+                // Richtung am Ende: von r weg zum Knoten hin egal – rechts bezogen auf Fahrtrichtung von r
+                var dirA = atStart ? a : b; var dirB = atStart ? b : a;
+                var pc = p + Right(dirA, dirB) * CenterOf(atStart ? r.Runs[0] : r.Runs[^1]);
+                if (!Touches(pc, hw, o, halfWidth)) return acc + t;
             }
             acc += len;
             if (acc > MaxTrim + 1) return acc;
@@ -122,7 +134,9 @@ public static class Overlaps
         for (int i = 0; i < o.Points.Count - 1; i++)
         {
             var run = o.Runs.FirstOrDefault(x => x.From <= i && i < x.To) ?? o.Runs[0];
-            float d = DistPointSeg(p, P(o.Points[i]), P(o.Points[i + 1]));
+            var oa = P(o.Points[i]); var ob = P(o.Points[i + 1]);
+            var sh = Right(oa, ob) * CenterOf(run);
+            float d = DistPointSeg(p, oa + sh, ob + sh);
             if (d < hw + halfWidth(run) - Tolerance) return true;
         }
         return false;

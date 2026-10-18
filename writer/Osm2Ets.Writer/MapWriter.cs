@@ -150,6 +150,7 @@ public static class MapWriter
         }
 
         // Abzweige ohne Prefab bis an den Fahrbahnrand der anderen Straße zurücknehmen
+        Overlaps.CenterOf = run => mapping.Resolve(run).ModelCenter;
         int branchesTrimmed = Overlaps.TrimBranches(valid, pairs, run => mapping.Resolve(run).Width / 2, warnings);
 
         // lange Abschnitte teilen, damit die Geländebreite nicht über hunderte Meter
