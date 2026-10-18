@@ -340,8 +340,8 @@ public static class TerrainFill
                 if (tA is { } ta && tB is { } tb)
                 {
                     float u = cols > 1 ? (float)i / (cols - 1) : 0;
-                    var t = Vector2.Normalize(Vector2.Lerp(ta, tb, u));
-                    nrm = new Vector2(-t.Y, t.X);
+                    var tg2 = Vector2.Normalize(Vector2.Lerp(ta, tb, u));
+                    nrm = new Vector2(-tg2.Y, tg2.X);
                 }
                 var w = new Vector2(pa.X, pa.Z) + f * x + nrm * (zSign * d);
                 float h = grid.HeightAt(w.X, w.Y);
