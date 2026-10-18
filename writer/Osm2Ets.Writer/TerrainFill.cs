@@ -23,7 +23,12 @@ public static class TerrainFill
     public static bool FillUnderRoads = Environment.GetEnvironmentVariable("OSM2ETS_FILL_MASKROADS") is null;
     /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
     public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
-    public static float NearFlat = EnvF("OSM2ETS_RT_FLAT", 1.5f), NearBlend = EnvF("OSM2ETS_RT_BLEND", 4.5f);
+    public static float NearFlat = EnvF("OSM2ETS_RT_FLAT", 3f), NearBlend = EnvF("OSM2ETS_RT_BLEND", 10f);
+    /// <summary>In Zwickeln (andere Straße näher als GoreDist): kurzer Übergang.</summary>
+    public static float GoreFlat = 1.5f, GoreBlend = 2.5f, GoreDist = 14f, GoreFull = 8f;
+    /// <summary>Nur bei kleinem Höhenunterschied Raster–Fahrbahn (Zwickel auf einer Ebene);
+    /// sonst (Damm, Einschnitt, Brückenrampe) entstünde eine Kante.</summary>
+    public static float GoreMaxDh = 1.0f;
     private static float EnvF(string n, float d) =>
         float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
     /// <summary>Füllstücke verketten (alt, OSM2ETS_FILL_CHAIN=1) – siehe Emit.</summary>
@@ -61,7 +66,7 @@ public static class TerrainFill
                                List<Vector2>? prefabLanes = null)
     {
         Cap = UseCap ? RoadCap.Build(roads, styles, prefabs) : null;
-        RoadCap.Lowered = 0;
+        RoadCap.Lowered = 0; RoadCap.Raised = 0;
         float x0 = (float)grid.Origin[0], z0 = (float)grid.Origin[1];
         float x1 = x0 + (float)grid.Cell * (grid.Nx - 1), z1 = z0 + (float)grid.Cell * (grid.Nz - 1);
         int mw = (int)((x1 - x0) / MaskCell) + 1, mh = (int)((z1 - z0) / MaskCell) + 1;
@@ -418,7 +423,7 @@ public static class TerrainFill
     /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
     /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
     /// </summary>
-    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float>? capOthers = null)
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float>? otherDist = null)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
@@ -461,12 +466,21 @@ public static class TerrainFill
                 // entsteht eine Stufe (dunkler Keil). Das Raster hält die Straßenhöhe nahe der
                 // Straße ohnehin (terrain.py: core 6 m).
                 float tt = Math.Clamp((rowsD[j] - NearFlat) / NearBlend, 0, 1);
-                h = roadY + (h - roadY) * tt - RoadTerrainDrop;
-                if (capOthers is not null)
+                if (otherDist is not null && MathF.Abs(h - roadY) < GoreMaxDh)
                 {
-                    float c2 = capOthers(w.X, w.Y);
-                    if (c2 < h) { h = c2; RoadCap.RoadTerrainLowered++; }
+                    // Zwickel: nahe einer anderen Straße schneller ins Raster (das beide Straßen
+                    // stetig verbindet), sonst Stufe zwischen zwei Straßengeländen
+                    float od = otherDist(w.X, w.Y);
+                    if (od < GoreDist)
+                    {
+                        float tg = Math.Clamp((rowsD[j] - GoreFlat) / GoreBlend, 0, 1);
+                        float k = Math.Clamp((GoreDist - od) / (GoreDist - GoreFull), 0, 1);
+                        float t2 = tt + (MathF.Max(tt, tg) - tt) * k;
+                        if (t2 > tt) RoadCap.RoadTerrainLowered++;
+                        tt = t2;
+                    }
                 }
+                h = roadY + (h - roadY) * tt - RoadTerrainDrop;
                 var off = world
                     ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen ab Anfangsknoten
                     : new Vector3(x, h - pa.Y, zSign * d);                 // lokal

@@ -150,13 +150,80 @@ public sealed class RoadCap
         return cap;
     }
 
+    /// <summary>Abstand vom Modellrand der nächsten ANDEREN Straße (bzw. eines Prefabs), höchstens maxD.</summary>
+    public float OtherDistance(float x, float z, object owner, float maxD)
+    {
+        if (!index.TryGetValue(((int)MathF.Floor(x / Cell), (int)MathF.Floor(z / Cell)), out var l)) return maxD;
+        float best = maxD;
+        var p = new Vector2(x, z);
+        foreach (var i in l)
+        {
+            if (ReferenceEquals(owners[i], owner)) continue;
+            var (a, b, hw, center, _, _) = segs[i];
+            var a2 = new Vector2(a.X, a.Z); var ab = new Vector2(b.X, b.Z) - a2;
+            float l2 = ab.LengthSquared();
+            if (l2 < 1e-8f) continue;
+            float u = Vector2.Dot(p - a2, ab) / l2;
+            var dir = ab / MathF.Sqrt(l2);
+            var right = new Vector2(-dir.Y, dir.X);
+            float lat = MathF.Abs(Vector2.Dot(p - a2, right) - center) - hw;
+            float lon = (u < 0 ? -u : u > 1 ? u - 1 : 0) * MathF.Sqrt(l2);
+            best = MathF.Min(best, MathF.Max(0, MathF.Max(lat, lon)));
+        }
+        return best;
+    }
+
     /// <summary>Gelände für das Füllgelände: Raster, über Fahrbahnen höchstens wie oben.</summary>
     public float Height(TerrainGridEntry grid, float x, float z)
     {
         float h = grid.HeightAt(x, z);
         if (float.IsNaN(h)) return h;
+        if (UseFloor)
+        {
+            float fl = Floor(x, z);
+            if (fl > h) { Interlocked.Increment(ref Raised); h = fl; }
+        }
         float c = At(x, z);
         if (c < h) { Interlocked.Increment(ref Lowered); return c; }
         return h;
     }
+
+    public static int Raised;
+    public static bool UseFloor = Environment.GetEnvironmentVariable("OSM2ETS_FILL_FLOOR") is not null;   // Standard aus: brachte im Zwickel kaum etwas, erzeugte aber Kanten
+
+    /// <summary>
+    /// Untergrenze für das Füllgelände: Bis <see cref="Margin"/> Meter neben dem Modellrand
+    /// höchstens <see cref="FloorGap"/> unter der Fahrbahn, danach mit <see cref="Slope"/>
+    /// fallend. Sonst liegt in schmalen Zwickeln (Gabelung, Prefab-Ende), wo das Straßengelände
+    /// kaum Breite hat, das grobe Raster sichtbar unter dem Asphaltrand – im Editor ein
+    /// dunkler Streifen. Brücken und Tunnel zählen nicht (darunter bleibt Bodenhöhe).
+    /// </summary>
+    public float Floor(float x, float z)
+    {
+        if (!index.TryGetValue(((int)MathF.Floor(x / Cell), (int)MathF.Floor(z / Cell)), out var l)) return float.NegativeInfinity;
+        float fl = float.NegativeInfinity;
+        var p = new Vector2(x, z);
+        foreach (var i in l)
+        {
+            var (a, b, hw, center, drop, bridge) = segs[i];
+            if (bridge) continue;
+            var a2 = new Vector2(a.X, a.Z); var ab = new Vector2(b.X, b.Z) - a2;
+            float l2 = ab.LengthSquared();
+            if (l2 < 1e-8f) continue;
+            float u = Vector2.Dot(p - a2, ab) / l2;
+            float uc = Math.Clamp(u, 0, 1);
+            var dir = ab / MathF.Sqrt(l2);
+            var right = new Vector2(-dir.Y, dir.X);
+            float lat = MathF.Abs(Vector2.Dot(p - a2, right) - center) - hw;
+            float lon = (u < 0 ? -u : u > 1 ? u - 1 : 0) * MathF.Sqrt(l2);
+            float beyond = MathF.Max(0, MathF.Max(lat, lon)) - Margin;
+            if (beyond > Reach) continue;
+            float y = a.Y + (b.Y - a.Y) * uc - FloorGap - MathF.Max(0, beyond) * Slope;
+            fl = MathF.Max(fl, y);
+        }
+        return fl;
+    }
+
+    /// <summary>Füllgelände höchstens so tief unter der Fahrbahn (vor FillDrop).</summary>
+    public const float FloorGap = 0.05f;
 }

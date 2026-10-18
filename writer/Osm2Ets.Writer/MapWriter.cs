@@ -362,7 +362,7 @@ public static class MapWriter
             if (TerrainFill.WideRoadTerrain)
             {
                 int shaped = 0, bad = 0, folded = 0;
-                // Straßengelände nie über dem Asphalt anderer Straßen/Prefabs (Zwickel an Gabelungen)
+                // Zwickel an Gabelungen: nahe anderer Straßen/Prefabs kürzerer Übergang ins Raster
                 RoadCap.PrefabLanes = PrefabFootprint.All3(map);
                 RoadCap.RoadTerrainLowered = 0;
                 var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null
@@ -391,7 +391,7 @@ public static class MapWriter
                         if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
                         for (int tries = 0; tries < 4; tries++)
                         {
-                            Func<float, float, float>? cap = others is null ? null : (x, z) => others.OverOthers(x, z, entry);
+                            Func<float, float, float>? cap = others is null ? null : (x, z) => others.OtherDistance(x, z, entry, TerrainFill.GoreDist);
                             if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb, cap) < 0) bad++;
                             if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb, cap) < 0) bad++;
                             // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
@@ -405,12 +405,12 @@ public static class MapWriter
                         if (rd == lastItem[entry]) break;
                     }
                 }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, unter fremden Asphalt abgesenkt: {RoadCap.RoadTerrainLowered} Punkte");
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte");
             }
             var lanes = PrefabFootprint.All(map);
             RoadCap.PrefabLanes = PrefabFootprint.All3(map);
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
-            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered} Punkte");
+            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered}, angehoben: {RoadCap.Raised} Punkte");
         }
         if (Environment.GetEnvironmentVariable("OSM2ETS_ONLYBOX") is { } ob)
         {
