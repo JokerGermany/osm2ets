@@ -124,6 +124,7 @@ public static class TerrainClearance
                 foreach (var k in cand)
                 {
                     var o = segs[k];
+                    if (Share && o.Road is null) continue;   // Prefabs: Füllgelände/Spuren regeln das
                     if (o.Road == s.Road && Math.Abs(o.Index - s.Index) <= 1) continue;
                     var q = Closest(o.A, o.B, p);
                     var d = q - p;
@@ -140,7 +141,7 @@ public static class TerrainClearance
                         if (MathF.Abs(Vector2.Dot(d, rightN)) < 0.5f * dist) continue;
                         float free = MathF.Max(0, dist - s.HalfWidth - o.HalfWidth - Margin);
                         // beide Straßen füllen die Lücke: jede bis zur Mitte
-                        if (Share && o.Road is not null) free /= 2;
+                        if (Share && o.Road is not null) free = free / 2 + MedianExtra;
                         // Mittelstreifen: das Fahrbahnmodell ist schmaler als die Vorlagenbreite,
                         // deshalb etwas unter die Nachbarfahrbahn reichen (sonst bleibt ein Spalt)
                         else if (o.Road is not null) free += MedianExtra;
@@ -160,14 +161,14 @@ public static class TerrainClearance
                         float reach = s.HalfWidth + want + o.HalfWidth / sin + Margin;
                         if (u > reach) continue;
                         float free = MathF.Max(0, u - s.HalfWidth - o.HalfWidth / sin - Margin);
-                        if (Share && o.Road is not null) free /= 2;
+                        if (Share && o.Road is not null) free = free / 2 + MedianExtra;
                         if (isRight) right = MathF.Min(right, free); else left = MathF.Min(left, free);
                     }
                 }
             }
             if (left < style.TerrainLeft - 0.01f || right < style.TerrainRight - 0.01f)
             {
-                styles[s.Road][s.Index] = style with { TerrainLeft = MathF.Floor(left), TerrainRight = MathF.Floor(right) };
+                styles[s.Road][s.Index] = style with { TerrainLeft = MathF.Floor(left * 2) / 2, TerrainRight = MathF.Floor(right * 2) / 2 };
                 clamped++;
             }
         }

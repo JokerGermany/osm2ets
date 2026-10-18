@@ -18,7 +18,7 @@ public static class TerrainFill
     public const float RowSpacing = 40f;   // Abstand der Reihen (m)
     /// <summary>So weit neben der Fahrbahn bleibt das Füllgelände weg (Rest überlappt das Straßengelände).</summary>
     public const float MaskTerrain = 2f;
-    public const float PrefabLaneRadius = 4f;
+    public const float PrefabLaneRadius = 2f;
     public const float FineSpacing = 1f;   // Reihenabstand für die Reste neben Straßen (m)
     public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
     public const float Sample = 2.5f;       // Abtastung entlang der Reihe (m)
@@ -347,7 +347,7 @@ public static class TerrainFill
                 float h = grid.HeightAt(w.X, w.Y);
                 if (float.IsNaN(h)) continue;
                 float roadY = pa.Y + (pb.Y - pa.Y) * (cols > 1 ? (float)i / (cols - 1) : 0);
-                float t = Math.Clamp(rowsD[j] / 10f, 0, 1);
+                float t = Math.Clamp((rowsD[j] - 3f) / 10f, 0, 1);   // erste 3 m auf Straßenhöhe
                 h = roadY + (h - roadY) * t;
                 var off = Mode is 'C' or 'D'
                     ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen
