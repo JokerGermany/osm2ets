@@ -55,7 +55,7 @@ public static class MapWriter
         }
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
         // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
-        LaneCentering.Apply(valid, mapping.Resolve);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
@@ -82,7 +82,11 @@ public static class MapWriter
                 interchangePlans.Add(plan);
             }
         }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            foreach (var p in interchangePlans) Console.Error.WriteLine($"PRE {p.OsmNode} {p.Kind} anchor {p.Anchor} dir {p.Direction}");
         int icSep = Interchanges.SeparateOpposite(interchangePlans);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            foreach (var p in interchangePlans) Console.Error.WriteLine($"SEP {p.OsmNode} {p.Kind} anchor {p.Anchor}");
         if (icSep > 0) warnings.Add($"Info: {icSep} gegenüberliegende Anschlussstellen-Prefabs seitlich auseinandergerückt");
 
         // ebenerdige Kreuzungen normaler Straßen (T/X-Prefabs)

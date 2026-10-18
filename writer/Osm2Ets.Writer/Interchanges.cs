@@ -287,6 +287,28 @@ public static class Interchanges
     {
         var ppd = src.Get(def.PpdPath);
         var rot = Orientation(ppd, def.Unit, fromNode, toNode, dir);
+        // Ausrichtung nach der Knotenrichtung, nicht nach der Verbindungslinie der Knoten:
+        // bei Prefabs mit seitlichem Versatz (Aufweitung/Teilung, 4,5 m auf 40–59 m) wäre das
+        // Prefab sonst um 4–6° verdreht und seine Enden lägen bis zu 3 m neben der Straße.
+        if (Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_CHORD") is null)
+        {
+            var d0 = Vector3.Normalize(new Vector3(dir.X, 0, dir.Z));
+            float Err(Quaternion q)
+            {
+                var w = WorldDirections(ppd, Calibrate(ppd, def.Unit, q))[fromNode];
+                // Knotenrichtung zeigt ins Prefab; am Eingang (fromNode) = Fahrtrichtung
+                if (Vector3.Dot(w, d0) < 0) w = -w;
+                return MathF.Atan2(w.X * d0.Z - w.Z * d0.X, Vector3.Dot(w, d0));
+            }
+            for (int it = 0; it < 3; it++)
+            {
+                float e = Err(rot);
+                if (MathF.Abs(e) < 1e-4f) break;
+                var qa = Quaternion.Normalize(Quaternion.Concatenate(rot, Quaternion.CreateFromAxisAngle(Vector3.UnitY, e)));
+                var qb = Quaternion.Normalize(Quaternion.Concatenate(rot, Quaternion.CreateFromAxisAngle(Vector3.UnitY, -e)));
+                rot = MathF.Abs(Err(qa)) < MathF.Abs(Err(qb)) ? qa : qb;
+            }
+        }
         if (MathF.Abs(grade) > 1e-4f)
         {
             // Neigung um die waagerechte Querachse; Vorzeichen am echten Einsatz prüfen
@@ -343,8 +365,9 @@ public static class Interchanges
     }
 
     /// <summary>Mindestabstand der Achsen gegenüberliegender Anschluss-Prefabs (m).
-    /// Annahme: aufgeweitete Prefabs je etwa 9 m halbe Breite.</summary>
-    public const float OppositeMinGap = 19f;
+    /// Gemessen an den .ppd-Spuren (ETS2 1.61): die Zusatzspur liegt außen, der innere Rand
+    /// bleibt 4,5 m neben der Achse der zweispurigen Fahrbahn – zusammen 9 m (Berührung).</summary>
+    public const float OppositeMinGap = 9f;
 
     /// <summary>
     /// Ausfahrt und Einfahrt der Gegenrichtung liegen oft auf gleicher Höhe nebeneinander;

@@ -100,6 +100,8 @@ public class StyleSpec
     public float? Offset { get; set; }
     /// <summary>Abstand des linken Modellrands von der OSM-Linie (m) – für Gegenfahrbahnen.</summary>
     public float? EdgeLeft { get; set; }
+    /// <summary>Mitte des Modells rechts der ETS2-Straßenlinie (m), z. B. ger13 +1,75 (−4,5…8,0).</summary>
+    public float? ModelCenter { get; set; }
     /// <summary>Unsichtbare Begrenzung am Straßenrand (ETS2 "boundary").</summary>
     public bool? Boundary { get; set; }
     public string? Resolution { get; set; }
@@ -139,7 +141,8 @@ public class StyleSpec
             Width ?? baseStyle?.Width ?? 8f,
             Boundary ?? baseStyle?.Boundary ?? true,
             Offset ?? (RoadType is null ? baseStyle?.Offset : null) ?? 0f,
-            EdgeLeft ?? (RoadType is null && Width is null ? baseStyle?.EdgeLeft : null) ?? -1f);
+            EdgeLeft ?? (RoadType is null && Width is null ? baseStyle?.EdgeLeftRaw : null) ?? -1f,
+            ModelCenter ?? (RoadType is null ? baseStyle?.ModelCenter : null) ?? 0f);
     }
 }
 
@@ -238,7 +241,8 @@ public sealed record ResolvedStyle(
     float Width = 8f,
     bool Boundary = true,
     float Offset = 0f,
-    float EdgeLeftRaw = -1f)
+    float EdgeLeftRaw = -1f,
+    float ModelCenter = 0f)
 {
     /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
     public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;

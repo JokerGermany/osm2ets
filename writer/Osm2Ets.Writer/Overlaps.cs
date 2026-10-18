@@ -168,8 +168,15 @@ public static class Overlaps
             for (int i = 0; i < r.Points.Count - 1; i++)
             {
                 var run = r.Runs.FirstOrDefault(x => x.From <= i && i < x.To) ?? r.Runs[0];
-                segs.Add(new Seg(r, i, MapWriter.ToVector(r.Points[i]), MapWriter.ToVector(r.Points[i + 1]),
-                                 styles[r][i].Width / 2, run.Bridge || run.Tunnel));
+                var pa = MapWriter.ToVector(r.Points[i]); var pb = MapWriter.ToVector(r.Points[i + 1]);
+                var dd = pb - pa; dd.Y = 0;
+                if (dd.LengthSquared() > 1e-6f && styles[r][i].ModelCenter != 0)
+                {
+                    dd = Vector3.Normalize(dd);
+                    var sh = new Vector3(-dd.Z, 0, dd.X) * styles[r][i].ModelCenter;   // rechts in Fahrtrichtung
+                    pa += sh; pb += sh;
+                }
+                segs.Add(new Seg(r, i, pa, pb, styles[r][i].Width / 2, run.Bridge || run.Tunnel));
             }
         foreach (var (nodes, hw) in prefabs)
         {
