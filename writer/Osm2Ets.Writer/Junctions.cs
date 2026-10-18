@@ -384,6 +384,35 @@ public static class Junctions
         yield return [1, 0];
     }
 
+    public static int RotFixed;
+
+    /// <summary>
+    /// Nach dem Anhängen der Straßen die Knotendrehungen erneut setzen: entlang der Straße
+    /// aus dem Prefab heraus (Straßenanfang) bzw. hinein (Straßenende). Attach/ChangeOrigin
+    /// hinterließen sonst teils quer oder rückwärts stehende Knoten → gefaltete Straßenstücke.
+    /// </summary>
+    public static void FixNodeRotations(Plan p, Prefab pf)
+    {
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NO_ROTFIX") is not null) return;
+        for (int i = 0; i < p.Arms.Length; i++)
+        {
+            if (Dropped.Contains(p.Arms[i].Road)) continue;
+            var want = p.NodePos[p.NodeOf[i]];
+            var node = pf.Nodes.MinBy(nd => Vector3.DistanceSquared(nd.Position, want))!;
+            var inward = p.Inward[p.NodeOf[i]];
+            // Richtung aus der Lage des Nachbarpunkts der Straße prüfen (robust gegen Vorzeichen)
+            var road = p.Arms[i].Road;
+            bool start = StartsAt(road, node.Position);
+            var nb = MapWriter.ToVector(start ? road.Points[1] : road.Points[^2]);
+            var away = nb - node.Position; away.Y = 0;
+            var dir = start ? -inward : inward;
+            if (away.LengthSquared() > 1e-4f && Vector3.Dot(Vector3.Normalize(away), start ? dir : -dir) < 0) dir = -dir;
+            var rot = MathEx.GetNodeRotation(dir);
+            if (Vector3.Dot(Vector3.Transform(-Vector3.UnitZ, node.Rotation), Vector3.Transform(-Vector3.UnitZ, rot)) < 0.999f) RotFixed++;
+            node.Rotation = rot;
+        }
+    }
+
     public static Prefab Build(Map map, Plan p, Interchanges.PpdSource src)
     {
         var ppd = src.Get(p.Def.Prefab.PpdPath);
@@ -398,6 +427,20 @@ public static class Junctions
             pf.Nodes[k].Rotation = MathEx.GetNodeRotation(StartsAt(p.Arms[i].Road, pf.Nodes[k].Position) ? -inward : inward);
         }
         if (p.Origin != 0) pf.ChangeOrigin(p.Origin);
+        // ChangeOrigin ordnet die Knoten um und kann ihre Drehungen dabei neu setzen. Danach
+        // passten Knotenrichtung und Straße an 36 Stellen nicht mehr (86–179° daneben): Die
+        // Straße lief aus dem Prefab-Knoten quer oder rückwärts heraus und faltete sich zu
+        // einem schmalen Keil. Deshalb die Drehung je Knoten (nach Lage gesucht) neu setzen.
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NO_ROTFIX") is null)
+            for (int i = 0; i < p.Arms.Length; i++)
+            {
+                var want = p.NodePos[p.NodeOf[i]];
+                var node = pf.Nodes.MinBy(nd => Vector3.DistanceSquared(nd.Position, want))!;
+                var inward = p.Inward[p.NodeOf[i]];
+                var rot = MathEx.GetNodeRotation(StartsAt(p.Arms[i].Road, node.Position) ? -inward : inward);
+                if (Vector3.Dot(Vector3.Transform(-Vector3.UnitZ, node.Rotation), Vector3.Transform(-Vector3.UnitZ, rot)) < 0.999f) RotFixed++;
+                node.Rotation = rot;
+            }
         p.Placed = pf;
         PrefabFootprint.Register(pf, ppd);
         return pf;

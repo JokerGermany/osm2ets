@@ -338,6 +338,7 @@ public static class MapWriter
                         if (Junctions.StartsAt(a.Road, at)) pf.Attach(ni, firstItem[a.Road].Node);
                         else pf.Attach(ni, lastItem[a.Road].ForwardNode);
                     }
+                    Junctions.FixNodeRotations(jp, pf);
                 }
                 catch { map.Delete(pf); throw; }
                 RegisterSector(map, pf.Nodes[0].Position);
