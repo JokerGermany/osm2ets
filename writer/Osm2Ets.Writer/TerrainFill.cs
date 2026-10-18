@@ -74,7 +74,7 @@ public static class TerrainFill
                 var right = new Vector2(-dir.Y, dir.X);
                 float hw = st[k].Width / 2;
                 // Füllgelände darf 3 m über den Geländestreifen der Straße reichen (keine Lücke)
-                float cap = WideRoadTerrain ? float.MaxValue : MaskTerrain;   // breit: Straßengelände nicht doppelt belegen
+                float cap = WideRoadTerrain ? 0 : MaskTerrain;   // breit: Straßengelände nicht doppelt belegen
                 float wl = hw + MathF.Min(MathF.Max(0, st[k].TerrainLeft - 6), cap), wr = hw + MathF.Min(MathF.Max(0, st[k].TerrainRight - 6), cap);   // 6 m Überlappung
                 for (float s = 0; s <= len; s += MaskCell / 2)
                 {
@@ -83,6 +83,47 @@ public static class TerrainFill
                         Mark(c + right * o, MaskCell * 0.75f);
                 }
             }
+        }
+        // breit: tatsächlich geschriebenes Straßengelände aus den Höhenpunkten in die Maske
+        // (statt aus den geplanten Breiten – die stimmen an Knoten/Kurven nicht immer)
+        if (WideRoadTerrain)
+            foreach (var rd in map.MapItems.Values.OfType<Road>())
+                foreach (var side in new[] { rd.Left.Terrain, rd.Right.Terrain })
+                    MarkSide(rd, side);
+        void MarkSide(Road rd, RoadTerrain side)
+        {
+            var q = side.QuadData;
+            if (q.Offsets.Count == 0) return;
+            var rowsD = RowDistances(side.Size);
+            var v = new Dictionary<(int, int), Vector2>();
+            foreach (var o in q.Offsets) v[(o.X, o.Y)] = new Vector2(rd.Node.Position.X + o.Data.X, rd.Node.Position.Z + o.Data.Z);
+            int jmax = 1;
+            for (int j = 1; j < rowsD.Count; j++) if (rowsD[j] <= side.Size - FillOverlap) jmax = j;
+            // Zeile 0 ≈ Fahrbahnrand: Zeile 1 nach innen fortsetzen genügt, Fahrbahn markiert die Straßenmaske
+            for (int j = 1; j < jmax; j++)
+                for (int i = 0; i < q.Cols; i++)
+                    if (v.TryGetValue((i, j), out var p00) && v.TryGetValue((i + 1, j), out var p10) &&
+                        v.TryGetValue((i + 1, j + 1), out var p11) && v.TryGetValue((i, j + 1), out var p01))
+                        MarkQuad(p00, p10, p11, p01);
+        }
+        void MarkQuad(Vector2 a, Vector2 b, Vector2 c, Vector2 d)
+        {
+            float minx = MathF.Min(MathF.Min(a.X, b.X), MathF.Min(c.X, d.X)), maxx = MathF.Max(MathF.Max(a.X, b.X), MathF.Max(c.X, d.X));
+            float minz = MathF.Min(MathF.Min(a.Y, b.Y), MathF.Min(c.Y, d.Y)), maxz = MathF.Max(MathF.Max(a.Y, b.Y), MathF.Max(c.Y, d.Y));
+            int i0 = Math.Max(0, (int)((minx - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)((maxx - x0) / MaskCell) + 1);
+            int j0 = Math.Max(0, (int)((minz - z0) / MaskCell)), j1 = Math.Min(mh - 1, (int)((maxz - z0) / MaskCell) + 1);
+            static float Cr(Vector2 p, Vector2 q, Vector2 r) => (q.X - p.X) * (r.Y - p.Y) - (q.Y - p.Y) * (r.X - p.X);
+            bool InTri(Vector2 p, Vector2 t0, Vector2 t1, Vector2 t2)
+            {
+                float d1 = Cr(t0, t1, p), d2 = Cr(t1, t2, p), d3 = Cr(t2, t0, p);
+                return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0));
+            }
+            for (int j = j0; j <= j1; j++)
+                for (int i = i0; i <= i1; i++)
+                {
+                    var pt = new Vector2(x0 + i * MaskCell, z0 + j * MaskCell);
+                    if (InTri(pt, a, b, c) || InTri(pt, a, c, d)) mask[j * mw + i] = true;
+                }
         }
         // Prefabs: wo die Fahrspuren bekannt sind, nur diese (je Punkt 4 m Radius);
         // sonst grob Strecken Knoten → Mitte
