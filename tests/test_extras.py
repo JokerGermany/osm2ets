@@ -143,3 +143,17 @@ def test_truck_stop_near_exit_with_both_accesses(tmp_path, profile):
     w = _ways_in(model)
     assert 4 in w and 5 in w and 6 in w      # Schleife über den Autohof
     assert 3 in w                            # Zufahrt vom Rampenende
+
+
+def test_private_ways_only_in_l5_and_marked(tmp_path, profile):
+    nodes = {1: _pt(0, 0), 2: _pt(500, 0), 3: _pt(1000, 0), 4: _pt(500, 300), 5: _pt(700, 300)}
+    ways = [(1, [1, 2, 3], {"highway": "primary", "ref": "B 1"}),
+            (2, [2, 4, 5], {"highway": "service", "access": "private"}),            # Firmengelände
+            (3, [4, 1], {"highway": "track", "access": "no", "motor_vehicle": "yes"})]   # Kfz frei
+    path = str(write_osm(tmp_path / "p.osm", nodes, ways))
+    assert 2 not in _ways_in(build(path, profile, "L4"))
+    model = build(path, profile, "L5")
+    access = {w: run.get("access") for r in model["roads"] for run in r["runs"] for w in run["osm_ways"]}
+    assert access[2] == "private"
+    assert access[3] is None and access[1] is None
+

@@ -146,12 +146,16 @@ lods:
     description: >-
       L4 + alle übrigen Wege: unclassified, residential, living_street, service (auch
       Parkplatzgassen und Grundstückszufahrten), road, track, path, footway, cycleway,
-      bridleway, pedestrian. Wege ohne Lkw-Verkehr sind im Spiel nicht im Navi,
-      Feld- und Waldwege (track) sind Geheimstraßen. Flächen und Gebäude fehlen noch.
+      bridleway, pedestrian, auch ohne Kfz-Zugang (access=private|no). Wege ohne
+      Lkw-Verkehr und gesperrte Wege sind im Spiel nicht im Navi, Feld- und Waldwege
+      (track) sind Geheimstraßen. Flächen und Gebäude fehlen noch.
     core:
       - highway: [motorway, trunk, primary, secondary, tertiary,
                   unclassified, residential, living_street, service, road,
                   track, path, footway, cycleway, bridleway, pedestrian]
     links: [motorway_link, trunk_link, primary_link, secondary_link, tertiary_link]
-    # in L5 auch Parkplatzgassen, Grundstückszufahrten, Drive-in, Notzufahrten
+    # in L5 auch Parkplatzgassen, Grundstückszufahrten, Drive-in, Notzufahrten …
     exclude_service: []
+    # … und Wege ohne Kfz-Zugang (access=private|no, z. B. Firmengelände) – im Spiel
+    # nicht im Navi (Writer: "restricted" in mapping.jsonc)
+    exclude_access: []

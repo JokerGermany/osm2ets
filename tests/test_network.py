@@ -31,12 +31,13 @@ def test_read_ways_filters(synthetic_osm, profile):
     assert {1001, 1004, 1006, 1011, 1012} <= ids
 
 
-def test_l5_contains_tracks(synthetic_osm, profile):
+def test_l5_contains_tracks_and_private_ways(synthetic_osm, profile):
     lod = profile.lod("L5")
-    ways = read_ways(str(synthetic_osm), lod.all_classes, profile.exclude_access, lod.exclude_service)
-    ids = {w.id for w in ways}
-    assert 1013 in ids              # track
-    assert 1014 not in ids          # access=private bleibt draußen
+    ways = read_ways(str(synthetic_osm), lod.all_classes, lod.exclude_access, lod.exclude_service)
+    by_id = {w.id: w for w in ways}
+    assert 1013 in by_id                                  # track
+    assert by_id[1014].tags.get("access") == "private"    # Privatweg, gemerkt für den Writer
+    assert "access" not in by_id[1004].tags               # freie Straße: kein access-Tag
 
 
 def test_l1_selection(synthetic_osm, profile):

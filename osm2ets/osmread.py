@@ -34,6 +34,18 @@ class Way:
     tags: dict
 
 
+RESTRICTED_ACCESS = frozenset({"no", "private"})
+
+
+def restricted_access(tags) -> str | None:
+    """Kfz-Zugang gesperrt (access=no|private ohne Freigabe für Kfz): Wert des Tags, sonst None."""
+    value = tags.get("access")
+    if value in RESTRICTED_ACCESS and not any(tags.get(k) in _ALLOWED_VEHICLE_VALUES
+                                              for k in ("motor_vehicle", "motorcar", "vehicle")):
+        return value
+    return None
+
+
 def _excluded(tags, exclude_access: frozenset, exclude_service: frozenset) -> bool:
     if tags.get("area") == "yes":
         return True
@@ -68,6 +80,10 @@ def read_ways(path: str, classes: frozenset, exclude_access: frozenset = frozens
         if len(refs) < 2:
             continue
         tags = {k: w.tags.get(k) for k in KEPT_TAGS if k in w.tags}
+        # nur gesperrter Zugang wird gemerkt (sonst teilten access=yes/destination die Läufe)
+        restricted = restricted_access(w.tags)
+        if restricted:
+            tags["access"] = restricted
         ways.append(Way(id=w.id, nodes=refs, tags=tags))
     log.info("%d Wege gelesen, %d wegen Zugang/Art ausgeschlossen", len(ways), skipped)
     return ways

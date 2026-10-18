@@ -88,6 +88,8 @@ public sealed class RunEntry
     public string? Maxspeed { get; set; }
     /// <summary>OSM service=* (parking_aisle, driveway, …), sonst null.</summary>
     public string? Service { get; set; }
+    /// <summary>Kfz-Zugang gesperrt: "private" oder "no" (nur in L5 enthalten), sonst null.</summary>
+    public string? Access { get; set; }
     public List<long> OsmWays { get; set; } = [];
 }
 

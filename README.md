@@ -192,10 +192,12 @@ L5 adds all ways. Ways without truck traffic get their own flags in the game
 | `track` (farm/forest track) | `ger37` "ger r1 minim dirt" | secret road, GPS avoids, no AI traffic |
 | `path`, `footway`, `cycleway`, `bridleway`, `pedestrian` | `ger4` "ger road 1 minim" | not on map/GPS, GPS avoids, no AI traffic |
 | `service` = `parking_aisle`, `driveway`, `drive-through`, `emergency_access` | `ger4` | as footways |
+| anything with `access=private`/`no` (no motor vehicle exception), e.g. company premises | usual type | additionally not on map/GPS, GPS avoids, no AI traffic (`restricted`) |
 
-The writer places no junction prefabs on these ways. Their model width (4.5 m) is
-estimated, not measured. Never included: steps, construction, proposed roads, raceways,
-busways, `access=private`/`no`; in L1–L4 also parking aisles and driveways.
+The writer places no junction prefabs on tracks, foot and cycle paths or parking aisles.
+The model width of `ger4` and `ger37` (4.5 m) is estimated, not measured. Never included:
+steps, construction, proposed roads, raceways, busways; in L1–L4 also parking aisles,
+driveways and ways without motor vehicle access.
 
 The former mechanism "connecting roads up to the next junction" (`connectors.depth`) can
 still be configured in a profile, but is off in profile `de`.

@@ -12,7 +12,8 @@
 //
 // Regeln werden von oben nach unten geprüft; die erste passende gewinnt.
 // match-Felder (alle optional): highway, role, oneway, bridge, tunnel,
-// lanes_min, lanes_max, ref (regulärer Ausdruck auf das ref-Tag), service.
+// lanes_min, lanes_max, ref (regulärer Ausdruck auf das ref-Tag), service,
+// access (private, no; "none" = frei).
 // Stil-Felder: road_type, terrain_left, terrain_right, resolution, show_in_ui_map,
 // gps_avoid, secret, ai_vehicles
 // (Normal | HighPoly | Superfine), left/right mit variant, look, traffic_rule,
@@ -60,5 +61,8 @@
   // (flächiges Gelände auf Bodenhöhe). Dämme entstehen nur an den Zufahrten.
   "bridge": { "terrain_left": 0, "terrain_right": 0 },
   "tunnel": { "terrain_left": 0, "terrain_right": 0 },
+  // Wege ohne Kfz-Zugang (access=private|no, nur in L5): Straßentyp wie sonst, aber nicht
+  // auf Karte/Navi, Navi meidet, kein KI-Verkehr (z. B. Firmengelände, Privatstraßen).
+  "restricted": { "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
   "map": { "normal_scale": null, "city_scale": null }
 }

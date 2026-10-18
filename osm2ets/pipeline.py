@@ -63,7 +63,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     extra_classes = (via if use_links else frozenset()) | (ind.get("highway", frozenset()) if use_ind else frozenset()) \
         | (frozenset({"escape"}) if use_escape else frozenset())
     excl_service = lod.exclude_service if lod.exclude_service is not None else profile.exclude_service
-    all_ways = read_ways(input_path, lod.all_classes | extra_classes, profile.exclude_access, excl_service)
+    excl_access = lod.exclude_access if lod.exclude_access is not None else profile.exclude_access
+    all_ways = read_ways(input_path, lod.all_classes | extra_classes, excl_access, excl_service)
     # Auswahl der Detailstufe nur auf ihren eigenen Klassen (sonst enden Anschlussstraßen
     # an jeder zusätzlichen Einmündung)
     ways = [w for w in all_ways if w.tags.get("highway") in lod.all_classes]

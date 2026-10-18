@@ -19,6 +19,7 @@ var tests = new List<(string Name, Action Body)>
     ("Auflösung Normal: Geländeraster wird neu berechnet", ResolutionRecalculatesTerrain),
     ("Knoten: geradeaus verbinden, Abzweig offen, Zweirichtung drehen", ConnectsThroughRoads),
     ("L5: Feldweg Geheimstraße, Fußweg und Parkplatzgasse nicht im Navi", MinorWaysHiddenFromNavigation),
+    ("L5: Privatstraße behält ihren Typ, ist aber nicht im Navi", RestrictedWaysHidden),
 };
 
 int failed = 0;
@@ -340,3 +341,22 @@ static void MinorWaysHiddenFromNavigation()
     Check(s.ShowInUiMap && !s.GpsAvoid && !s.Secret, $"Wohnstraße unverändert: ui_map {s.ShowInUiMap}, gps_avoid {s.GpsAvoid}, secret {s.Secret}");
     Check(t.RoadType == "ger37" && f.RoadType == "ger4" && a.RoadType == "ger4", $"Typen {t.RoadType}/{f.RoadType}/{a.RoadType}");
 }
+
+static void RestrictedWaysHidden()
+{
+    var run = MakeRun(0, 1, "residential"); run.Access = "private";
+    var priv = MakeRoad("priv", new[] { new[] { 0.0, 0, 0 }, new[] { 0.0, 0, -100 } }, run);
+    var trackRun = MakeRun(0, 1, "track"); trackRun.Access = "no";
+    var track = MakeRoad("track", new[] { new[] { 100.0, 0, 0 }, new[] { 100.0, 0, -100 } }, trackRun);
+    var input = new IntermediateFile { Format = IntermediateFile.ExpectedFormat, Version = 1,
+        Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 }, Roads = [priv, track] };
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var (map, _) = MapWriter.Build(input, cfg);
+    Road At(double x) => map.MapItems.Values.OfType<Road>().Single(r => Math.Abs(r.Node.Position.X - x) < 0.5);
+    var p = At(0); var t = At(100);
+    var normal = cfg.Resolve(MakeRun(0, 1, "residential"));
+    Check(p.RoadType == normal.RoadType, $"Typ {p.RoadType}, erwartet {normal.RoadType}");
+    Check(!p.ShowInUiMap && p.GpsAvoid && !p.AiVehicles, $"Privatstraße: ui_map {p.ShowInUiMap}, gps_avoid {p.GpsAvoid}, ai {p.AiVehicles}");
+    Check(t.Secret && !t.ShowInUiMap && t.GpsAvoid, $"gesperrter Feldweg: secret {t.Secret}, ui_map {t.ShowInUiMap}");
+}
+

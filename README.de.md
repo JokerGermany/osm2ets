@@ -187,11 +187,12 @@ In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Scha
 | `track` (Feld-/Waldweg) | `ger37` „ger r1 minim dirt“ | Geheimstraße, Navi meidet, kein KI-Verkehr |
 | `path`, `footway`, `cycleway`, `bridleway`, `pedestrian` | `ger4` „ger road 1 minim“ | nicht auf Karte/Navi, Navi meidet, kein KI-Verkehr |
 | `service` = `parking_aisle`, `driveway`, `drive-through`, `emergency_access` | `ger4` | wie Fußwege |
+| alles mit `access=private`/`no` (ohne Kfz-Freigabe), z. B. Firmengelände | Typ wie sonst | zusätzlich nicht auf Karte/Navi, Navi meidet, kein KI-Verkehr (`restricted`) |
 
-An diesen Wegen setzt der Writer keine Kreuzungs-Prefabs. Ihre Modellbreite (4,5 m) ist
-geschätzt, nicht vermessen. Nie dabei: Treppen, Baustellen, geplante Straßen, Rennstrecken,
-Busspuren, `access=private`/`no`; in L1–L4 außerdem Parkplatzgassen und
-Grundstückszufahrten.
+An Feld-, Fuß- und Radwegen sowie Parkplatzgassen setzt der Writer keine Kreuzungs-Prefabs.
+Die Modellbreite von `ger4` und `ger37` (4,5 m) ist geschätzt, nicht vermessen. Nie dabei:
+Treppen, Baustellen, geplante Straßen, Rennstrecken, Busspuren; in L1–L4 außerdem
+Parkplatzgassen, Grundstückszufahrten und Wege ohne Kfz-Zugang.
 
 Der frühere Mechanismus „Anschlussstraßen bis zur nächsten Kreuzung“
 (`connectors.depth`) ist weiter im Profil einstellbar, im Profil `de` aber aus.

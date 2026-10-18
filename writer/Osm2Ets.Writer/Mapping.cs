@@ -18,6 +18,8 @@ public sealed class MappingConfig
     public StyleSpec? Bridge { get; set; }
     /// <summary>Überschreibt Werte in Tunneln.</summary>
     public StyleSpec? Tunnel { get; set; }
+    /// <summary>Überschreibt Werte auf Wegen ohne Kfz-Zugang (access=private|no), zusätzlich zur Regel.</summary>
+    public StyleSpec? Restricted { get; set; }
     public MapSpec Map { get; set; } = new();
 
     // Strenger als beim Zwischenformat: unbekannte Felder (Tippfehler) sind Fehler.
@@ -56,6 +58,7 @@ public sealed class MappingConfig
         }
         Bridge?.Validate("bridge", errors);
         Tunnel?.Validate("tunnel", errors);
+        Restricted?.Validate("restricted", errors);
         if (errors.Count > 0)
             throw new InvalidDataException($"{source}:\n  " + string.Join("\n  ", errors));
     }
@@ -76,6 +79,8 @@ public sealed class MappingConfig
             style = Bridge.ToResolved(style);
         else if (run.Tunnel && Tunnel is not null)
             style = Tunnel.ToResolved(style);
+        if (run.Access is not null && Restricted is not null)
+            style = Restricted.ToResolved(style);
         return style;
     }
 }
@@ -177,6 +182,8 @@ public sealed class MatchSpec
     public string? Ref { get; set; }
     /// <summary>OSM service=* (z. B. parking_aisle, driveway).</summary>
     public List<string>? Service { get; set; }
+    /// <summary>Gesperrter Kfz-Zugang (private, no); "none" = frei.</summary>
+    public List<string>? Access { get; set; }
 
     private Regex? refRegex;
 
@@ -200,6 +207,7 @@ public sealed class MatchSpec
         if (LanesMax is not null && (run.Lanes is null || run.Lanes > LanesMax)) return false;
         if (refRegex is not null && !refRegex.IsMatch(run.Ref ?? "")) return false;
         if (Service is not null && (run.Service is null || !Service.Contains(run.Service))) return false;
+        if (Access is not null && !Access.Contains(run.Access ?? "none")) return false;
         return true;
     }
 }

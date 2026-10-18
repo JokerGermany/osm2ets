@@ -36,8 +36,9 @@ class LodConfig:
     links: frozenset
     connector_classes: frozenset
     connector_depth: int
-    # None = Vorgabe des Profils (network.exclude_service)
+    # None = Vorgabe des Profils (network.exclude_service / network.exclude_access)
     exclude_service: Optional[frozenset] = None
+    exclude_access: Optional[frozenset] = None
 
     def is_core(self, tags: dict) -> bool:
         return any(rule.matches(tags) for rule in self.core)
@@ -156,6 +157,8 @@ def _parse_lod(name: str, d: dict) -> LodConfig:
         connector_depth=depth,
         exclude_service=(_str_set(d["exclude_service"], ctx + ".exclude_service")
                          if "exclude_service" in d else None),
+        exclude_access=(_str_set(d["exclude_access"], ctx + ".exclude_access")
+                        if "exclude_access" in d else None),
     )
 
 
