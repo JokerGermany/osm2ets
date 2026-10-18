@@ -402,7 +402,7 @@ public static class MapWriter
             }
             var lanes = PrefabFootprint.All(map);
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
-            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted})");
+            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered} Punkte");
         }
         if (Environment.GetEnvironmentVariable("OSM2ETS_ONLYBOX") is { } ob)
         {

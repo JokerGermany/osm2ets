@@ -24,6 +24,10 @@ public static class TerrainFill
     /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
     public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
     /// <summary>Füllstücke verketten (alt, OSM2ETS_FILL_CHAIN=1) – siehe Emit.</summary>
+    /// <summary>Füllgelände nahe Fahrbahnen nicht höher als die Fahrbahn (aus: OSM2ETS_FILL_NOCAP).</summary>
+    public static bool UseCap = Environment.GetEnvironmentVariable("OSM2ETS_FILL_NOCAP") is null;
+    private static RoadCap? Cap;
+    private static float FH(TerrainGridEntry grid, float x, float z) => Cap is null ? grid.HeightAt(x, z) : Cap.Height(grid, x, z);
     public static bool Chain = Environment.GetEnvironmentVariable("OSM2ETS_FILL_CHAIN") is not null;
     /// <summary>Mittellinie (Zeile 0) mit eigenen Höhenpunkten belegen, wie in der SCS-Karte
     /// (dort ~7,5 % aller Offsets in Zeile 0). Aus: OSM2ETS_FILL_NOROW0.</summary>
@@ -53,6 +57,8 @@ public static class TerrainFill
                                List<(Vector3[] Nodes, float HalfWidth)> prefabs,
                                List<Vector2>? prefabLanes = null)
     {
+        Cap = UseCap ? RoadCap.Build(roads, styles, prefabs) : null;
+        RoadCap.Lowered = 0;
         float x0 = (float)grid.Origin[0], z0 = (float)grid.Origin[1];
         float x1 = x0 + (float)grid.Cell * (grid.Nx - 1), z1 = z0 + (float)grid.Cell * (grid.Nz - 1);
         int mw = (int)((x1 - x0) / MaskCell) + 1, mh = (int)((z1 - z0) / MaskCell) + 1;
@@ -289,7 +295,7 @@ public static class TerrainFill
     {
         // Knoten gierig so weit wie möglich setzen: Höhe linear (±0,4 m), Breiten fast gleich,
         // höchstens MaxPiece m – spart viele Items auf flachem, freiem Feld
-        float H(int i) => grid.HeightAt(run[i].X, z);
+        float H(int i) => FH(grid, run[i].X, z);
         var idx = new List<int> { 0 };
         int start = 0;
         while (start < run.Count - 1)
@@ -322,8 +328,8 @@ public static class TerrainFill
             float l = float.MaxValue, r = float.MaxValue;
             for (int i = a; i <= b; i++) { l = MathF.Min(l, run[i].L); r = MathF.Min(r, run[i].R); }
             placed(run[a].X, run[b].X, l, r);
-            var pa = new Vector3(run[a].X, grid.HeightAt(run[a].X, z) - FillDrop, z);
-            var pb = new Vector3(run[b].X, grid.HeightAt(run[b].X, z) - FillDrop, z);
+            var pa = new Vector3(run[a].X, FH(grid, run[a].X, z) - FillDrop, z);
+            var pb = new Vector3(run[b].X, FH(grid, run[b].X, z) - FillDrop, z);
             // Jedes Stück eigenständig (nicht per Append verkettet): TruckLib mittelt an einem
             // gemeinsamen Knoten die Richtung beider Nachbarstücke. Wechselt die Steigung dort
             // stark (Böschung neben Straße), wölbt sich die Mittellinie des Stücks als Hermite-
@@ -396,7 +402,7 @@ public static class TerrainFill
             {
                 float x = len * i / cols;
                 float z = pa.Z + zSign * rowsD[j];
-                float h = grid.HeightAt(pa.X + x, z);
+                float h = FH(grid, pa.X + x, z);
                 if (float.IsNaN(h)) continue;
                 q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(x, h - FillDrop - pa.Y, zSign * rowsD[j]) });
                 n++;
