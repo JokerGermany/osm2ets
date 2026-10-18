@@ -20,6 +20,7 @@ public static class TerrainFill
     public const float MaskTerrain = 2f;
     /// <summary>So weit reicht das Füllgelände unter das Straßengelände (m).</summary>
     public const float FillOverlap = 8f;
+    public static bool FillUnderRoads = Environment.GetEnvironmentVariable("OSM2ETS_FILL_MASKROADS") is null;
     /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
     public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
     public const float PrefabLaneRadius = 2f;
@@ -61,7 +62,7 @@ public static class TerrainFill
                     if (Vector2.Distance(new Vector2(x0 + i * MaskCell, z0 + j * MaskCell), c) <= r) mask[j * mw + i] = true;
         }
         // breit: Fahrbahnen aus den tatsächlich geschriebenen Straßenstücken (Hermite-Kurve)
-        if (WideRoadTerrain)
+        if (WideRoadTerrain && !FillUnderRoads)
         {
             var widthOf = new Dictionary<string, float>();
             foreach (var st in styles.Values) foreach (var x in st) widthOf[x.RoadType] = MathF.Max(widthOf.GetValueOrDefault(x.RoadType), x.Width);
@@ -81,6 +82,18 @@ public static class TerrainFill
             }
         }
         // Straße + eigene Geländestreifen (seitenrichtig), 1 m Rand
+        // Füllgelände liegt 15 cm unter Straße und Straßengelände und darf darunter durchlaufen –
+        // nur Brücken und Tunnel (andere Höhe) werden ausgespart
+        if (WideRoadTerrain && FillUnderRoads)
+            foreach (var r in roads)
+                foreach (var run in r.Runs.Where(x => x.Bridge || x.Tunnel))
+                    for (int k = run.From; k < run.To && k < r.Points.Count - 1; k++)
+                    {
+                        var a = new Vector2((float)r.Points[k][0], (float)r.Points[k][2]);
+                        var b = new Vector2((float)r.Points[k + 1][0], (float)r.Points[k + 1][2]);
+                        float L = Vector2.Distance(a, b);
+                        for (float s2 = 0; s2 <= L; s2 += MaskCell / 2) Mark(Vector2.Lerp(a, b, L > 0 ? s2 / L : 0), styles[r][k].Width / 2 + 3);
+                    }
         foreach (var r in WideRoadTerrain ? [] : roads)
         {
             var st = styles[r];
@@ -106,7 +119,7 @@ public static class TerrainFill
         }
         // breit: tatsächlich geschriebenes Straßengelände aus den Höhenpunkten in die Maske
         // (statt aus den geplanten Breiten – die stimmen an Knoten/Kurven nicht immer)
-        if (WideRoadTerrain)
+        if (WideRoadTerrain && !FillUnderRoads)
             foreach (var rd in map.MapItems.Values.OfType<Road>())
                 foreach (var side in new[] { rd.Left.Terrain, rd.Right.Terrain })
                     MarkSide(rd, side);
