@@ -19,7 +19,34 @@ public static class TerrainClearance
     public static bool Share = false;
     public const float MedianExtra = 1.5f;
     /// <summary>Wunschbreite je Seite, wenn flächiges Gelände aus dem Höhenraster kommt.</summary>
-    public const float WideTerrain = 150f;
+    public const float WideTerrain = 60f;
+
+    /// <summary>Innenseite von Kurven auf den halben Kurvenradius begrenzen (sonst Falten).</summary>
+    public static int ClampCurves(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles)
+    {
+        int n = 0;
+        foreach (var r in roads)
+        {
+            var st = styles[r]; var p = r.Points;
+            Vector2 P(int i) => new((float)p[i][0], (float)p[i][2]);
+            for (int i = 0; i < st.Length; i++)
+            {
+                int a = Math.Max(0, i - 1), b = Math.Min(p.Count - 1, i + 2);
+                if (b - a < 2) continue;
+                var d1 = P(a + 1) - P(a); var d2 = P(b) - P(b - 1);
+                if (d1.LengthSquared() < 1e-4f || d2.LengthSquared() < 1e-4f) continue;
+                d1 = Vector2.Normalize(d1); d2 = Vector2.Normalize(d2);
+                float ang = MathF.Acos(Math.Clamp(Vector2.Dot(d1, d2), -1, 1));
+                if (ang < 0.02f) continue;
+                float len = 0; for (int k = a; k < b; k++) len += Vector2.Distance(P(k), P(k + 1));
+                float half = len / ang / 2;
+                bool right = Vector2.Dot(d2, new Vector2(-d1.Y, d1.X)) > 0;
+                if (right && st[i].TerrainRight > half) { st[i] = st[i] with { TerrainRight = MathF.Floor(half) }; n++; }
+                if (!right && st[i].TerrainLeft > half) { st[i] = st[i] with { TerrainLeft = MathF.Floor(half) }; n++; }
+            }
+        }
+        return n;
+    }
 
     /// <summary>Straßengelände (wo vorhanden) auf breite Wunschbreite setzen.</summary>
     public static void Widen(Dictionary<RoadEntry, ResolvedStyle[]> styles)

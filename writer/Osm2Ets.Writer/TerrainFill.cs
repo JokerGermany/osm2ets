@@ -28,7 +28,7 @@ public static class TerrainFill
     /// <summary>Höhenpunkte quer setzen (ungeprüft im Spiel); sonst ebene Streifen wie v17.</summary>
     public static bool Shape = Environment.GetEnvironmentVariable("OSM2ETS_NOSHAPE") is null;
     /// <summary>Straßengelände breit (bis zur Nachbarstraße) und an das Höhenraster angepasst.</summary>
-    public static bool WideRoadTerrain = Environment.GetEnvironmentVariable("OSM2ETS_WIDE") is not null;
+    public static bool WideRoadTerrain = Environment.GetEnvironmentVariable("OSM2ETS_NARROW") is null;
     /// <summary>Annahme: Offsets des Straßengeländes zählen ab Straßenmitte (true) oder ab Geländebeginn (false).</summary>
     public static bool RoadEdgeInData = false;
     public static int Mismatch;

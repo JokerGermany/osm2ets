@@ -152,7 +152,7 @@ public static class MapWriter
         int separated = CarriagewaySeparation.Apply(valid, styles);
         // An Anschluss-Prefabs kein Straßengelände auf den ersten 30 m: die Geländestreifen von
         // Rampe und Hauptfahrbahn kreuzen sich dort im spitzen Winkel und falten sich ins Prefab
-        foreach (var pl in interchangePlans)
+        foreach (var pl in TerrainFill.WideRoadTerrain ? [] : interchangePlans)
         {
             void Clear(RoadEntry r, bool atStart, bool left)
             {
@@ -182,6 +182,7 @@ public static class MapWriter
         string Stat(string n) { var all = styles.Values.SelectMany(x => x).ToList(); return $"{n}: L {all.Average(x => x.TerrainLeft):0.0} R {all.Average(x => x.TerrainRight):0.0} L0 {all.Count(x => x.TerrainLeft <= 0)} R0 {all.Count(x => x.TerrainRight <= 0)}"; }
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("vor"));
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        if (TerrainClearance.Share) terrainClamped += TerrainClearance.ClampCurves(valid, styles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("enforce"));
@@ -278,7 +279,7 @@ public static class MapWriter
                     if (!firstItem.TryGetValue(entry, out var it)) continue;
                     var hw = styles[entry][0].Width / 2;
                     var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
-                    TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'B';
+                    TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'D';
                     TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
                     for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
                     {
