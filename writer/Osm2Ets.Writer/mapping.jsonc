@@ -37,6 +37,9 @@
     { "name": "Anschlussstraßen", "match": { "role": ["connector"] }, "road_type": "ger1",
       "terrain_left": 10, "terrain_right": 10 }
   ],
-  // Brücken/Tunnel: vorläufig wie normale Straßen mit Gelände (Damm).
+  // Brücken/Tunnel: kein Geländestreifen auf Fahrbahnhöhe – Gelände nur darunter
+  // (flächiges Gelände auf Bodenhöhe). Dämme entstehen nur an den Zufahrten.
+  "bridge": { "terrain_left": 0, "terrain_right": 0 },
+  "tunnel": { "terrain_left": 0, "terrain_right": 0 },
   "map": { "normal_scale": null, "city_scale": null }
 }

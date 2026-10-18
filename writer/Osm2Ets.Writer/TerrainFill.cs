@@ -83,8 +83,9 @@ public static class TerrainFill
         }
         // Straße + eigene Geländestreifen (seitenrichtig), 1 m Rand
         // Füllgelände liegt 15 cm unter Straße und Straßengelände und darf darunter durchlaufen –
-        // nur Brücken und Tunnel (andere Höhe) werden ausgespart
-        if (WideRoadTerrain && FillUnderRoads)
+        // auch unter Brücken: dort liegt das Raster auf Bodenhöhe (Brücken zählen im Raster nicht).
+        // Nur mit OSM2ETS_FILL_MASKBRIDGES werden Brücken/Tunnel wie früher ausgespart.
+        if (WideRoadTerrain && FillUnderRoads && Environment.GetEnvironmentVariable("OSM2ETS_FILL_MASKBRIDGES") is not null)
             foreach (var r in roads)
                 foreach (var run in r.Runs.Where(x => x.Bridge || x.Tunnel))
                     for (int k = run.From; k < run.To && k < r.Points.Count - 1; k++)

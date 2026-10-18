@@ -54,7 +54,7 @@ public static class MapWriter
             valid.Add(entry);
         }
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
-        if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
+        if (Environment.GetEnvironmentVariable("OSM2ETS_TWINSEP") is not null)   // Standard aus: OSM-Lage gilt
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).Width / 2, warnings);
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
         var interchangePlans = new List<Interchanges.Plan>();
