@@ -160,7 +160,8 @@ public static class TerrainFill
         }
         // Prefabs: wo die Fahrspuren bekannt sind, nur diese (je Punkt 4 m Radius);
         // sonst grob Strecken Knoten → Mitte
-        if (prefabLanes is { Count: > 0 })
+        if (WideRoadTerrain && FillUnderRoads) { }   // auch unter Prefabs durchlaufen (15 cm tiefer)
+        else if (prefabLanes is { Count: > 0 })
             foreach (var c in prefabLanes) Mark(c, PrefabLaneRadius);
         else
         foreach (var (nodes, hw) in prefabs)
