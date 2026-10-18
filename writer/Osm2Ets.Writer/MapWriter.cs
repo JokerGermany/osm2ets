@@ -362,6 +362,11 @@ public static class MapWriter
             if (TerrainFill.WideRoadTerrain)
             {
                 int shaped = 0, bad = 0, folded = 0;
+                // Straßengelände nie über dem Asphalt anderer Straßen/Prefabs (Zwickel an Gabelungen)
+                RoadCap.PrefabLanes = PrefabFootprint.All3(map);
+                RoadCap.RoadTerrainLowered = 0;
+                var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null
+                    ? RoadCap.Build(valid, styles, null) : null;
                 foreach (var entry in valid)
                 {
                     if (!firstItem.TryGetValue(entry, out var it)) continue;
@@ -386,8 +391,9 @@ public static class MapWriter
                         if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
                         for (int tries = 0; tries < 4; tries++)
                         {
-                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb) < 0) bad++;
-                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb) < 0) bad++;
+                            Func<float, float, float>? cap = others is null ? null : (x, z) => others.OverOthers(x, z, entry);
+                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb, cap) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb, cap) < 0) bad++;
                             // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
                             float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, e, ta, tb);
                             float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, e, ta, tb);
@@ -399,7 +405,7 @@ public static class MapWriter
                         if (rd == lastItem[entry]) break;
                     }
                 }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}");
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, unter fremden Asphalt abgesenkt: {RoadCap.RoadTerrainLowered} Punkte");
             }
             var lanes = PrefabFootprint.All(map);
             RoadCap.PrefabLanes = PrefabFootprint.All3(map);

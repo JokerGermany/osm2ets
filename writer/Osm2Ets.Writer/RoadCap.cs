@@ -25,6 +25,8 @@ public sealed class RoadCap
 
     // Segment: Anfang/Ende, halbe Modellbreite, Modellmitte (rechts +), Absenkung, Brücke
     private readonly List<(Vector3 A, Vector3 B, float Hw, float Center, float Drop, bool Bridge)> segs = [];
+    private readonly List<object?> owners = [];
+    private object? adding;
     private readonly Dictionary<(int, int), List<int>> index = [];
 
     public static RoadCap Build(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles,
@@ -40,7 +42,9 @@ public sealed class RoadCap
                 if (run is null || run.Tunnel) continue;
                 var s = st[Math.Min(k, st.Length - 1)];
                 var a = MapWriter.ToVector(r.Points[k]); var b = MapWriter.ToVector(r.Points[k + 1]);
+                c.adding = r;
                 c.Add(a, b, s.Width / 2, s.ModelCenter, run.Bridge ? DeckDrop : 0f, run.Bridge);
+                c.adding = null;
             }
         }
         // Prefabs: Spurpunkte (alle ~2 m) mit halber Spurbreite + Rand
@@ -59,6 +63,7 @@ public sealed class RoadCap
     {
         int i = segs.Count;
         segs.Add((a, b, hw, center, drop, bridge));
+        owners.Add(adding);
         float pad = hw + MathF.Abs(center) + Margin + Reach;
         int x0 = (int)MathF.Floor((MathF.Min(a.X, b.X) - pad) / Cell), x1 = (int)MathF.Floor((MathF.Max(a.X, b.X) + pad) / Cell);
         int z0 = (int)MathF.Floor((MathF.Min(a.Z, b.Z) - pad) / Cell), z1 = (int)MathF.Floor((MathF.Max(a.Z, b.Z) + pad) / Cell);
@@ -111,6 +116,36 @@ public sealed class RoadCap
             if (Probe is { } pr && Vector2.Distance(pr, p) < 4f && y < 1e6f)
                 Console.Error.WriteLine($"CAP at ({x:0.0},{z:0.0}): seg {a} -> {b} hw {hw:0.0} c {center:0.0} bridge {bridge} outside {outside:0.0} cap {y:0.00}");
             cap = MathF.Min(cap, y);
+        }
+        return cap;
+    }
+
+    public static int RoadTerrainLowered;
+
+    /// <summary>
+    /// Für das Straßengelände einer Straße: höchste Höhe über der Fahrbahn ANDERER Straßen und
+    /// Prefabs (nur innerhalb ihrer Modellfläche, ohne Rand). Sonst ragt in spitzen Zwickeln
+    /// (Gabelung zweier Rampen, Einfädelung) das Böschungsgelände der einen Straße über den
+    /// Asphalt der anderen – im Editor als dunkler Keil. +∞, wenn keine andere Straße.
+    /// </summary>
+    public float OverOthers(float x, float z, object owner)
+    {
+        if (!index.TryGetValue(((int)MathF.Floor(x / Cell), (int)MathF.Floor(z / Cell)), out var l)) return float.PositiveInfinity;
+        float cap = float.PositiveInfinity;
+        var p = new Vector2(x, z);
+        foreach (var i in l)
+        {
+            if (ReferenceEquals(owners[i], owner)) continue;
+            var (a, b, hw, center, drop, _) = segs[i];
+            var a2 = new Vector2(a.X, a.Z); var ab = new Vector2(b.X, b.Z) - a2;
+            float l2 = ab.LengthSquared();
+            if (l2 < 1e-8f) continue;
+            float u = Vector2.Dot(p - a2, ab) / l2;
+            if (u < 0 || u > 1) continue;
+            var dir = ab / MathF.Sqrt(l2);
+            var right = new Vector2(-dir.Y, dir.X);
+            if (MathF.Abs(Vector2.Dot(p - a2, right) - center) > hw) continue;
+            cap = MathF.Min(cap, a.Y + (b.Y - a.Y) * u - drop - 0.1f);
         }
         return cap;
     }
