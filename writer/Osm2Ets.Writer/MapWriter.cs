@@ -236,6 +236,7 @@ public static class MapWriter
                 else if (style == previous)
                 {
                     road = road.Append(points[i + 1]);
+                    ApplyFlags(road, style);
                 }
                 else
                 {
@@ -479,9 +480,19 @@ public static class MapWriter
         style.Left?.ApplyTo(road.Left);
         style.Right?.ApplyTo(road.Right);
         road.Boundary = style.Boundary;
+        ApplyFlags(road, style);
         // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
+    }
+
+    /// <summary>Navi-/Karten-Schalter aus der Zuordnung (nur gesetzte Werte).</summary>
+    private static void ApplyFlags(Road road, ResolvedStyle style)
+    {
+        if (style.ShowInUiMap is bool show) road.ShowInUiMap = show;
+        if (style.GpsAvoid is bool avoid) road.GpsAvoid = avoid;
+        if (style.Secret is bool secret) road.Secret = secret;
+        if (style.AiVehicles is bool ai) road.AiVehicles = ai;
     }
 
     /// <summary>Mindestlänge eines Straßenstücks je Auflösung (TruckLib Road.MinLength).</summary>

@@ -6,14 +6,15 @@
 //   ger2  (ger hw exit one lane)          ger5  (ger road 1 one way)
 //   ger9  (ger road 2 narrow one way)     ger1  (ger road 1 tmpl)
 //   ger29 (ger road 2 no offset tmpl)
-// NICHT verwenden: ger4 = "ger road 1 minim" (Spuren "no_vehicles", Feldweg-artig).
+// ger4 = "ger road 1 minim" hat Spuren "no_vehicles" – nur für Wege ohne Lkw-/KI-Verkehr.
 // Fahrbahnvariante und Look der Vorlagen werden noch nicht gesetzt (Standardwerte
 // des Spiels) – das ist ungeprüft.
 //
 // Regeln werden von oben nach unten geprüft; die erste passende gewinnt.
 // match-Felder (alle optional): highway, role, oneway, bridge, tunnel,
-// lanes_min, lanes_max, ref (regulärer Ausdruck auf das ref-Tag).
-// Stil-Felder: road_type, terrain_left, terrain_right, resolution
+// lanes_min, lanes_max, ref (regulärer Ausdruck auf das ref-Tag), service.
+// Stil-Felder: road_type, terrain_left, terrain_right, resolution, show_in_ui_map,
+// gps_avoid, secret, ai_vehicles
 // (Normal | HighPoly | Superfine), left/right mit variant, look, traffic_rule,
 // left_edge, right_edge.
 {
@@ -27,6 +28,20 @@
   "default": { "road_type": "ger1", "width": 8, "boundary": false,
                "terrain_left": 20, "terrain_right": 20, "resolution": "HighPoly" },
   "rules": [
+    // Nur in L5: Wege, die kein Lkw befahren soll. Breite geschätzt (Modelle nicht vermessen).
+    //   ger37 = "ger r1 minim dirt" (Schotter-/Feldweg), ger4 = "ger road 1 minim"
+    //   (schmale Asphaltstraße); beide mit Spuren "no_vehicles" (kein KI-Verkehr).
+    { "name": "Feld-/Waldweg: Geheimstraße", "match": { "highway": ["track"] },
+      "road_type": "ger37", "width": 4.5, "terrain_left": 6, "terrain_right": 6,
+      "secret": true, "gps_avoid": true, "ai_vehicles": false },
+    { "name": "Fuß-/Rad-/Reitweg, Fußgängerzone: nicht im Navi",
+      "match": { "highway": ["path", "footway", "cycleway", "bridleway", "pedestrian"] },
+      "road_type": "ger4", "width": 4.5, "terrain_left": 6, "terrain_right": 6,
+      "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
+    { "name": "Parkplatzgasse, Grundstückszufahrt, Drive-in, Notzufahrt: nicht im Navi",
+      "match": { "highway": ["service"], "service": ["parking_aisle", "driveway", "drive-through", "emergency_access"] },
+      "road_type": "ger4", "width": 4.5, "terrain_left": 6, "terrain_right": 6,
+      "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
     { "name": "Autobahn 3+ Spuren", "match": { "highway": ["motorway", "trunk"], "oneway": true, "lanes_min": 3 },
       "road_type": "ger16", "width": 17, "model_center": -0.5, "offset": 2.17, "edge_left": 6.83, "terrain_left": 4, "terrain_right": 30 },
     { "name": "Autobahn / Kraftfahrstraße, Richtungsfahrbahn", "match": { "highway": ["motorway", "trunk"], "oneway": true },

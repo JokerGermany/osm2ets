@@ -86,6 +86,8 @@ public sealed class RunEntry
     public int Layer { get; set; }
     public string? Ref { get; set; }
     public string? Maxspeed { get; set; }
+    /// <summary>OSM service=* (parking_aisle, driveway, …), sonst null.</summary>
+    public string? Service { get; set; }
     public List<long> OsmWays { get; set; } = [];
 }
 

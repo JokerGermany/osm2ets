@@ -104,6 +104,14 @@ public class StyleSpec
     public float? ModelCenter { get; set; }
     /// <summary>Unsichtbare Begrenzung am Straßenrand (ETS2 "boundary").</summary>
     public bool? Boundary { get; set; }
+    /// <summary>Auf der Karte/im Navi sichtbar (ETS2 "show in UI map"); false für Fuß-/Radwege usw.</summary>
+    public bool? ShowInUiMap { get; set; }
+    /// <summary>Navi meidet die Straße (ETS2 "GPS avoid").</summary>
+    public bool? GpsAvoid { get; set; }
+    /// <summary>Geheimstraße (ETS2 "secret"): erst nach dem Befahren auf der Karte.</summary>
+    public bool? Secret { get; set; }
+    /// <summary>KI-Verkehr auf dieser Straße.</summary>
+    public bool? AiVehicles { get; set; }
     public string? Resolution { get; set; }
     public SideSpec? Left { get; set; }
     public SideSpec? Right { get; set; }
@@ -142,7 +150,11 @@ public class StyleSpec
             Boundary ?? baseStyle?.Boundary ?? true,
             Offset ?? (RoadType is null ? baseStyle?.Offset : null) ?? 0f,
             EdgeLeft ?? (RoadType is null && Width is null ? baseStyle?.EdgeLeftRaw : null) ?? -1f,
-            ModelCenter ?? (RoadType is null ? baseStyle?.ModelCenter : null) ?? 0f);
+            ModelCenter ?? (RoadType is null ? baseStyle?.ModelCenter : null) ?? 0f,
+            ShowInUiMap ?? baseStyle?.ShowInUiMap,
+            GpsAvoid ?? baseStyle?.GpsAvoid,
+            Secret ?? baseStyle?.Secret,
+            AiVehicles ?? baseStyle?.AiVehicles);
     }
 }
 
@@ -163,6 +175,8 @@ public sealed class MatchSpec
     public int? LanesMax { get; set; }
     /// <summary>Regulärer Ausdruck auf das OSM-ref-Tag.</summary>
     public string? Ref { get; set; }
+    /// <summary>OSM service=* (z. B. parking_aisle, driveway).</summary>
+    public List<string>? Service { get; set; }
 
     private Regex? refRegex;
 
@@ -185,6 +199,7 @@ public sealed class MatchSpec
         if (LanesMin is not null && (run.Lanes is null || run.Lanes < LanesMin)) return false;
         if (LanesMax is not null && (run.Lanes is null || run.Lanes > LanesMax)) return false;
         if (refRegex is not null && !refRegex.IsMatch(run.Ref ?? "")) return false;
+        if (Service is not null && (run.Service is null || !Service.Contains(run.Service))) return false;
         return true;
     }
 }
@@ -242,7 +257,11 @@ public sealed record ResolvedStyle(
     bool Boundary = true,
     float Offset = 0f,
     float EdgeLeftRaw = -1f,
-    float ModelCenter = 0f)
+    float ModelCenter = 0f,
+    bool? ShowInUiMap = null,
+    bool? GpsAvoid = null,
+    bool? Secret = null,
+    bool? AiVehicles = null)
 {
     /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
     public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;

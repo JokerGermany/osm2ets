@@ -36,6 +36,8 @@ class LodConfig:
     links: frozenset
     connector_classes: frozenset
     connector_depth: int
+    # None = Vorgabe des Profils (network.exclude_service)
+    exclude_service: Optional[frozenset] = None
 
     def is_core(self, tags: dict) -> bool:
         return any(rule.matches(tags) for rule in self.core)
@@ -152,6 +154,8 @@ def _parse_lod(name: str, d: dict) -> LodConfig:
         links=_str_set(d.get("links"), ctx + ".links"),
         connector_classes=_str_set(conn.get("highway"), ctx + ".connectors.highway"),
         connector_depth=depth,
+        exclude_service=(_str_set(d["exclude_service"], ctx + ".exclude_service")
+                         if "exclude_service" in d else None),
     )
 
 
@@ -205,6 +209,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
     extras = {
         "same_level_max_m": _float(ext, "same_level_max_m", "extras", default=500.0, positive=False),
         "same_level_ratio": _float(ext, "same_level_ratio", "extras", default=1.5),
+        "rest_loop_max_m": _float(ext, "rest_loop_max_m", "extras", default=1500.0, positive=False),
         "escape": bool(ext.get("escape", True)),
         "via_highway": _str_set(ext.get("via_highway", drivable_default), "extras.via_highway"),
     }

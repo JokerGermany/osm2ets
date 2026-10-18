@@ -154,7 +154,7 @@ Nummer im `ref`-Tag.
 | L2 | + primary (+ primary_link), meist Bundesstraßen |
 | L3 | + secondary (+ secondary_link), meist Landes-/Staatsstraßen |
 | L4 | + tertiary (+ tertiary_link), meist Kreisstraßen |
-| L5 | + alle übrigen befahrbaren Straßen: unclassified, residential, living_street, service, road |
+| L5 | + alle übrigen Wege: unclassified, residential, living_street, service (auch Parkplatzgassen, Grundstückszufahrten), road, track, path, footway, cycleway, bridleway, pedestrian |
 
 Rampen gehören nur dazu, wenn sie das Kernnetz berühren.
 
@@ -167,15 +167,31 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
    so keine kilometerlangen Straßen nach sich. Ziele: `landuse=industrial|commercial|
    retail|quarry|farmyard|port`, `industrial=*`, `man_made=works`,
    `building=warehouse|industrial`, `craft=*`, `office=company`.
+   **Tankstellen, Rastanlagen und Lkw-Parkplätze** (`amenity=fuel`,
+   `highway=services|rest_area`, `amenity=parking` mit `hgv=yes|designated`) werden
+   ebenso angebunden, aber auch direkt von der Autobahnfahrbahn aus und über alle Zu- und
+   Abfahrten, damit die Schleife befahrbar bleibt.
 2. **Kurze Verbindungen gleicher Stufe**: ein Weg über andere Straßen, höchstens 500 m
    lang, der zwei Straßen der Stufe verbindet, z. B. das Stück Bundesstraße zwischen zwei
-   Autobahnrampen in L1. Schleifen an derselben Straße (Tankstelle, Rastplatz) zählen
-   nicht: Der Weg über das Netz muss mindestens 1,5-mal so lang sein.
+   Autobahnrampen in L1. Schleifen, die an beiden Enden an einer Autobahn- oder
+   Kraftfahrstraßenfahrbahn hängen, sind Rastplätze und zählen immer, bis 1,5 km. Andere
+   Schleifen an derselben Straße (z. B. Dorfstraßen) zählen nur, wenn der Weg über das
+   Netz mindestens 1,5-mal so lang ist.
 3. **Notfallbuchten** (`highway=escape`), die direkt an der Strecke liegen.
 
-Nicht befahrbar und deshalb nie dabei: `track` (Feld- und Waldwege), Fuß-, Rad- und
-Reitwege, Treppen, Fußgängerzonen, Baustellen, geplante Straßen, `access=private`/`no`,
-Parkplatzgassen und Grundstückszufahrten.
+In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Schalter
+(`mapping.jsonc`):
+
+| Weg | ETS2-Straßentyp | Schalter |
+|---|---|---|
+| `track` (Feld-/Waldweg) | `ger37` „ger r1 minim dirt“ | Geheimstraße, Navi meidet, kein KI-Verkehr |
+| `path`, `footway`, `cycleway`, `bridleway`, `pedestrian` | `ger4` „ger road 1 minim“ | nicht auf Karte/Navi, Navi meidet, kein KI-Verkehr |
+| `service` = `parking_aisle`, `driveway`, `drive-through`, `emergency_access` | `ger4` | wie Fußwege |
+
+An diesen Wegen setzt der Writer keine Kreuzungs-Prefabs. Ihre Modellbreite (4,5 m) ist
+geschätzt, nicht vermessen. Nie dabei: Treppen, Baustellen, geplante Straßen, Rennstrecken,
+Busspuren, `access=private`/`no`; in L1–L4 außerdem Parkplatzgassen und
+Grundstückszufahrten.
 
 Der frühere Mechanismus „Anschlussstraßen bis zur nächsten Kreuzung“
 (`connectors.depth`) ist weiter im Profil einstellbar, im Profil `de` aber aus.

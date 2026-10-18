@@ -62,13 +62,14 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     via = frozenset(ext.get("via_highway", frozenset()))
     extra_classes = (via if use_links else frozenset()) | (ind.get("highway", frozenset()) if use_ind else frozenset()) \
         | (frozenset({"escape"}) if use_escape else frozenset())
-    all_ways = read_ways(input_path, lod.all_classes | extra_classes, profile.exclude_access, profile.exclude_service)
+    excl_service = lod.exclude_service if lod.exclude_service is not None else profile.exclude_service
+    all_ways = read_ways(input_path, lod.all_classes | extra_classes, profile.exclude_access, excl_service)
     # Auswahl der Detailstufe nur auf ihren eigenen Klassen (sonst enden Anschlussstraßen
     # an jeder zusätzlichen Einmündung)
     ways = [w for w in all_ways if w.tags.get("highway") in lod.all_classes]
     net = Network(ways, profile)
     selected = net.select(lod)
-    industry_stats = links_stats = escape_stats = None
+    industry_stats = links_stats = escape_stats = services_stats = None
     if use_ind or use_links or use_escape:
         from .extras import escape_lanes, local_xy, same_level_links
         # alle Wege, damit an Einmündungen ins Netz geteilt wird; Netzwege selbst sind gesperrt
@@ -93,20 +94,25 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         loc = read_node_locations(input_path, cand)
         xy = local_xy(loc)
         # 2. kurze Verbindungen zwischen zwei Straßen der Stufe
+        major = {"motorway", "trunk", "motorway_link", "trunk_link"}
+        carriage = set()
+        for e in selected:
+            if e.highway in ("motorway", "trunk"):
+                carriage.update(e.node_ids())
         if use_links:
             links_stats = same_level_links(net2, nn, xy, via, float(ext["same_level_max_m"]),
-                                           float(ext.get("same_level_ratio", 1.5)))
+                                           float(ext.get("same_level_ratio", 1.5)), major_nodes=carriage,
+                                           major_max_m=float(ext.get("rest_loop_max_m", 1500.0)))
         # 3. Notfallbuchten direkt an der Strecke
         if use_escape:
             escape_stats = escape_lanes(net2, nn)
         # 1. Zufahrten zu Industrie/Gewerbe, ab Kreuzungen/Abfahrten des Netzes (inkl. 2./3.)
         if use_ind:
-            from .industry import connect
+            from .industry import connect, connect_services
             starts = set(nn)
             for e in net2.edges:
                 if e.role not in (None, "taken"):
                     starts.update(e.node_ids())
-            major = {"motorway", "trunk", "motorway_link", "trunk_link"}
             on_major = set()
             for e in selected:
                 if e.highway in major:
@@ -121,6 +127,12 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                     on_major.difference_update(e.node_ids())
             industry_stats = connect(net2, starts, targets, loc, ind["highway"], ind["max_distance_m"],
                                      ind["inside_m"], no_start=on_major)
+            # Rast- und Tankanlagen: auch direkt von der Autobahn aus, alle Zu- und Abfahrten
+            starts2 = set(nn)
+            for e in net2.edges:
+                if e.role not in (None, "taken"):
+                    starts2.update(e.node_ids())
+            services_stats = connect_services(net2, starts2, targets, loc, ind["highway"], ind["max_distance_m"])
         new = [e for e in net2.edges if e.role not in (None, "taken")]
         if new:
             # Netzkanten an den neuen Einmündungen teilen: Auswahl aus net2 übernehmen
@@ -201,6 +213,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     stats["industry_access"] = industry_stats
     stats["same_level_links"] = links_stats
     stats["escape_lanes"] = escape_stats
+    stats["services_access"] = services_stats
     crossings = crossing_clearances(roads)
     low = [c for c in crossings if c["clearance_m"] < MIN_CLEARANCE_M]
     stats["grade_separated_crossings"] = len(crossings)

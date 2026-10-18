@@ -18,6 +18,7 @@ var tests = new List<(string Name, Action Body)>
     ("Regression: Stück mit Mittelpunkt in knotenlosem Sektor bleibt erhalten", SectorWithoutNodeIsSaved),
     ("Auflösung Normal: Geländeraster wird neu berechnet", ResolutionRecalculatesTerrain),
     ("Knoten: geradeaus verbinden, Abzweig offen, Zweirichtung drehen", ConnectsThroughRoads),
+    ("L5: Feldweg Geheimstraße, Fußweg und Parkplatzgasse nicht im Navi", MinorWaysHiddenFromNavigation),
 };
 
 int failed = 0;
@@ -319,4 +320,23 @@ static void LookListerReadsArchive()
     {
         Directory.Delete(dir, true);
     }
+}
+
+static void MinorWaysHiddenFromNavigation()
+{
+    var track = MakeRoad("track", new[] { new[] { 0.0, 0, 0 }, new[] { 0.0, 0, -100 } }, MakeRun(0, 1, "track"));
+    var foot = MakeRoad("foot", new[] { new[] { 100.0, 0, 0 }, new[] { 100.0, 0, -100 } }, MakeRun(0, 1, "footway"));
+    var aisleRun = MakeRun(0, 1, "service"); aisleRun.Service = "parking_aisle";
+    var aisle = MakeRoad("aisle", new[] { new[] { 200.0, 0, 0 }, new[] { 200.0, 0, -100 } }, aisleRun);
+    var street = MakeRoad("street", new[] { new[] { 300.0, 0, 0 }, new[] { 300.0, 0, -100 } }, MakeRun(0, 1, "residential"));
+    var input = new IntermediateFile { Format = IntermediateFile.ExpectedFormat, Version = 1,
+        Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 }, Roads = [track, foot, aisle, street] };
+    var (map, _) = MapWriter.Build(input, MappingConfig.Load(ShippedMapping()));
+    Road At(double x) => map.MapItems.Values.OfType<Road>().Single(r => Math.Abs(r.Node.Position.X - x) < 0.5);
+    var t = At(0); var f = At(100); var a = At(200); var s = At(300);
+    Check(t.Secret && t.GpsAvoid && !t.AiVehicles, $"Feldweg: secret {t.Secret}, gps_avoid {t.GpsAvoid}, ai {t.AiVehicles}");
+    Check(!f.ShowInUiMap && f.GpsAvoid && !f.AiVehicles, $"Fußweg: ui_map {f.ShowInUiMap}, gps_avoid {f.GpsAvoid}");
+    Check(!a.ShowInUiMap && a.GpsAvoid, $"Parkplatzgasse: ui_map {a.ShowInUiMap}, gps_avoid {a.GpsAvoid}");
+    Check(s.ShowInUiMap && !s.GpsAvoid && !s.Secret, $"Wohnstraße unverändert: ui_map {s.ShowInUiMap}, gps_avoid {s.GpsAvoid}, secret {s.Secret}");
+    Check(t.RoadType == "ger37" && f.RoadType == "ger4" && a.RoadType == "ger4", $"Typen {t.RoadType}/{f.RoadType}/{a.RoadType}");
 }

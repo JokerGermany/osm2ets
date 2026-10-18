@@ -5,7 +5,10 @@
    zur Stufe gehören, höchstens ``max_m`` lang, der zwei Knoten des Netzes verbindet –
    z. B. das Stück Bundesstraße zwischen zwei Autobahnrampen in L1. Nur wenn der Weg über
    das Netz selbst deutlich länger ist (``ratio``); sonst wäre es bloß eine Schleife an
-   derselben Straße (Tankstelle, Rastplatz, Wendeschleife).
+   derselben Straße (Wendeschleife, Parallelweg). Ausnahme: Schleifen, die an beiden Enden
+   an einer Autobahn- oder Kraftfahrstraßenfahrbahn hängen, sind Rastplätze – sie zählen
+   immer, bis ``major_max_m``. Tankstellen und Rastanlagen mit eigenem OSM-Tag bindet
+   industry.connect_services an.
 3. Notfallbuchten/Notauffahrten (``highway=escape``), die direkt am Netz liegen.
 
 Alle Abstände in Echtmetern; Kanten erhalten die Rolle ``connector``.
@@ -63,12 +66,15 @@ def _network_distance(net, taken_len: dict, a: int, b: int, limit: float) -> flo
 
 
 def same_level_links(net, network_nodes: set, xy: dict, classes: frozenset, max_m: float,
-                     ratio: float, taken: str = "taken") -> dict:
+                     ratio: float, taken: str = "taken", major_nodes: set | None = None,
+                     major_max_m: float = 0.0) -> dict:
     """Markiert kurze Verbindungen zwischen zwei Netzknoten (Rolle 'connector')."""
     from .network import ROLE_CONNECTOR
 
+    major_nodes = major_nodes or set()
     if max_m <= 0 or not network_nodes:
-        return {"links": 0, "edges": 0, "rejected_loop": 0}
+        return {"links": 0, "edges": 0, "rejected_loop": 0, "rest_loops": 0}
+    reach = max(max_m, major_max_m if major_nodes else 0.0)
     usable, taken_len = {}, {}
     for e in net.edges:
         if e.role == taken:
@@ -99,7 +105,7 @@ def same_level_links(net, network_nodes: set, xy: dict, classes: frozenset, max_
             if m in network_nodes:
                 continue
             nd = d + L
-            if nd > max_m:
+            if nd > reach or (nd > max_m and src[n] not in major_nodes):
                 continue
             if nd < dist.get(m, math.inf):
                 dist[m] = nd
@@ -118,14 +124,16 @@ def same_level_links(net, network_nodes: set, xy: dict, classes: frozenset, max_
         if su == sv:
             continue
         total = dist[u] + L + dist[v]
-        if total > max_m:
+        both_major = su in major_nodes and sv in major_nodes
+        if total > (major_max_m if both_major else max_m):
             continue
         key = (min(su, sv), max(su, sv))
         if key not in best or total < best[key][0]:
             best[key] = (total, ei, u, v)
 
     marked: set[int] = set()
-    links = rejected = 0
+    links = rejected = rest = 0
+    rejected_ways: list = []
 
     def walk(node):
         while node in prev:
@@ -134,8 +142,17 @@ def same_level_links(net, network_nodes: set, xy: dict, classes: frozenset, max_
             node = p
 
     for (sa, sb), (total, ei, u, v) in sorted(best.items(), key=lambda kv: kv[1][0]):
-        if _network_distance(net, taken_len, sa, sb, ratio * total) <= ratio * total:
+        if sa in major_nodes and sb in major_nodes:
+            rest += 1          # Schleife an der Autobahn: Rastplatz
+        elif _network_distance(net, taken_len, sa, sb, ratio * total) <= ratio * total:
             rejected += 1
+            if len(rejected_ways) < 100:
+                path = {net.edges[ei].way.id}
+                for node in (u, v):
+                    while node in prev:
+                        node, pe = prev[node][0], prev[node][1]
+                        path.add(net.edges[pe].way.id)
+                rejected_ways.append(sorted(path))
             continue
         links += 1
         marked.add(ei)
@@ -143,9 +160,10 @@ def same_level_links(net, network_nodes: set, xy: dict, classes: frozenset, max_
         walk(v)
     for ei in marked:
         net.edges[ei].role = ROLE_CONNECTOR
-    log.info("Verbindungen zwischen Straßen der Stufe: %d (Kanten %d, als Schleife verworfen %d)",
-             links, len(marked), rejected)
-    return {"links": links, "edges": len(marked), "rejected_loop": rejected}
+    log.info("Verbindungen zwischen Straßen der Stufe: %d (davon Rastplatzschleifen %d; Kanten %d, "
+             "als Schleife verworfen %d)", links, rest, len(marked), rejected)
+    return {"links": links, "edges": len(marked), "rejected_loop": rejected, "rest_loops": rest,
+            "rejected_loop_ways": rejected_ways}
 
 
 def escape_lanes(net, network_nodes: set) -> dict:

@@ -121,6 +121,7 @@ public static class Junctions
             if (list.Count is not (3 or 4)) continue;
             var runs = list.Select(e => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1]).ToList();
             if (runs.Any(x => x.Highway is "motorway" or "trunk" && x.Oneway)) continue; // Autobahnknoten
+            if (runs.Any(IsMinorWay)) continue;   // Feld-/Fußwege usw.: kein Kreuzungs-Prefab
             if (list.Any(e => e.R.Closed)) continue;
             int oneway = runs.Count(x => x.Oneway);
             if (list.Count == 3 && oneway == 2)
@@ -189,6 +190,11 @@ public static class Junctions
         }
         return plans;
     }
+
+    /// <summary>Wege ohne Lkw-Verkehr (nur L5): track, Fuß-/Rad-/Reitwege, Parkplatzgassen …</summary>
+    public static bool IsMinorWay(RunEntry r) =>
+        r.Highway is "track" or "path" or "footway" or "cycleway" or "bridleway" or "pedestrian" or "steps"
+        || (r.Highway == "service" && r.Service is "parking_aisle" or "driveway" or "drive-through" or "emergency_access");
 
     private static Vector2 Away(RoadEntry r, bool atStart)
     {

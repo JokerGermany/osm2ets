@@ -161,7 +161,7 @@ number in the `ref` tag.
 | L2 | + primary (+ primary_link), mostly federal roads |
 | L3 | + secondary (+ secondary_link), mostly state roads |
 | L4 | + tertiary (+ tertiary_link), mostly district roads |
-| L5 | + all other drivable roads: unclassified, residential, living_street, service, road |
+| L5 | + all other ways: unclassified, residential, living_street, service (incl. parking aisles, driveways), road, track, path, footway, cycleway, bridleway, pedestrian |
 
 Ramps are only included if they touch the core network.
 
@@ -173,16 +173,29 @@ In addition, in every level (`extras` and `industry` in the profile):
    so a company next to the motorway without a nearby exit does not pull in kilometres of
    roads. Targets: `landuse=industrial|commercial|retail|quarry|farmyard|port`,
    `industrial=*`, `man_made=works`, `building=warehouse|industrial`, `craft=*`,
-   `office=company`.
+   `office=company`. **Petrol stations, service areas and truck parking**
+   (`amenity=fuel`, `highway=services|rest_area`, `amenity=parking` with
+   `hgv=yes|designated`) are connected the same way, but also directly from the motorway
+   carriageway and through all entries and exits, so the loop stays drivable.
 2. **Short links within the level**: a path over other roads, at most 500 m long, that
    connects two roads of the level – e.g. the piece of federal road between two motorway
-   ramps in L1. Loops on the same road (petrol station, rest area) do not count: the path
-   through the network must be at least 1.5 times as long.
+   ramps in L1. Loops attached to a motorway or expressway carriageway at both ends are
+   rest areas and always count, up to 1.5 km. Other loops on the same road (e.g. village
+   streets) only count if the path through the network is at least 1.5 times as long.
 3. **Emergency escape lanes** (`highway=escape`) directly next to the route.
 
-Never included because not drivable: `track` (farm and forest tracks), foot, cycle and
-bridle paths, steps, pedestrian zones, construction, proposed roads, `access=private`/`no`,
-parking aisles and driveways.
+L5 adds all ways. Ways without truck traffic get their own flags in the game
+(`mapping.jsonc`):
+
+| Way | ETS2 road type | Flags |
+|---|---|---|
+| `track` (farm/forest track) | `ger37` "ger r1 minim dirt" | secret road, GPS avoids, no AI traffic |
+| `path`, `footway`, `cycleway`, `bridleway`, `pedestrian` | `ger4` "ger road 1 minim" | not on map/GPS, GPS avoids, no AI traffic |
+| `service` = `parking_aisle`, `driveway`, `drive-through`, `emergency_access` | `ger4` | as footways |
+
+The writer places no junction prefabs on these ways. Their model width (4.5 m) is
+estimated, not measured. Never included: steps, construction, proposed roads, raceways,
+busways, `access=private`/`no`; in L1–L4 also parking aisles and driveways.
 
 The former mechanism "connecting roads up to the next junction" (`connectors.depth`) can
 still be configured in a profile, but is off in profile `de`.

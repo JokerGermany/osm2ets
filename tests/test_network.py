@@ -23,12 +23,20 @@ def test_oneway_sign(profile):
 
 
 def test_read_ways_filters(synthetic_osm, profile):
-    lod = profile.lod("L5")
+    lod = profile.lod("L4")
     ways = read_ways(str(synthetic_osm), lod.all_classes, profile.exclude_access, profile.exclude_service)
     ids = {w.id for w in ways}
-    assert 1013 not in ids          # track
+    assert 1013 not in ids          # track erst in L5
     assert 1014 not in ids          # access=private
     assert {1001, 1004, 1006, 1011, 1012} <= ids
+
+
+def test_l5_contains_tracks(synthetic_osm, profile):
+    lod = profile.lod("L5")
+    ways = read_ways(str(synthetic_osm), lod.all_classes, profile.exclude_access, lod.exclude_service)
+    ids = {w.id for w in ways}
+    assert 1013 in ids              # track
+    assert 1014 not in ids          # access=private bleibt draußen
 
 
 def test_l1_selection(synthetic_osm, profile):
