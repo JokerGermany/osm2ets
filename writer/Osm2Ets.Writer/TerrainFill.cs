@@ -60,8 +60,28 @@ public static class TerrainFill
                 for (int i = i0; i <= i1; i++)
                     if (Vector2.Distance(new Vector2(x0 + i * MaskCell, z0 + j * MaskCell), c) <= r) mask[j * mw + i] = true;
         }
+        // breit: Fahrbahnen aus den tatsächlich geschriebenen Straßenstücken (Hermite-Kurve)
+        if (WideRoadTerrain)
+        {
+            var widthOf = new Dictionary<string, float>();
+            foreach (var st in styles.Values) foreach (var x in st) widthOf[x.RoadType] = MathF.Max(widthOf.GetValueOrDefault(x.RoadType), x.Width);
+            foreach (var rd in map.MapItems.Values.OfType<Road>())
+            {
+                float hw = widthOf.GetValueOrDefault(rd.RoadType.ToString(), 8f) / 2;
+                var a = new Vector2(rd.Node.Position.X, rd.Node.Position.Z); var b = new Vector2(rd.ForwardNode.Position.X, rd.ForwardNode.Position.Z);
+                float L = Vector2.Distance(a, b); if (L < 1e-3f) continue;
+                Vector2 T(Quaternion q) { var v = Vector3.Transform(-Vector3.UnitZ, q); var t = new Vector2(v.X, v.Z); if (t.LengthSquared() < 1e-6f) t = b - a; t = Vector2.Normalize(t); return Vector2.Dot(t, b - a) < 0 ? -t : t; }
+                var ta = T(rd.Node.Rotation); var tb = T(rd.ForwardNode.Rotation);
+                for (float s2 = 0; s2 <= L; s2 += MaskCell / 2)
+                {
+                    float t = s2 / L, t2 = t * t, t3 = t2 * t;
+                    var c = (2*t3-3*t2+1)*a + (t3-2*t2+t)*L*ta + (-2*t3+3*t2)*b + (t3-t2)*L*tb;
+                    Mark(c, hw);
+                }
+            }
+        }
         // Straße + eigene Geländestreifen (seitenrichtig), 1 m Rand
-        foreach (var r in roads)
+        foreach (var r in WideRoadTerrain ? [] : roads)
         {
             var st = styles[r];
             for (int k = 0; k < r.Points.Count - 1; k++)
