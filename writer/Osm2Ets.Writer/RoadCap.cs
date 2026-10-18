@@ -178,8 +178,10 @@ public sealed class RoadCap
     {
         float h = grid.HeightAt(x, z);
         if (float.IsNaN(h)) return h;
-        if (UseFloor)
         {
+            // Prefabs immer (sonst liegt das Gelände im Zwickel eines geneigten Prefabs bis
+            // ~0,8 m unter dessen Fahrbahn – im Editor schwarze Seitenwand der Spur), Straßen
+            // nur mit OSM2ETS_FILL_FLOOR
             float fl = Floor(x, z);
             if (fl > h) { Interlocked.Increment(ref Raised); h = fl; }
         }
@@ -207,6 +209,8 @@ public sealed class RoadCap
         {
             var (a, b, hw, center, drop, bridge) = segs[i];
             if (bridge) continue;
+            bool prefab = owners[i] is null;
+            if (!prefab && !UseFloor) continue;
             var a2 = new Vector2(a.X, a.Z); var ab = new Vector2(b.X, b.Z) - a2;
             float l2 = ab.LengthSquared();
             if (l2 < 1e-8f) continue;
@@ -218,7 +222,7 @@ public sealed class RoadCap
             float lon = (u < 0 ? -u : u > 1 ? u - 1 : 0) * MathF.Sqrt(l2);
             float beyond = MathF.Max(0, MathF.Max(lat, lon)) - Margin;
             if (beyond > Reach) continue;
-            float y = a.Y + (b.Y - a.Y) * uc - FloorGap - MathF.Max(0, beyond) * Slope;
+            float y = a.Y + (b.Y - a.Y) * uc - (prefab ? 0f : FloorGap) - MathF.Max(0, beyond) * Slope;
             fl = MathF.Max(fl, y);
         }
         return fl;
