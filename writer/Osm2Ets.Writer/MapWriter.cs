@@ -54,6 +54,8 @@ public static class MapWriter
             valid.Add(entry);
         }
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
+            TwinSeparation.Apply(valid, run => mapping.Resolve(run).Width / 2, warnings);
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
         var interchangePlans = new List<Interchanges.Plan>();
         if (prefabs is not null)
@@ -63,7 +65,13 @@ public static class MapWriter
                 bool ok;
                 try { ok = Interchanges.Prepare(plan, prefabs); }
                 catch (Exception ex) { warnings.Add($"Knoten {plan.OsmNode}: {ex.Message}"); ok = false; }
-                if (!ok) { warnings.Add($"Knoten {plan.OsmNode} ({plan.Kind}): Straßen zu kurz für Prefabs – übersprungen"); continue; }
+                if (!ok)
+                {
+                    warnings.Add(plan.Blocked
+                        ? $"Knoten {plan.OsmNode} ({plan.Kind}): Brücke/Tunnel im Prefab-Bereich – ohne Prefab gebaut"
+                        : $"Knoten {plan.OsmNode} ({plan.Kind}): Straßen zu kurz für Prefabs – übersprungen");
+                    continue;
+                }
                 plan.MainIn.End = new EndInfo { Kind = "prefab" };
                 plan.MainOut.Start = new EndInfo { Kind = "prefab" };
                 if (plan.Kind == "exit") plan.Ramp.Start = new EndInfo { Kind = "prefab" };

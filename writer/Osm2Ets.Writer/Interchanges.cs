@@ -29,6 +29,10 @@ public static class Interchanges
     private const ushort JoinMain = 0, JoinOut = 1, JoinRamp = 2;
     private const ushort NarrowIn = 0, NarrowOut = 1;
 
+    /// <summary>Anschluss-Prefabs weglassen, wenn im Prefab-Bereich eine Brücke/ein Tunnel liegt
+    /// (OSM2ETS_PREFAB_NOBRIDGE=1). Standard: aus – sonst fallen z. B. in Bayreuth alle vier weg.</summary>
+    public static bool SkipAtStructures = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOBRIDGE") is not null;
+
     public const float RampTrim = 25f;     // Rampe so weit vom Knoten kürzen (m)
     public const float Slack = 5f;
 
@@ -39,7 +43,8 @@ public static class Interchanges
         public required RoadEntry MainIn, MainOut, Ramp;
         public required Vector3 Anchor;     // Lage des OSM-Knotens
         public required Vector3 Direction;  // Fahrtrichtung der Hauptfahrbahn (x/z)
-        public float Grade;                  // Steigung der Hauptfahrbahn über die Prefab-Länge (m/m)
+        public float Grade;
+        public bool Blocked;                 // Brücke/Tunnel im Prefab-Bereich                  // Steigung der Hauptfahrbahn über die Prefab-Länge (m/m)
     }
 
     /// <summary>Lädt .ppd-Dateien aus einem entpackten Ordner oder den .scs-Archiven des Spiels.</summary>
@@ -427,6 +432,7 @@ public static class Interchanges
         if (p.Kind == "exit")
         {
             float len = Length(src, Widen, WidenIn, WidenOut) + Length(src, Split, SplitIn, SplitMain);
+            if (SkipAtStructures && HasStructure(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack)) { p.Blocked = true; return false; }
             if (ArcLength(p.MainIn) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
             p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
             return TrimEnd(p.MainIn, len + Slack) && TrimStart(p.Ramp, RampTrim);
@@ -434,10 +440,27 @@ public static class Interchanges
         else
         {
             float len = Length(src, Join, JoinMain, JoinOut) + Length(src, Narrow, NarrowIn, NarrowOut);
+            if (SkipAtStructures && HasStructure(p.MainOut.Points, p.MainOut.Runs, false, len + Slack)) { p.Blocked = true; return false; }
             if (ArcLength(p.MainOut) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
             p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
             return TrimStart(p.MainOut, len + Slack) && TrimEnd(p.Ramp, RampTrim);
         }
+    }
+
+    /// <summary>Liegt innerhalb von reach Metern ab dem Knoten (pts beginnt am Knoten) eine Brücke/ein Tunnel?
+    /// Ein Prefab ist kein Bauwerk – darüber/darunter läge sonst massives Gelände.</summary>
+    private static bool HasStructure(List<double[]> pts, List<RunEntry> runs, bool reversed, float reach)
+    {
+        int n = pts.Count;
+        double acc = 0;
+        for (int i = 0; i < n - 1 && acc < reach; i++)
+        {
+            int seg = reversed ? n - 2 - i : i;   // Segmentindex in der Originalreihenfolge
+            var run = runs.FirstOrDefault(x => x.From <= seg && seg < x.To);
+            if (run is not null && (run.Bridge || run.Tunnel)) return true;
+            acc += Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+        }
+        return false;
     }
 
     /// <summary>Setzt die Prefabs eines Plans (Straßen müssen schon gebaut sein).</summary>
