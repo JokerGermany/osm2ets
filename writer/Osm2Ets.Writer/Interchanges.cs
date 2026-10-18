@@ -29,6 +29,10 @@ public static class Interchanges
     private const ushort JoinMain = 0, JoinOut = 1, JoinRamp = 2;
     private const ushort NarrowIn = 0, NarrowOut = 1;
 
+    /// <summary>Anschluss-Prefabs weglassen, wenn im Prefab-Bereich eine Brücke/ein Tunnel liegt
+    /// (OSM2ETS_PREFAB_NOBRIDGE=1). Standard: aus – sonst fallen z. B. in Bayreuth alle vier weg.</summary>
+    public static bool SkipAtStructures = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOBRIDGE") is not null;
+
     public const float RampTrim = 25f;     // Rampe so weit vom Knoten kürzen (m)
     public const float Slack = 5f;
 
@@ -39,7 +43,8 @@ public static class Interchanges
         public required RoadEntry MainIn, MainOut, Ramp;
         public required Vector3 Anchor;     // Lage des OSM-Knotens
         public required Vector3 Direction;  // Fahrtrichtung der Hauptfahrbahn (x/z)
-        public float Grade;                  // Steigung der Hauptfahrbahn über die Prefab-Länge (m/m)
+        public float Grade;
+        public bool Blocked;                 // Brücke/Tunnel im Prefab-Bereich                  // Steigung der Hauptfahrbahn über die Prefab-Länge (m/m)
     }
 
     /// <summary>Lädt .ppd-Dateien aus einem entpackten Ordner oder den .scs-Archiven des Spiels.</summary>
@@ -197,6 +202,74 @@ public static class Interchanges
         return r.Points.Count >= 2;
     }
 
+    /// <summary>Prefab-Richtung als Sehne zwischen Anker und dem OSM-Punkt am fernen Prefab-Ende –
+    /// so liegen in Kurven beide Enden auf der Straße (aus: OSM2ETS_PREFAB_TANGENT).</summary>
+    public static bool UseChord = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_TANGENT") is null;
+
+    /// <summary>Seitlicher Versatz der ETS2-Linie je Lauf (aus der Zuordnung, siehe LaneCentering).</summary>
+    public static Func<RunEntry, float> OffsetOf = _ => 0f;
+
+    /// <summary>
+    /// Lage der zweispurigen Prefab-Achse im Abstand dist vom Knoten: Straßenpunkt, ohne den
+    /// Versatz des Straßenmodells, also auf der OSM-Linie.
+    /// </summary>
+    private static Vector3 AxisAt(RoadEntry r, bool fromStart, float dist)
+    {
+        // OSM-Lage vor dem Mittig-Setzen (sonst steckt der Modellversatz schon in den Punkten)
+        var (srcPts, srcRuns) = LaneCentering.Original.TryGetValue(r, out var o) ? o : (r.Points, r.Runs);
+        bool raw = !ReferenceEquals(srcPts, r.Points);
+        var pts = fromStart ? srcPts : Enumerable.Reverse(srcPts).ToList();
+        int n = pts.Count;
+        double acc = 0;
+        for (int i = 0; i < n - 1; i++)
+        {
+            double s = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+            if ((acc + s >= dist && s > 0) || i == n - 2)
+            {
+                float t = s > 0 ? (float)Math.Clamp((dist - acc) / s, 0, 1) : 0;
+                var a = MapWriter.ToVector(pts[i]); var b = MapWriter.ToVector(pts[i + 1]);
+                var q = Vector3.Lerp(a, b, t);
+                int seg = fromStart ? i : n - 2 - i;
+                var run = srcRuns.FirstOrDefault(x => x.From <= seg && seg < x.To) ?? srcRuns[^1];
+                var d = fromStart ? b - a : a - b; d.Y = 0;            // Fahrtrichtung
+                if (d.LengthSquared() < 1e-6f) return q;
+                d = Vector3.Normalize(d);
+                var right = new Vector3(-d.Z, 0, d.X);
+                // Nur auf die OSM-Linie zurück. Die durchgehenden Spuren lägen bei lanes=3 (Ver-
+                // zögerungsspur) eigentlich 2,25 m weiter innen – mit den 4,5 m breiten ETS2-
+                // Spuren überschnitten sich dann aber die Gegenfahrbahnen (A 70: 5 m statt 9 m).
+                float lat = raw ? 0 : -OffsetOf(run);
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                    Console.Error.WriteLine($"AXIS {r.Id} seg {seg} lanes {run.Lanes} off {OffsetOf(run)} q {q} lat {lat}");
+                return q + right * lat;
+            }
+            acc += s;
+        }
+        return MapWriter.ToVector(pts[^1]);
+    }
+
+    private static Vector3 Chord(Vector3 from, Vector3 to, Vector3 fallback)
+    {
+        var d = to - from; d.Y = 0;
+        return d.LengthSquared() > 1 ? Vector3.Normalize(d) : fallback;
+    }
+
+    private static Vector3 PointAlong(List<double[]> pts, float dist)
+    {
+        double acc = 0;
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            double s = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+            if (acc + s >= dist && s > 0)
+            {
+                float t = (float)((dist - acc) / s);
+                return Vector3.Lerp(MapWriter.ToVector(pts[i]), MapWriter.ToVector(pts[i + 1]), t);
+            }
+            acc += s;
+        }
+        return MapWriter.ToVector(pts[^1]);
+    }
+
     /// <summary>Höhe der Straße im Abstand dist (Draufsicht) vom Ende bzw. Anfang.</summary>
     private static float HeightFromEnd(RoadEntry r, float dist) => HeightAlong(Enumerable.Reverse(r.Points).ToList(), dist);
     private static float HeightFromStart(RoadEntry r, float dist) => HeightAlong(r.Points, dist);
@@ -282,6 +355,28 @@ public static class Interchanges
     {
         var ppd = src.Get(def.PpdPath);
         var rot = Orientation(ppd, def.Unit, fromNode, toNode, dir);
+        // Ausrichtung nach der Knotenrichtung, nicht nach der Verbindungslinie der Knoten:
+        // bei Prefabs mit seitlichem Versatz (Aufweitung/Teilung, 4,5 m auf 40–59 m) wäre das
+        // Prefab sonst um 4–6° verdreht und seine Enden lägen bis zu 3 m neben der Straße.
+        if (Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_CHORD") is null)
+        {
+            var d0 = Vector3.Normalize(new Vector3(dir.X, 0, dir.Z));
+            float Err(Quaternion q)
+            {
+                var w = WorldDirections(ppd, Calibrate(ppd, def.Unit, q))[fromNode];
+                // Knotenrichtung zeigt ins Prefab; am Eingang (fromNode) = Fahrtrichtung
+                if (Vector3.Dot(w, d0) < 0) w = -w;
+                return MathF.Atan2(w.X * d0.Z - w.Z * d0.X, Vector3.Dot(w, d0));
+            }
+            for (int it = 0; it < 3; it++)
+            {
+                float e = Err(rot);
+                if (MathF.Abs(e) < 1e-4f) break;
+                var qa = Quaternion.Normalize(Quaternion.Concatenate(rot, Quaternion.CreateFromAxisAngle(Vector3.UnitY, e)));
+                var qb = Quaternion.Normalize(Quaternion.Concatenate(rot, Quaternion.CreateFromAxisAngle(Vector3.UnitY, -e)));
+                rot = MathF.Abs(Err(qa)) < MathF.Abs(Err(qb)) ? qa : qb;
+            }
+        }
         if (MathF.Abs(grade) > 1e-4f)
         {
             // Neigung um die waagerechte Querachse; Vorzeichen am echten Einsatz prüfen
@@ -338,8 +433,9 @@ public static class Interchanges
     }
 
     /// <summary>Mindestabstand der Achsen gegenüberliegender Anschluss-Prefabs (m).
-    /// Annahme: aufgeweitete Prefabs je etwa 9 m halbe Breite.</summary>
-    public const float OppositeMinGap = 19f;
+    /// Gemessen an den .ppd-Spuren (ETS2 1.61): die Zusatzspur liegt außen, der innere Rand
+    /// bleibt 4,5 m neben der Achse der zweispurigen Fahrbahn – zusammen 9 m (Berührung).</summary>
+    public const float OppositeMinGap = 9f;
 
     /// <summary>
     /// Ausfahrt und Einfahrt der Gegenrichtung liegen oft auf gleicher Höhe nebeneinander;
@@ -427,17 +523,37 @@ public static class Interchanges
         if (p.Kind == "exit")
         {
             float len = Length(src, Widen, WidenIn, WidenOut) + Length(src, Split, SplitIn, SplitMain);
+            if (SkipAtStructures && HasStructure(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack)) { p.Blocked = true; return false; }
             if (ArcLength(p.MainIn) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
             p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
+            if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, len), p.Anchor, p.Direction);
             return TrimEnd(p.MainIn, len + Slack) && TrimStart(p.Ramp, RampTrim);
         }
         else
         {
             float len = Length(src, Join, JoinMain, JoinOut) + Length(src, Narrow, NarrowIn, NarrowOut);
+            if (SkipAtStructures && HasStructure(p.MainOut.Points, p.MainOut.Runs, false, len + Slack)) { p.Blocked = true; return false; }
             if (ArcLength(p.MainOut) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
             p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
+            if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, len), p.Direction);
             return TrimStart(p.MainOut, len + Slack) && TrimEnd(p.Ramp, RampTrim);
         }
+    }
+
+    /// <summary>Liegt innerhalb von reach Metern ab dem Knoten (pts beginnt am Knoten) eine Brücke/ein Tunnel?
+    /// Ein Prefab ist kein Bauwerk – darüber/darunter läge sonst massives Gelände.</summary>
+    private static bool HasStructure(List<double[]> pts, List<RunEntry> runs, bool reversed, float reach)
+    {
+        int n = pts.Count;
+        double acc = 0;
+        for (int i = 0; i < n - 1 && acc < reach; i++)
+        {
+            int seg = reversed ? n - 2 - i : i;   // Segmentindex in der Originalreihenfolge
+            var run = runs.FirstOrDefault(x => x.From <= seg && seg < x.To);
+            if (run is not null && (run.Bridge || run.Tunnel)) return true;
+            acc += Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+        }
+        return false;
     }
 
     /// <summary>Setzt die Prefabs eines Plans (Straßen müssen schon gebaut sein).</summary>

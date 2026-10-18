@@ -18,6 +18,8 @@ public sealed class MappingConfig
     public StyleSpec? Bridge { get; set; }
     /// <summary>Überschreibt Werte in Tunneln.</summary>
     public StyleSpec? Tunnel { get; set; }
+    /// <summary>Überschreibt Werte auf Wegen ohne Kfz-Zugang (access=private|no), zusätzlich zur Regel.</summary>
+    public StyleSpec? Restricted { get; set; }
     public MapSpec Map { get; set; } = new();
 
     // Strenger als beim Zwischenformat: unbekannte Felder (Tippfehler) sind Fehler.
@@ -56,6 +58,7 @@ public sealed class MappingConfig
         }
         Bridge?.Validate("bridge", errors);
         Tunnel?.Validate("tunnel", errors);
+        Restricted?.Validate("restricted", errors);
         if (errors.Count > 0)
             throw new InvalidDataException($"{source}:\n  " + string.Join("\n  ", errors));
     }
@@ -76,6 +79,8 @@ public sealed class MappingConfig
             style = Bridge.ToResolved(style);
         else if (run.Tunnel && Tunnel is not null)
             style = Tunnel.ToResolved(style);
+        if (run.Access is not null && Restricted is not null)
+            style = Restricted.ToResolved(style);
         return style;
     }
 }
@@ -95,8 +100,23 @@ public class StyleSpec
     public float? TerrainRight { get; set; }
     /// <summary>Ungefähre Fahrbahnbreite in Metern (für den Geländeabstand zu Nachbarstraßen).</summary>
     public float? Width { get; set; }
+    /// <summary>Seitliche Verschiebung der ETS2-Straßenlinie gegenüber der OSM-Linie (m, + = rechts in
+    /// Fahrtrichtung), damit die Fahrspuren des Modells mittig auf der OSM-Linie liegen.</summary>
+    public float? Offset { get; set; }
+    /// <summary>Abstand des linken Modellrands von der OSM-Linie (m) – für Gegenfahrbahnen.</summary>
+    public float? EdgeLeft { get; set; }
+    /// <summary>Mitte des Modells rechts der ETS2-Straßenlinie (m), z. B. ger13 +1,75 (−4,5…8,0).</summary>
+    public float? ModelCenter { get; set; }
     /// <summary>Unsichtbare Begrenzung am Straßenrand (ETS2 "boundary").</summary>
     public bool? Boundary { get; set; }
+    /// <summary>Auf der Karte/im Navi sichtbar (ETS2 "show in UI map"); false für Fuß-/Radwege usw.</summary>
+    public bool? ShowInUiMap { get; set; }
+    /// <summary>Navi meidet die Straße (ETS2 "GPS avoid").</summary>
+    public bool? GpsAvoid { get; set; }
+    /// <summary>Geheimstraße (ETS2 "secret"): erst nach dem Befahren auf der Karte.</summary>
+    public bool? Secret { get; set; }
+    /// <summary>KI-Verkehr auf dieser Straße.</summary>
+    public bool? AiVehicles { get; set; }
     public string? Resolution { get; set; }
     public SideSpec? Left { get; set; }
     public SideSpec? Right { get; set; }
@@ -107,6 +127,8 @@ public class StyleSpec
         if (TerrainLeft is < 0 or > 1000) errors.Add($"{name}.terrain_left: 0–1000 erwartet");
         if (TerrainRight is < 0 or > 1000) errors.Add($"{name}.terrain_right: 0–1000 erwartet");
         if (Width is <= 0 or > 60) errors.Add($"{name}.width: 0–60 erwartet");
+        if (Offset is < -20 or > 20) errors.Add($"{name}.offset: −20–20 erwartet");
+        if (EdgeLeft is < 0 or > 40) errors.Add($"{name}.edge_left: 0–40 erwartet");
         if (Resolution is not null && !Enum.TryParse<RoadResolution>(Resolution, true, out _))
             errors.Add($"{name}.resolution: erlaubt sind {string.Join(", ", Enum.GetNames<RoadResolution>())}");
         Left?.Validate($"{name}.left", errors);
@@ -130,7 +152,14 @@ public class StyleSpec
             SideSpec.Merge(baseStyle?.Left, Left),
             SideSpec.Merge(baseStyle?.Right, Right),
             Width ?? baseStyle?.Width ?? 8f,
-            Boundary ?? baseStyle?.Boundary ?? true);
+            Boundary ?? baseStyle?.Boundary ?? true,
+            Offset ?? (RoadType is null ? baseStyle?.Offset : null) ?? 0f,
+            EdgeLeft ?? (RoadType is null && Width is null ? baseStyle?.EdgeLeftRaw : null) ?? -1f,
+            ModelCenter ?? (RoadType is null ? baseStyle?.ModelCenter : null) ?? 0f,
+            ShowInUiMap ?? baseStyle?.ShowInUiMap,
+            GpsAvoid ?? baseStyle?.GpsAvoid,
+            Secret ?? baseStyle?.Secret,
+            AiVehicles ?? baseStyle?.AiVehicles);
     }
 }
 
@@ -151,6 +180,10 @@ public sealed class MatchSpec
     public int? LanesMax { get; set; }
     /// <summary>Regulärer Ausdruck auf das OSM-ref-Tag.</summary>
     public string? Ref { get; set; }
+    /// <summary>OSM service=* (z. B. parking_aisle, driveway).</summary>
+    public List<string>? Service { get; set; }
+    /// <summary>Gesperrter Kfz-Zugang (private, no); "none" = frei.</summary>
+    public List<string>? Access { get; set; }
 
     private Regex? refRegex;
 
@@ -173,6 +206,8 @@ public sealed class MatchSpec
         if (LanesMin is not null && (run.Lanes is null || run.Lanes < LanesMin)) return false;
         if (LanesMax is not null && (run.Lanes is null || run.Lanes > LanesMax)) return false;
         if (refRegex is not null && !refRegex.IsMatch(run.Ref ?? "")) return false;
+        if (Service is not null && (run.Service is null || !Service.Contains(run.Service))) return false;
+        if (Access is not null && !Access.Contains(run.Access ?? "none")) return false;
         return true;
     }
 }
@@ -227,4 +262,15 @@ public sealed record ResolvedStyle(
     SideSpec? Left,
     SideSpec? Right,
     float Width = 8f,
-    bool Boundary = true);
+    bool Boundary = true,
+    float Offset = 0f,
+    float EdgeLeftRaw = -1f,
+    float ModelCenter = 0f,
+    bool? ShowInUiMap = null,
+    bool? GpsAvoid = null,
+    bool? Secret = null,
+    bool? AiVehicles = null)
+{
+    /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
+    public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;
+}

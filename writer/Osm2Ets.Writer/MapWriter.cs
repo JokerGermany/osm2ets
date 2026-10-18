@@ -54,8 +54,14 @@ public static class MapWriter
             valid.Add(entry);
         }
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
+        // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);
+        if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
+            TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
         var interchangePlans = new List<Interchanges.Plan>();
+        Interchanges.OffsetOf = run => mapping.Resolve(run).Offset;
         if (prefabs is not null)
         {
             foreach (var plan in Interchanges.Find(valid, warnings))
@@ -63,7 +69,13 @@ public static class MapWriter
                 bool ok;
                 try { ok = Interchanges.Prepare(plan, prefabs); }
                 catch (Exception ex) { warnings.Add($"Knoten {plan.OsmNode}: {ex.Message}"); ok = false; }
-                if (!ok) { warnings.Add($"Knoten {plan.OsmNode} ({plan.Kind}): Straßen zu kurz für Prefabs – übersprungen"); continue; }
+                if (!ok)
+                {
+                    warnings.Add(plan.Blocked
+                        ? $"Knoten {plan.OsmNode} ({plan.Kind}): Brücke/Tunnel im Prefab-Bereich – ohne Prefab gebaut"
+                        : $"Knoten {plan.OsmNode} ({plan.Kind}): Straßen zu kurz für Prefabs – übersprungen");
+                    continue;
+                }
                 plan.MainIn.End = new EndInfo { Kind = "prefab" };
                 plan.MainOut.Start = new EndInfo { Kind = "prefab" };
                 if (plan.Kind == "exit") plan.Ramp.Start = new EndInfo { Kind = "prefab" };
@@ -71,7 +83,11 @@ public static class MapWriter
                 interchangePlans.Add(plan);
             }
         }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            foreach (var p in interchangePlans) Console.Error.WriteLine($"PRE {p.OsmNode} {p.Kind} anchor {p.Anchor} dir {p.Direction}");
         int icSep = Interchanges.SeparateOpposite(interchangePlans);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            foreach (var p in interchangePlans) Console.Error.WriteLine($"SEP {p.OsmNode} {p.Kind} anchor {p.Anchor}");
         if (icSep > 0) warnings.Add($"Info: {icSep} gegenüberliegende Anschlussstellen-Prefabs seitlich auseinandergerückt");
 
         // ebenerdige Kreuzungen normaler Straßen (T/X-Prefabs)
@@ -135,6 +151,7 @@ public static class MapWriter
         }
 
         // Abzweige ohne Prefab bis an den Fahrbahnrand der anderen Straße zurücknehmen
+        Overlaps.CenterOf = run => mapping.Resolve(run).ModelCenter;
         int branchesTrimmed = Overlaps.TrimBranches(valid, pairs, run => mapping.Resolve(run).Width / 2, warnings);
 
         // lange Abschnitte teilen, damit die Geländebreite nicht über hunderte Meter
@@ -152,7 +169,7 @@ public static class MapWriter
         int separated = CarriagewaySeparation.Apply(valid, styles);
         // An Anschluss-Prefabs kein Straßengelände auf den ersten 30 m: die Geländestreifen von
         // Rampe und Hauptfahrbahn kreuzen sich dort im spitzen Winkel und falten sich ins Prefab
-        foreach (var pl in interchangePlans)
+        foreach (var pl in TerrainFill.WideRoadTerrain ? [] : interchangePlans)
         {
             void Clear(RoadEntry r, bool atStart, bool left)
             {
@@ -182,6 +199,7 @@ public static class MapWriter
         string Stat(string n) { var all = styles.Values.SelectMany(x => x).ToList(); return $"{n}: L {all.Average(x => x.TerrainLeft):0.0} R {all.Average(x => x.TerrainRight):0.0} L0 {all.Count(x => x.TerrainLeft <= 0)} R0 {all.Count(x => x.TerrainRight <= 0)}"; }
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("vor"));
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        if (TerrainClearance.Share) terrainClamped += TerrainClearance.ClampCurves(valid, styles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("enforce"));
@@ -218,6 +236,7 @@ public static class MapWriter
                 else if (style == previous)
                 {
                     road = road.Append(points[i + 1]);
+                    ApplyFlags(road, style);
                 }
                 else
                 {
@@ -270,29 +289,6 @@ public static class MapWriter
                 int sloped = MedianSlopes.Apply(valid, styles, firstItem, lastItem);
                 warnings.Insert(0, $"Info: Mittelstreifen-Böschungen: {sloped} Geländeseiten zur tieferen Nachbarfahrbahn geneigt");
             }
-            if (TerrainFill.WideRoadTerrain)
-            {
-                int shaped = 0, bad = 0;
-                foreach (var entry in valid)
-                {
-                    if (!firstItem.TryGetValue(entry, out var it)) continue;
-                    var hw = styles[entry][0].Width / 2;
-                    var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
-                    TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'B';
-                    TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
-                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
-                    {
-                        rd.Recalculate();
-                        float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
-                        var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
-                        if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg, pa, pb, rd.Left.Terrain.Size, -1, e) < 0) bad++;
-                        if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg, pa, pb, rd.Right.Terrain.Size, +1, e) < 0) bad++;
-                        shaped++;
-                        if (rd == lastItem[entry]) break;
-                    }
-                }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}");
-            }
         }
 
         int prefabCount = 0;
@@ -343,6 +339,7 @@ public static class MapWriter
                         if (Junctions.StartsAt(a.Road, at)) pf.Attach(ni, firstItem[a.Road].Node);
                         else pf.Attach(ni, lastItem[a.Road].ForwardNode);
                     }
+                    Junctions.FixNodeRotations(jp, pf);
                 }
                 catch { map.Delete(pf); throw; }
                 RegisterSector(map, pf.Nodes[0].Position);
@@ -362,9 +359,52 @@ public static class MapWriter
         // Füllgelände zuletzt: dann sind alle Prefabs gesetzt und ihre Fahrspuren bekannt
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg2 && Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null)
         {
+            if (TerrainFill.WideRoadTerrain)
+            {
+                int shaped = 0, bad = 0, folded = 0;
+                foreach (var entry in valid)
+                {
+                    if (!firstItem.TryGetValue(entry, out var it)) continue;
+                    var hw = styles[entry][0].Width / 2;
+                    var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
+                    TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'D';
+                    TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
+                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
+                    {
+                        rd.Recalculate();
+                        float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
+                        var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
+                        Vector2 Tan(Quaternion q)
+                        {
+                            var v = Vector3.Transform(-Vector3.UnitZ, q); var t = new Vector2(v.X, v.Z);
+                            var ch = new Vector2(pb.X - pa.X, pb.Z - pa.Z);
+                            if (t.LengthSquared() < 1e-6f) t = ch;
+                            t = Vector2.Normalize(t);
+                            return Vector2.Dot(t, ch) < 0 ? -t : t;
+                        }
+                        Vector2? ta = null, tb = null;
+                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
+                        for (int tries = 0; tries < 4; tries++)
+                        {
+                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb) < 0) bad++;
+                            // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
+                            float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, e, ta, tb);
+                            float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, e, ta, tb);
+                            if (nl >= rd.Left.Terrain.Size && nr >= rd.Right.Terrain.Size) break;
+                            rd.Left.Terrain.Size = nl; rd.Right.Terrain.Size = nr; folded++;
+                            rd.Recalculate();
+                        }
+                        shaped++;
+                        if (rd == lastItem[entry]) break;
+                    }
+                }
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}");
+            }
             var lanes = PrefabFootprint.All(map);
+            RoadCap.PrefabLanes = PrefabFootprint.All3(map);
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
-            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted})");
+            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered} Punkte");
         }
         if (Environment.GetEnvironmentVariable("OSM2ETS_ONLYBOX") is { } ob)
         {
@@ -440,9 +480,19 @@ public static class MapWriter
         style.Left?.ApplyTo(road.Left);
         style.Right?.ApplyTo(road.Right);
         road.Boundary = style.Boundary;
+        ApplyFlags(road, style);
         // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
+    }
+
+    /// <summary>Navi-/Karten-Schalter aus der Zuordnung (nur gesetzte Werte).</summary>
+    private static void ApplyFlags(Road road, ResolvedStyle style)
+    {
+        if (style.ShowInUiMap is bool show) road.ShowInUiMap = show;
+        if (style.GpsAvoid is bool avoid) road.GpsAvoid = avoid;
+        if (style.Secret is bool secret) road.Secret = secret;
+        if (style.AiVehicles is bool ai) road.AiVehicles = ai;
     }
 
     /// <summary>Mindestlänge eines Straßenstücks je Auflösung (TruckLib Road.MinLength).</summary>

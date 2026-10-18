@@ -43,6 +43,11 @@ public static class Junctions
     public const float MaxBend = 75f;
 
     /// <summary>Länge des Bogens je nach Abweichung (m); 0 = gerader Einlauf genügt.</summary>
+    /// <summary>Größte Abweichung eines Arms von der Prefab-Knotenrichtung (Grad); sonst ohne Prefab.
+    /// OSM2ETS_JUNCTION_MAXDEG überschreibt.</summary>
+    public static float MaxArmDeg = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JUNCTION_MAXDEG"),
+        System.Globalization.CultureInfo.InvariantCulture, out var md) ? md : 45f;
+
     public static float BendLength(float deg) => deg < 20 ? 0 : MathF.Min(25 + 1.2f * deg, 110);
 
     /// <summary>Gerader Einlauf in den Prefab-Knoten (m); kürzer als an Anschlussstellen.</summary>
@@ -116,6 +121,7 @@ public static class Junctions
             if (list.Count is not (3 or 4)) continue;
             var runs = list.Select(e => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1]).ToList();
             if (runs.Any(x => x.Highway is "motorway" or "trunk" && x.Oneway)) continue; // Autobahnknoten
+            if (runs.Any(IsMinorWay)) continue;   // Feld-/Fußwege usw.: kein Kreuzungs-Prefab
             if (list.Any(e => e.R.Closed)) continue;
             int oneway = runs.Count(x => x.Oneway);
             if (list.Count == 3 && oneway == 2)
@@ -184,6 +190,11 @@ public static class Junctions
         }
         return plans;
     }
+
+    /// <summary>Wege ohne Lkw-Verkehr (nur L5): track, Fuß-/Rad-/Reitwege, Parkplatzgassen …</summary>
+    public static bool IsMinorWay(RunEntry r) =>
+        r.Highway is "track" or "path" or "footway" or "cycleway" or "bridleway" or "pedestrian" or "steps"
+        || (r.Highway == "service" && r.Service is "parking_aisle" or "driveway" or "drive-through" or "emergency_access");
 
     private static Vector2 Away(RoadEntry r, bool atStart)
     {
@@ -303,6 +314,18 @@ public static class Junctions
                 if (i != p.SnapArm)
                     p.Bend[i] = BendLength(MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI);
 
+        // Passt ein Arm im Winkel gar nicht zum Prefab (z. B. spitz einmündende Rampe an einem
+        // T-Prefab), müsste die Straße auf bis zu 110 m in einem Bogen zum Prefab-Knoten umgelegt
+        // werden – bei kurzen Straßen fast ganz, weit neben ihrer OSM-Lage (Rampe an der B 85: 45 m).
+        // Dann lieber ohne Prefab.
+        for (int i = 0; i < p.Arms.Length; i++)
+        {
+            if (i == p.SnapArm) continue;
+            float e = MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI;
+            if (e > MaxArmDeg)
+            { reason = $"{p.Arms[i].Road.Id} weicht {e:0}° von der Prefab-Richtung ab (höchstens {MaxArmDeg:0}°)"; return false; }
+        }
+
         // Drehung als Quaternion: lokalen Ausgang von Knoten 0 auf die Zielrichtung drehen
         var v0 = Out(p.NodeOf[0]);
         var target = new Vector2(MathF.Cos(Ang(v0) + bestRot), MathF.Sin(Ang(v0) + bestRot));
@@ -384,6 +407,35 @@ public static class Junctions
         yield return [1, 0];
     }
 
+    public static int RotFixed;
+
+    /// <summary>
+    /// Nach dem Anhängen der Straßen die Knotendrehungen erneut setzen: entlang der Straße
+    /// aus dem Prefab heraus (Straßenanfang) bzw. hinein (Straßenende). Attach/ChangeOrigin
+    /// hinterließen sonst teils quer oder rückwärts stehende Knoten → gefaltete Straßenstücke.
+    /// </summary>
+    public static void FixNodeRotations(Plan p, Prefab pf)
+    {
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NO_ROTFIX") is not null) return;
+        for (int i = 0; i < p.Arms.Length; i++)
+        {
+            if (Dropped.Contains(p.Arms[i].Road)) continue;
+            var want = p.NodePos[p.NodeOf[i]];
+            var node = pf.Nodes.MinBy(nd => Vector3.DistanceSquared(nd.Position, want))!;
+            var inward = p.Inward[p.NodeOf[i]];
+            // Richtung aus der Lage des Nachbarpunkts der Straße prüfen (robust gegen Vorzeichen)
+            var road = p.Arms[i].Road;
+            bool start = StartsAt(road, node.Position);
+            var nb = MapWriter.ToVector(start ? road.Points[1] : road.Points[^2]);
+            var away = nb - node.Position; away.Y = 0;
+            var dir = start ? -inward : inward;
+            if (away.LengthSquared() > 1e-4f && Vector3.Dot(Vector3.Normalize(away), start ? dir : -dir) < 0) dir = -dir;
+            var rot = MathEx.GetNodeRotation(dir);
+            if (Vector3.Dot(Vector3.Transform(-Vector3.UnitZ, node.Rotation), Vector3.Transform(-Vector3.UnitZ, rot)) < 0.999f) RotFixed++;
+            node.Rotation = rot;
+        }
+    }
+
     public static Prefab Build(Map map, Plan p, Interchanges.PpdSource src)
     {
         var ppd = src.Get(p.Def.Prefab.PpdPath);
@@ -398,6 +450,20 @@ public static class Junctions
             pf.Nodes[k].Rotation = MathEx.GetNodeRotation(StartsAt(p.Arms[i].Road, pf.Nodes[k].Position) ? -inward : inward);
         }
         if (p.Origin != 0) pf.ChangeOrigin(p.Origin);
+        // ChangeOrigin ordnet die Knoten um und kann ihre Drehungen dabei neu setzen. Danach
+        // passten Knotenrichtung und Straße an 36 Stellen nicht mehr (86–179° daneben): Die
+        // Straße lief aus dem Prefab-Knoten quer oder rückwärts heraus und faltete sich zu
+        // einem schmalen Keil. Deshalb die Drehung je Knoten (nach Lage gesucht) neu setzen.
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NO_ROTFIX") is null)
+            for (int i = 0; i < p.Arms.Length; i++)
+            {
+                var want = p.NodePos[p.NodeOf[i]];
+                var node = pf.Nodes.MinBy(nd => Vector3.DistanceSquared(nd.Position, want))!;
+                var inward = p.Inward[p.NodeOf[i]];
+                var rot = MathEx.GetNodeRotation(StartsAt(p.Arms[i].Road, node.Position) ? -inward : inward);
+                if (Vector3.Dot(Vector3.Transform(-Vector3.UnitZ, node.Rotation), Vector3.Transform(-Vector3.UnitZ, rot)) < 0.999f) RotFixed++;
+                node.Rotation = rot;
+            }
         p.Placed = pf;
         PrefabFootprint.Register(pf, ppd);
         return pf;

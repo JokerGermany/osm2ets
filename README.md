@@ -3,9 +3,9 @@
 [Deutsch](README.de.md) · **English**
 
 Generates ETS2 map files from OpenStreetMap data at a selectable scale (default 1:1)
-and in several detail levels. The coarsest level contains only the trunk road network –
-in Germany motorways (Autobahnen) and federal roads (Bundesstraßen) – plus ramps and the
-connecting roads up to the next junction.
+and in five detail levels. The coarsest level contains only motorways and expressways
+with their ramps, plus short connecting pieces, emergency escape lanes and the access
+roads to nearby industrial and commercial areas.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ v1–v46 (see commits).
 
 | Area | Status |
 |---|---|
-| Road network L1–L4 from OSM, scale 1:N, fixed origin | implemented, tested |
+| Road network L1–L5 from OSM, scale 1:N, fixed origin | implemented, tested |
 | Real road templates (ger13/ger16 motorway, ger2 ramp, ger1/ger5/ger9/ger29) | implemented, drivable in game |
 | Through roads connected at nodes, no invisible walls | implemented, checked in game |
 | Motorway exit/entry with prefabs (2 lanes, ramp on the right) | implemented, checked in editor |
@@ -48,7 +48,8 @@ strip. The fill mask uses the real lanes of placed prefabs (nav curves from the 
 Findings from editor tests that shaped this (useful if you work on it):
 - Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),
   not deltas. For road terrain they are measured from the **road centre** along the road.
-- Widening road terrain to 150 m does not work: the game bends it with the curve and it folds.
+- `QuadData.Cols`/`Rows` count **quads**; vertices run 0..Cols and 0..Rows (checked against the original SCS map). Leaving out the last column caused walls at every piece end.
+- Road terrain offsets are in **world axes** relative to the start node, positions along the game's Hermite curve (as in the SCS map); this allows wide road terrain (60 m) that follows curves.
 - After `Prefab.Attach`, node rotations must be reset without roll – otherwise the first
   road piece is twisted and its edge folds down (this caused the "broken" exits).
 
@@ -151,20 +152,58 @@ Start point for Run Map: middle of the longest motorway carriageway, not on a br
 
 ## Detail levels (profile `de`)
 
-| Level | Core network | Connecting roads (up to the next junction) |
+Each level contains the previous one. What counts is the OSM class (`highway=*`), not the
+number in the `ref` tag.
+
+| Level | Core network (with ramps) |
+|---|---|
+| L1 | motorway, trunk (+ motorway_link, trunk_link) |
+| L2 | + primary (+ primary_link), mostly federal roads |
+| L3 | + secondary (+ secondary_link), mostly state roads |
+| L4 | + tertiary (+ tertiary_link), mostly district roads |
+| L5 | + all other ways: unclassified, residential, living_street, service (incl. parking aisles, driveways), road, track, path, footway, cycleway, bridleway, pedestrian |
+
+Ramps are only included if they touch the core network.
+
+In addition, in every level (`extras` and `industry` in the profile):
+
+1. **Industrial and commercial areas, companies** at most 300 m (along the road) from a
+   junction or exit of the network. A reached area is included as a whole, with all roads
+   inside it. No access starts on motorways or expressways themselves, only at ramp ends –
+   so a company next to the motorway without a nearby exit does not pull in kilometres of
+   roads. Targets: `landuse=industrial|commercial|retail|quarry|farmyard|port`,
+   `industrial=*`, `man_made=works`, `building=warehouse|industrial`, `craft=*`,
+   `office=company`. **Petrol stations, service areas and truck parking**
+   (`amenity=fuel`, `highway=services|rest_area`, `amenity=parking` with
+   `hgv=yes|designated`) are connected the same way, but also directly from the motorway
+   carriageway and through all entries and exits, so the loop stays drivable.
+2. **Short links within the level**: a path over other roads, at most 500 m long, that
+   connects two roads of the level – e.g. the piece of federal road between two motorway
+   ramps in L1. Loops attached to a motorway or expressway carriageway at both ends are
+   rest areas and always count, up to 1.5 km. Other loops on the same road (e.g. village
+   streets) only count if the path through the network is at least 1.5 times as long.
+3. **Emergency escape lanes** (`highway=escape`) directly next to the route.
+4. **Road ends continued**: where the selection ends but the road continues in OSM, the
+   adjoining roads are included for 50 m (game metres), going straight on at further
+   junctions. The road then ends open (`extras.end_extension_m`).
+
+L5 adds all ways. Ways without truck traffic get their own flags in the game
+(`mapping.jsonc`):
+
+| Way | ETS2 road type | Flags |
 |---|---|---|
-| L1 | motorway, trunk, federal roads (B number in `ref`), ramps | primary … living_street |
-| L2 | + all primary, secondary, tertiary (state and district roads) | unclassified, residential, living_street |
-| L3 | + unclassified, residential, living_street | service |
-| L4 | + service (e.g. rest areas) | – |
+| `track` (farm/forest track) | `ger37` "ger r1 minim dirt" | secret road, GPS avoids, no AI traffic |
+| `path`, `footway`, `cycleway`, `bridleway`, `pedestrian` | `ger4` "ger road 1 minim" | not on map/GPS, GPS avoids, no AI traffic |
+| `service` = `parking_aisle`, `driveway`, `drive-through`, `emergency_access` | `ger4` | as footways |
+| anything with `access=private`/`no` (no motor vehicle exception), e.g. company premises | usual type | additionally not on map/GPS, GPS avoids, no AI traffic (`restricted`) |
 
-"Junction" means a node where at least three road pieces of this level's classes meet
-(core, ramps, connecting classes). Nothing else counts – no field, foot or cycle paths, no
-`access=private`/`no`, no `service` ways in L1/L2, and no parking aisles or driveways in
-L3/L4. The depth (`connectors.depth`) is configurable in the profile.
+The writer places no junction prefabs on tracks, foot and cycle paths or parking aisles.
+The model width of `ger4` and `ger37` (4.5 m) is estimated, not measured. Never included:
+steps, construction, proposed roads, raceways, busways; in L1–L4 also parking aisles,
+driveways and ways without motor vehicle access.
 
-Federal roads are recognised by their B number, because `primary` in OSM only usually
-means Bundesstraße.
+The former mechanism "connecting roads up to the next junction" (`connectors.depth`) can
+still be configured in a profile, but is off in profile `de`.
 
 ## Scale and coordinates
 

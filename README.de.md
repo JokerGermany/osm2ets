@@ -3,9 +3,9 @@
 **Deutsch** · [English](README.md)
 
 Erzeugt aus OpenStreetMap-Daten ETS2-Kartendateien in wählbarem Maßstab (Standard 1:1)
-und in Detailstufen. Die gröbste Stufe enthält nur das Fernstraßennetz – in Deutschland
-Autobahnen und Bundesstraßen – plus Rampen und die anschließenden Straßen bis zur
-nächsten Kreuzung.
+und in fünf Detailstufen. Die gröbste Stufe enthält nur Autobahnen und Kraftfahrstraßen
+mit ihren Rampen, dazu kurze Verbindungsstücke, Notfallbuchten und die Zufahrten zu
+nahen Industrie- und Gewerbegebieten.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ v1–v46 (siehe Commits).
 
 | Bereich | Stand |
 |---|---|
-| Straßennetz L1–L4 aus OSM, Maßstab 1:N, fester Ursprung | umgesetzt, getestet |
+| Straßennetz L1–L5 aus OSM, Maßstab 1:N, fester Ursprung | umgesetzt, getestet |
 | Echte Straßenvorlagen (ger13/ger16 Autobahn, ger2 Rampe, ger1/ger5/ger9/ger29) | umgesetzt, im Spiel befahrbar |
 | Durchgehende Straßen an Knoten verbunden, keine unsichtbaren Wände | umgesetzt, im Spiel geprüft |
 | Autobahn-Aus-/Einfahrt mit Prefabs (2 Spuren, Rampe rechts) | umgesetzt, im Editor geprüft |
@@ -48,7 +48,8 @@ Freifläche berücksichtigt die echten Fahrspuren gesetzter Prefabs (Navigations
 Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Höhenpunkte (vertex offsets) sind **absolute** Lagen (Zeilenabstände 1,1,1,2,6,6,10,10,10,20,40,50… m),
   keine Verschiebungen. Beim Straßengelände zählen sie ab **Straßenmitte** entlang der Straße.
-- Straßengelände auf 150 m zu verbreitern funktioniert nicht: Das Spiel biegt es mit der Kurve, es faltet sich.
+- `QuadData.Cols`/`Rows` zählen **Quads**; die Eckpunkte laufen 0..Cols und 0..Rows (mit der SCS-Originalkarte abgeglichen). Fehlte die letzte Spalte, entstand an jedem Stückende eine Wand.
+- Höhenpunkte des Straßengeländes stehen in **Weltachsen** ab dem Anfangsknoten, Lage entlang der Hermite-Kurve des Spiels (wie in der SCS-Karte); damit funktioniert breites Straßengelände (60 m) auch in Kurven.
 - Nach `Prefab.Attach` müssen die Knotendrehungen ohne Rollen neu gesetzt werden – sonst ist
   das erste Straßenstück verdreht und sein Rand klappt nach unten (Ursache der „kaputten" Ausfahrten).
 
@@ -144,21 +145,61 @@ Startpunkt für Run Map: Mitte der längsten Autobahnfahrbahn, nicht auf einer B
 
 ## Detailstufen (Profil `de`)
 
-| Stufe | Kernnetz | Anschlussstraßen (bis zur nächsten Kreuzung) |
+Jede Stufe enthält die vorige. Maßgeblich ist die OSM-Klasse (`highway=*`), nicht die
+Nummer im `ref`-Tag.
+
+| Stufe | Kernnetz (mit Rampen) |
+|---|---|
+| L1 | motorway, trunk (+ motorway_link, trunk_link) |
+| L2 | + primary (+ primary_link), meist Bundesstraßen |
+| L3 | + secondary (+ secondary_link), meist Landes-/Staatsstraßen |
+| L4 | + tertiary (+ tertiary_link), meist Kreisstraßen |
+| L5 | + alle übrigen Wege: unclassified, residential, living_street, service (auch Parkplatzgassen, Grundstückszufahrten), road, track, path, footway, cycleway, bridleway, pedestrian |
+
+Rampen gehören nur dazu, wenn sie das Kernnetz berühren.
+
+Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
+
+1. **Industrie, Gewerbe, Firmen** höchstens 300 m (Weg entlang der Straße) von einer
+   Kreuzung oder Abfahrt des Netzes. Ein erreichtes Gebiet wird ganz aufgenommen, mit
+   allen Straßen darin. Auf Autobahnen und Kraftfahrstraßen selbst beginnt keine
+   Zufahrt, nur an Rampenenden. Eine Firma neben der Autobahn ohne nahe Ausfahrt zieht
+   so keine kilometerlangen Straßen nach sich. Ziele: `landuse=industrial|commercial|
+   retail|quarry|farmyard|port`, `industrial=*`, `man_made=works`,
+   `building=warehouse|industrial`, `craft=*`, `office=company`.
+   **Tankstellen, Rastanlagen und Lkw-Parkplätze** (`amenity=fuel`,
+   `highway=services|rest_area`, `amenity=parking` mit `hgv=yes|designated`) werden
+   ebenso angebunden, aber auch direkt von der Autobahnfahrbahn aus und über alle Zu- und
+   Abfahrten, damit die Schleife befahrbar bleibt.
+2. **Kurze Verbindungen gleicher Stufe**: ein Weg über andere Straßen, höchstens 500 m
+   lang, der zwei Straßen der Stufe verbindet, z. B. das Stück Bundesstraße zwischen zwei
+   Autobahnrampen in L1. Schleifen, die an beiden Enden an einer Autobahn- oder
+   Kraftfahrstraßenfahrbahn hängen, sind Rastplätze und zählen immer, bis 1,5 km. Andere
+   Schleifen an derselben Straße (z. B. Dorfstraßen) zählen nur, wenn der Weg über das
+   Netz mindestens 1,5-mal so lang ist.
+3. **Notfallbuchten** (`highway=escape`), die direkt an der Strecke liegen.
+4. **Straßenenden weitergeführt**: Wo die Auswahl endet, die Straße in OSM aber
+   weitergeht, werden die anschließenden Straßen 50 m (Spielmeter) mitgenommen, an
+   weiteren Abzweigen nur geradeaus. Danach endet die Straße offen
+   (`extras.end_extension_m`).
+
+In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Schalter
+(`mapping.jsonc`):
+
+| Weg | ETS2-Straßentyp | Schalter |
 |---|---|---|
-| L1 | motorway, trunk, Bundesstraßen (B-Nummer im `ref`), Rampen | primary … living_street |
-| L2 | + alle primary, secondary, tertiary (Landes-/Staats-, Kreisstraßen) | unclassified, residential, living_street |
-| L3 | + unclassified, residential, living_street | service |
-| L4 | + service (z. B. Rastanlagen) | – |
+| `track` (Feld-/Waldweg) | `ger37` „ger r1 minim dirt“ | Geheimstraße, Navi meidet, kein KI-Verkehr |
+| `path`, `footway`, `cycleway`, `bridleway`, `pedestrian` | `ger4` „ger road 1 minim“ | nicht auf Karte/Navi, Navi meidet, kein KI-Verkehr |
+| `service` = `parking_aisle`, `driveway`, `drive-through`, `emergency_access` | `ger4` | wie Fußwege |
+| alles mit `access=private`/`no` (ohne Kfz-Freigabe), z. B. Firmengelände | Typ wie sonst | zusätzlich nicht auf Karte/Navi, Navi meidet, kein KI-Verkehr (`restricted`) |
 
-„Kreuzung" heißt: ein Knoten, an dem sich mindestens drei Straßenstücke der Klassen
-dieser Stufe treffen (Kern, Rampen, Anschlussklassen). Alles andere zählt nicht – also
-weder Feld-, Fuß- und Radwege noch `access=private`/`no`, in L1/L2 auch keine
-`service`-Wege, in L3/L4 keine Parkplatzgassen und Grundstückszufahrten.
-Die Tiefe (`connectors.depth`) ist im Profil einstellbar.
+An Feld-, Fuß- und Radwegen sowie Parkplatzgassen setzt der Writer keine Kreuzungs-Prefabs.
+Die Modellbreite von `ger4` und `ger37` (4,5 m) ist geschätzt, nicht vermessen. Nie dabei:
+Treppen, Baustellen, geplante Straßen, Rennstrecken, Busspuren; in L1–L4 außerdem
+Parkplatzgassen, Grundstückszufahrten und Wege ohne Kfz-Zugang.
 
-Bundesstraßen werden an der B-Nummer erkannt, weil `primary` in OSM nur meistens
-Bundesstraße bedeutet.
+Der frühere Mechanismus „Anschlussstraßen bis zur nächsten Kreuzung“
+(`connectors.depth`) ist weiter im Profil einstellbar, im Profil `de` aber aus.
 
 ## Maßstab und Koordinaten
 

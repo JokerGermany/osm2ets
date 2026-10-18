@@ -56,10 +56,13 @@ def run_key(part, role: str) -> tuple:
         parse_layer(tags),
         tags.get("ref"),
         tags.get("maxspeed"),
+        tags.get("service"),
+        tags.get("access"),
     )
 
 
-RUN_FIELDS = ("highway", "role", "oneway", "lanes", "bridge", "tunnel", "layer", "ref", "maxspeed")
+RUN_FIELDS = ("highway", "role", "oneway", "lanes", "bridge", "tunnel", "layer", "ref", "maxspeed", "service",
+              "access")
 
 
 # --------------------------------------------------------------------------- Stücke

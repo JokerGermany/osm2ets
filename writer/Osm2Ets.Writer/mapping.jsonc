@@ -6,29 +6,49 @@
 //   ger2  (ger hw exit one lane)          ger5  (ger road 1 one way)
 //   ger9  (ger road 2 narrow one way)     ger1  (ger road 1 tmpl)
 //   ger29 (ger road 2 no offset tmpl)
-// NICHT verwenden: ger4 = "ger road 1 minim" (Spuren "no_vehicles", Feldweg-artig).
+// ger4 = "ger road 1 minim" hat Spuren "no_vehicles" – nur für Wege ohne Lkw-/KI-Verkehr.
 // Fahrbahnvariante und Look der Vorlagen werden noch nicht gesetzt (Standardwerte
 // des Spiels) – das ist ungeprüft.
 //
 // Regeln werden von oben nach unten geprüft; die erste passende gewinnt.
 // match-Felder (alle optional): highway, role, oneway, bridge, tunnel,
-// lanes_min, lanes_max, ref (regulärer Ausdruck auf das ref-Tag).
-// Stil-Felder: road_type, terrain_left, terrain_right, resolution
+// lanes_min, lanes_max, ref (regulärer Ausdruck auf das ref-Tag), service,
+// access (private, no; "none" = frei).
+// Stil-Felder: road_type, terrain_left, terrain_right, resolution, show_in_ui_map,
+// gps_avoid, secret, ai_vehicles
 // (Normal | HighPoly | Superfine), left/right mit variant, look, traffic_rule,
 // left_edge, right_edge.
 {
-  // width = geschätzte Fahrbahnbreite (m, NICHT aus den Spieldaten gemessen) –
-  // nur für den Geländeabstand zu Nachbarstraßen. boundary=false: keine
+  // width = Modellbreite (m). Für ger13/ger16/ger2 aus den Vorlagenmodellen (.pmg, ETS2 1.61)
+  // gemessen, sonst geschätzt. offset = Verschiebung der ETS2-Linie nach rechts, damit die
+  // Fahrspuren mittig auf der OSM-Linie liegen; edge_left = linker Modellrand ab OSM-Linie.
+  // Annahme: Die Straßenlinie liegt bei x = 0 des Vorlagenmodells, +x = rechts.
+  // Gemessen (x des Modells): ger13 Spuren −4,45…4,65, gesamt −4,5…8,0;
+  // ger16 Spuren −8,94…4,66, gesamt −9,0…8,0; ger2 Spur −4,65…0,25, gesamt −5,5…2,5. boundary=false: keine
   // unsichtbare Randbegrenzung (Rampen ohne Prefab sind sonst nicht befahrbar).
   "default": { "road_type": "ger1", "width": 8, "boundary": false,
                "terrain_left": 20, "terrain_right": 20, "resolution": "HighPoly" },
   "rules": [
+    // Nur in L5: Wege, die kein Lkw befahren soll. Breite geschätzt (Modelle nicht vermessen).
+    //   ger37 = "ger r1 minim dirt" (Schotter-/Feldweg), ger4 = "ger road 1 minim"
+    //   (schmale Asphaltstraße); beide mit Spuren "no_vehicles" (kein KI-Verkehr).
+    { "name": "Feld-/Waldweg: Geheimstraße", "match": { "highway": ["track"] },
+      "road_type": "ger37", "width": 4.5, "terrain_left": 6, "terrain_right": 6,
+      "secret": true, "gps_avoid": true, "ai_vehicles": false },
+    { "name": "Fuß-/Rad-/Reitweg, Fußgängerzone: nicht im Navi",
+      "match": { "highway": ["path", "footway", "cycleway", "bridleway", "pedestrian"] },
+      "road_type": "ger4", "width": 4.5, "terrain_left": 6, "terrain_right": 6,
+      "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
+    { "name": "Parkplatzgasse, Grundstückszufahrt, Drive-in, Notzufahrt: nicht im Navi",
+      "match": { "highway": ["service"], "service": ["parking_aisle", "driveway", "drive-through", "emergency_access"] },
+      "road_type": "ger4", "width": 4.5, "terrain_left": 6, "terrain_right": 6,
+      "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
     { "name": "Autobahn 3+ Spuren", "match": { "highway": ["motorway", "trunk"], "oneway": true, "lanes_min": 3 },
-      "road_type": "ger16", "width": 14.5, "terrain_left": 4, "terrain_right": 30 },
+      "road_type": "ger16", "width": 17, "model_center": -0.5, "offset": 2.17, "edge_left": 6.83, "terrain_left": 4, "terrain_right": 30 },
     { "name": "Autobahn / Kraftfahrstraße, Richtungsfahrbahn", "match": { "highway": ["motorway", "trunk"], "oneway": true },
-      "road_type": "ger13", "width": 11, "terrain_left": 4, "terrain_right": 30 },
+      "road_type": "ger13", "width": 12.5, "model_center": 1.75, "offset": 0, "edge_left": 4.5, "terrain_left": 4, "terrain_right": 30 },
     { "name": "Autobahnrampe", "match": { "highway": ["motorway_link", "trunk_link"], "oneway": true },
-      "road_type": "ger2", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
+      "road_type": "ger2", "width": 8, "model_center": -1.5, "offset": 2.2, "edge_left": 3.3, "terrain_left": 10, "terrain_right": 10 },
     { "name": "sonstige Rampe, einspurig", "match": { "highway": ["primary_link", "secondary_link", "tertiary_link"], "oneway": true },
       "road_type": "ger5", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
     { "name": "Einbahn zweispurig", "match": { "oneway": true, "lanes_min": 2 }, "road_type": "ger9", "width": 9 },
@@ -37,6 +57,12 @@
     { "name": "Anschlussstraßen", "match": { "role": ["connector"] }, "road_type": "ger1",
       "terrain_left": 10, "terrain_right": 10 }
   ],
-  // Brücken/Tunnel: vorläufig wie normale Straßen mit Gelände (Damm).
+  // Brücken/Tunnel: kein Geländestreifen auf Fahrbahnhöhe – Gelände nur darunter
+  // (flächiges Gelände auf Bodenhöhe). Dämme entstehen nur an den Zufahrten.
+  "bridge": { "terrain_left": 0, "terrain_right": 0 },
+  "tunnel": { "terrain_left": 0, "terrain_right": 0 },
+  // Wege ohne Kfz-Zugang (access=private|no, nur in L5): Straßentyp wie sonst, aber nicht
+  // auf Karte/Navi, Navi meidet, kein KI-Verkehr (z. B. Firmengelände, Privatstraßen).
+  "restricted": { "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
   "map": { "normal_scale": null, "city_scale": null }
 }

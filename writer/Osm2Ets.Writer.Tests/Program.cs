@@ -18,6 +18,8 @@ var tests = new List<(string Name, Action Body)>
     ("Regression: Stück mit Mittelpunkt in knotenlosem Sektor bleibt erhalten", SectorWithoutNodeIsSaved),
     ("Auflösung Normal: Geländeraster wird neu berechnet", ResolutionRecalculatesTerrain),
     ("Knoten: geradeaus verbinden, Abzweig offen, Zweirichtung drehen", ConnectsThroughRoads),
+    ("L5: Feldweg Geheimstraße, Fußweg und Parkplatzgasse nicht im Navi", MinorWaysHiddenFromNavigation),
+    ("L5: Privatstraße behält ihren Typ, ist aber nicht im Navi", RestrictedWaysHidden),
 };
 
 int failed = 0;
@@ -89,7 +91,7 @@ static void MappingResolve()
     var mw = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true));
     Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 30, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
     var bridge = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true, bridge: true));
-    Check(bridge.TerrainLeft == mw.TerrainLeft, "Brücke vorläufig mit Gelände wie die Straße");
+    Check(bridge.TerrainLeft == 0 && bridge.TerrainRight == 0 && bridge.RoadType == mw.RoadType, "Brücke ohne Geländestreifen, sonst wie die Straße");
     Check(bridge.RoadType == mw.RoadType, "Brücke behält Straßentyp");
     var link = cfg.Resolve(MakeRun(0, 1, "motorway_link", role: "link", oneway: true));
     Check(link.TerrainLeft == 10, "Rampe");
@@ -151,8 +153,8 @@ static void BuildProducesExpectedMap()
     Check(res.RoadsWritten == 2 && res.RoadsSkipped == 1, $"geschrieben {res.RoadsWritten}, übersprungen {res.RoadsSkipped}");
     Check(res.Items == 2 + 5, $"Straßenstücke {res.Items}");
     Check(map.MapItems.Values.OfType<Road>().Count() == 7, "Anzahl Road-Items");
-    // Brücken haben in der mitgelieferten Zuordnung keinen eigenen Stil mehr
-    Check(res.StyleChanges == 0, $"Typwechsel {res.StyleChanges}");
+    // Brücke: gleicher Straßentyp, aber ohne Geländestreifen → Wechsel hinein und heraus
+    Check(res.StyleChanges == 2, $"Typwechsel {res.StyleChanges}");
     Check(res.StartRoad == "c0p0", "Startpunkt auf der Autobahn");
     // Abschnitt 4 (nicht Brücke, Nachbarn nicht Brücke), Mitte zwischen z=1600 und z=1500
     Check(res.StartPosition.Y == 0 && Math.Abs(res.StartPosition.Z - 1550) < 0.01, $"Startpunkt: {res.StartPosition}");
@@ -255,7 +257,8 @@ static void ConnectsThroughRoads()
         Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 }, Roads = [a, b, c, d] };
     var (map, res) = MapWriter.Build(input, MappingConfig.Load(ShippedMapping()));
     Check(res.Connections == 2 && res.Reversed == 1, $"Verbindungen {res.Connections}, gedreht {res.Reversed}");
-    Check(res.Warnings.Count == 0, string.Join("; ", res.Warnings));
+    var real = res.Warnings.Where(w => !w.StartsWith("Info:")).ToList();
+    Check(real.Count == 0, string.Join("; ", real));
     var roads = map.MapItems.Values.OfType<Road>().ToList();
     // a→b durchgehend; c beginnt eigenständig; b→d verbunden
     var atNode7 = roads.Where(r => r.ForwardNode.Position == Vector3.Zero || r.Node.Position == Vector3.Zero).ToList();
@@ -319,3 +322,41 @@ static void LookListerReadsArchive()
         Directory.Delete(dir, true);
     }
 }
+
+static void MinorWaysHiddenFromNavigation()
+{
+    var track = MakeRoad("track", new[] { new[] { 0.0, 0, 0 }, new[] { 0.0, 0, -100 } }, MakeRun(0, 1, "track"));
+    var foot = MakeRoad("foot", new[] { new[] { 100.0, 0, 0 }, new[] { 100.0, 0, -100 } }, MakeRun(0, 1, "footway"));
+    var aisleRun = MakeRun(0, 1, "service"); aisleRun.Service = "parking_aisle";
+    var aisle = MakeRoad("aisle", new[] { new[] { 200.0, 0, 0 }, new[] { 200.0, 0, -100 } }, aisleRun);
+    var street = MakeRoad("street", new[] { new[] { 300.0, 0, 0 }, new[] { 300.0, 0, -100 } }, MakeRun(0, 1, "residential"));
+    var input = new IntermediateFile { Format = IntermediateFile.ExpectedFormat, Version = 1,
+        Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 }, Roads = [track, foot, aisle, street] };
+    var (map, _) = MapWriter.Build(input, MappingConfig.Load(ShippedMapping()));
+    Road At(double x) => map.MapItems.Values.OfType<Road>().Single(r => Math.Abs(r.Node.Position.X - x) < 0.5);
+    var t = At(0); var f = At(100); var a = At(200); var s = At(300);
+    Check(t.Secret && t.GpsAvoid && !t.AiVehicles, $"Feldweg: secret {t.Secret}, gps_avoid {t.GpsAvoid}, ai {t.AiVehicles}");
+    Check(!f.ShowInUiMap && f.GpsAvoid && !f.AiVehicles, $"Fußweg: ui_map {f.ShowInUiMap}, gps_avoid {f.GpsAvoid}");
+    Check(!a.ShowInUiMap && a.GpsAvoid, $"Parkplatzgasse: ui_map {a.ShowInUiMap}, gps_avoid {a.GpsAvoid}");
+    Check(s.ShowInUiMap && !s.GpsAvoid && !s.Secret, $"Wohnstraße unverändert: ui_map {s.ShowInUiMap}, gps_avoid {s.GpsAvoid}, secret {s.Secret}");
+    Check(t.RoadType == "ger37" && f.RoadType == "ger4" && a.RoadType == "ger4", $"Typen {t.RoadType}/{f.RoadType}/{a.RoadType}");
+}
+
+static void RestrictedWaysHidden()
+{
+    var run = MakeRun(0, 1, "residential"); run.Access = "private";
+    var priv = MakeRoad("priv", new[] { new[] { 0.0, 0, 0 }, new[] { 0.0, 0, -100 } }, run);
+    var trackRun = MakeRun(0, 1, "track"); trackRun.Access = "no";
+    var track = MakeRoad("track", new[] { new[] { 100.0, 0, 0 }, new[] { 100.0, 0, -100 } }, trackRun);
+    var input = new IntermediateFile { Format = IntermediateFile.ExpectedFormat, Version = 1,
+        Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 }, Roads = [priv, track] };
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var (map, _) = MapWriter.Build(input, cfg);
+    Road At(double x) => map.MapItems.Values.OfType<Road>().Single(r => Math.Abs(r.Node.Position.X - x) < 0.5);
+    var p = At(0); var t = At(100);
+    var normal = cfg.Resolve(MakeRun(0, 1, "residential"));
+    Check(p.RoadType == normal.RoadType, $"Typ {p.RoadType}, erwartet {normal.RoadType}");
+    Check(!p.ShowInUiMap && p.GpsAvoid && !p.AiVehicles, $"Privatstraße: ui_map {p.ShowInUiMap}, gps_avoid {p.GpsAvoid}, ai {p.AiVehicles}");
+    Check(t.Secret && !t.ShowInUiMap && t.GpsAvoid, $"gesperrter Feldweg: secret {t.Secret}, ui_map {t.ShowInUiMap}");
+}
+

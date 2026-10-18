@@ -45,7 +45,8 @@ def check_invariants(model: dict, profile) -> None:
 
 
 def test_synthetic_end_to_end(synthetic_osm, tmp_path, profile, capsys):
-    rc = main(["build", "-i", str(synthetic_osm), "-o", str(tmp_path / "out"), "--name", "t"])
+    # L3: Autobahn, Bundesstraße (primary) und Landesstraße (secondary) mit Kreuzung 32
+    rc = main(["build", "-i", str(synthetic_osm), "-o", str(tmp_path / "out"), "--name", "t", "-l", "L3"])
     assert rc == 0
     out = capsys.readouterr().out
     assert "Kreuzungen" in out
@@ -82,7 +83,7 @@ def test_crossing_without_node_gets_separated(tmp_path, profile):
     ways = [(1, [1, 2], {"highway": "primary", "ref": "B 1"}),
             (2, [3, 4], {"highway": "primary", "ref": "B 2"})]
     path = write_osm(tmp_path / "x.osm", nodes, ways)
-    model = build(str(path), profile, "L1")
+    model = build(str(path), profile, "L2")
     c = crossing_clearances(model["roads"])
     assert len(c) == 1 and c[0]["clearance_m"] >= profile.bridge_clearance_m - 0.3
     assert model["stats"]["elevation"]["crossing_raised_points"] >= 1
@@ -153,7 +154,7 @@ def test_dem(synthetic_osm, tmp_path, profile):
                        crs=profile.crs, transform=from_origin(x0, y1, 10.0, 10.0)) as ds:
         ds.write(data, 1)
 
-    model = build(str(synthetic_osm), profile, "L1", dem_path=str(dem_path))
+    model = build(str(synthetic_osm), profile, "L3", dem_path=str(dem_path))
     check_invariants(model, profile)
     # Höhe am Knoten 32 = Gelände dort (keine Brücke in der Nähe des Knotens)
     j32 = next(j for j in model["junctions"] if j["osm_node"] == 32)

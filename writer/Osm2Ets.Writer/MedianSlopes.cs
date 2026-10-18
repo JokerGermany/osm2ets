@@ -74,16 +74,16 @@ public static class MedianSlopes
             var q = side.QuadData;
             int rows = q.Rows, cols = q.Cols;
             var rowsD = TerrainFill.RowDistances(side.Size);
-            if (rows < 1 || cols < 2 || (rowsD.Count != rows + 1 && rowsD.Count != rows)) return false;
+            if (rows < 1 || cols < 1 || (rowsD.Count != rows + 1 && rowsD.Count != rows)) return false;
             var f = new Vector2(pb.X - pa.X, pb.Z - pa.Z); float len = f.Length(); if (len < 1e-3f) return false;
             f /= len; var rn = new Vector2(-f.Y, f.X);
             float size = side.Size;
             var offs = new List<VertexData>();
             bool any = false;
-            for (int i = 0; i < cols; i++)
+            for (int i = 0; i <= cols; i++)
             {
-                float x = len * i / (cols - 1);
-                float own = pa.Y + (pb.Y - pa.Y) * i / (cols - 1);
+                float x = len * i / cols;
+                float own = pa.Y + (pb.Y - pa.Y) * i / cols;
                 var edge = new Vector2(pa.X, pa.Z) + f * x + rn * (zSign * (hw + size));
                 float nh = Neighbour(self, edge, f, size + 3);
                 if (float.IsNaN(nh) || own - nh < MinDrop) nh = own; else any = true;

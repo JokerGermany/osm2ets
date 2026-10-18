@@ -25,7 +25,7 @@ def test_tunnel_under_road_is_lowered(tmp_path, profile):
             (2, [10, 11], {"highway": "primary", "ref": "B 2"}),
             (3, [11, 12], {"highway": "primary", "ref": "B 2", "tunnel": "yes", "layer": "-1"}),
             (4, [12, 13], {"highway": "primary", "ref": "B 2"})]
-    model = build(str(write_osm(tmp_path / "t.osm", nodes, ways)), profile, "L1")
+    model = build(str(write_osm(tmp_path / "t.osm", nodes, ways)), profile, "L2")
     c = crossing_clearances(model["roads"])
     assert len(c) == 1 and c[0]["clearance_m"] >= profile.bridge_clearance_m - 0.3
     upper = next(r for r in model["roads"] if r["runs"][0]["ref"] == "B 1")
@@ -38,7 +38,7 @@ def test_short_bridge_is_not_lifted(tmp_path, profile):
     ways = [(1, [1, 2], {"highway": "primary", "ref": "B 1"}),
             (2, [2, 3], {"highway": "primary", "ref": "B 1", "bridge": "yes", "layer": "1"}),
             (3, [3, 4], {"highway": "primary", "ref": "B 1"})]
-    model = build(str(write_osm(tmp_path / "b.osm", nodes, ways)), profile, "L1")
+    model = build(str(write_osm(tmp_path / "b.osm", nodes, ways)), profile, "L2")
     assert max(p[1] for r in model["roads"] for p in r["points"]) < 0.01
     assert model["stats"]["elevation"]["bridges_ignored_short"] == 1
 
@@ -50,7 +50,8 @@ def test_short_piece_between_junctions_is_kept(tmp_path, profile):
     ways = [(1, [1, 2, 3, 4], {"highway": "primary", "ref": "B 1"}),
             (2, [2, 5], {"highway": "residential"}),
             (3, [3, 6], {"highway": "residential"})]
-    model = build(str(write_osm(tmp_path / "s.osm", nodes, ways)), profile, "L1")
+    # L5: die Seitenstraßen gehören dazu, 2 und 3 sind also Kreuzungen
+    model = build(str(write_osm(tmp_path / "s.osm", nodes, ways)), profile, "L5")
     short = [r for r in model["roads"] if r["start"].get("osm_node") in (2, 3) and r["end"].get("osm_node") in (2, 3)]
     assert len(short) == 1 and len(short[0]["points"]) == 2
     assert short[0]["length_m"] == pytest.approx(3.0, abs=0.2)
@@ -62,7 +63,7 @@ def test_everything_too_short_gives_clear_error(tmp_path, profile):
     nodes = {1: _pt(0, 0), 2: _pt(1, 0)}
     ways = [(1, [1, 2], {"highway": "primary", "ref": "B 1"})]
     with pytest.raises(RuntimeError, match="Spielminimum"):
-        build(str(write_osm(tmp_path / "x.osm", nodes, ways)), profile, "L1")
+        build(str(write_osm(tmp_path / "x.osm", nodes, ways)), profile, "L2")
 
 
 def test_viaduct_junction_follows_deck(tmp_path, profile):
@@ -111,3 +112,19 @@ def test_parse_maxheight():
     assert parse_maxheight("12'6\"") == 3.81
     for v in (None, "", "none", "default", "below_default", "abc", "40"):
         assert parse_maxheight(v) is None
+
+
+def test_terrain_grid_no_cliff_between_roads():
+    """Zwei parallele Straßen 50 m auseinander, 12 m Höhenunterschied: kein Sprung im Raster."""
+    import numpy as np
+    from osm2ets.terrain import blend_roads
+    xs = np.arange(0, 300, 5.0)
+    a = (np.column_stack([xs, np.zeros_like(xs)]), np.full(len(xs), 472.0))
+    b = (np.column_stack([xs, np.full_like(xs, 50.0)]), np.full(len(xs), 460.0))
+    zs = np.arange(-60, 111, 1.0)
+    q = np.column_stack([np.full_like(zs, 150.0), zs])
+    h = blend_roads(q, [a, b], np.full(len(zs), 450.0), 24.0, 110.0)
+    assert abs(h[zs == 0][0] - 472.0) < 0.05 and abs(h[zs == 50][0] - 460.0) < 0.05
+    between = (zs >= 0) & (zs <= 50)
+    assert np.abs(np.diff(h[between])).max() < 1.0      # früher: 12 m auf einen Schritt
+    assert np.abs(np.diff(h)).max() < 1.0

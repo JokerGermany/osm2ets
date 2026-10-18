@@ -36,30 +36,27 @@ def build_grid(roads: list[dict], dem, profile, cell: float = 10.0, margin: floa
     h = ndimage.percentile_filter(h, 25, size=size)
     h = ndimage.gaussian_filter(h, sigma=max(1.0, 40.0 / cell))
 
-    # Straßenhöhen (ohne Bauwerke) dicht abtasten
-    samples, heights = [], []
+    # Straßenhöhen (ohne Bauwerke) dicht abtasten, je Straße getrennt
+    per_road = []
     for r in roads:
         p = np.asarray(r["points"], float)
         seg_ok = np.zeros(len(p) - 1, bool)
         for run in r["runs"]:
             if not (run.get("bridge") or run.get("tunnel")):
                 seg_ok[run["from"]:run["to"]] = True
+        xy, hh = [], []
         for i in np.flatnonzero(seg_ok):
             a, b = p[i], p[i + 1]
             n = max(2, int(np.hypot(b[0] - a[0], b[2] - a[2]) / 5.0) + 1)
             t = np.linspace(0, 1, n)[:, None]
             q = a + (b - a) * t
-            samples.append(q[:, [0, 2]])
-            heights.append(q[:, 1])
-    if samples:
-        s = np.concatenate(samples)
-        sh = np.concatenate(heights)
-        d, idx = cKDTree(s).query(np.column_stack([X.ravel(), Z.ravel()]))
-        d = d.reshape(nz, nx)
-        road_h = sh[idx].reshape(nz, nx)
-        w = np.clip((d - blend_from) / (blend_to - blend_from), 0.0, 1.0)
-        w = w * w * (3 - 2 * w)                     # weicher Übergang
-        h = road_h * (1 - w) + h * w
+            xy.append(q[:, [0, 2]])
+            hh.append(q[:, 1])
+        if xy:
+            per_road.append((np.concatenate(xy), np.concatenate(hh)))
+    if per_road:
+        h = blend_roads(np.column_stack([X.ravel(), Z.ravel()]), per_road, h.ravel(),
+                        blend_from, blend_to).reshape(nz, nx)
 
     return {
         "origin": [round(float(x0), 2), round(float(z0), 2)],
@@ -69,3 +66,54 @@ def build_grid(roads: list[dict], dem, profile, cell: float = 10.0, margin: floa
         # zeilenweise (z), je Zeile nx Werte
         "heights": [round(float(v), 2) for v in h.ravel()],
     }
+
+
+def blend_roads(q: np.ndarray, per_road: list, dem_h: np.ndarray, blend_from: float, blend_to: float,
+                core: float = 6.0, sigma_along: float = 5.0) -> np.ndarray:
+    """Geländehöhe nahe Straßen: stetiger Übergang zwischen mehreren Straßen.
+
+    Früher galt die Höhe der *nächsten* Straße – auf der Mittelsenkrechten zwischen zwei
+    unterschiedlich hohen Straßen entstand so eine Klippe (bis 12 m in einer Rasterzelle).
+    Jetzt: je Straße eine entlang der Straße geglättete Höhe h_r (Gauß über die nächsten
+    Abtastpunkte dieser Straße), dazwischen inverse Abstandsgewichtung
+    u_r = 1/max(d_r − core, 0.25) · (1 − smoothstep(d_r / R)) · (1 + 100·(1 − d_r/core)²) mit endlicher Reichweite R
+    (stetig, unabhängig davon, welche Straßen gerade „in der Nähe“ sind). Bis ``core`` Meter
+    an einer Straße bleibt deren Höhe praktisch exakt. Weiter weg wie bisher weich ins
+    Geländemodell (blend_from … blend_to, Abstand zur nächsten Straße).
+    """
+    from scipy.spatial import cKDTree
+
+    R = blend_to + 30.0
+    n = len(q)
+    usum = np.zeros(n)
+    uh = np.zeros(n)
+    dmin = np.full(n, np.inf)
+    for xy, hh in per_road:
+        k = int(min(10, len(xy)))
+        lo = xy.min(0) - R; hi = xy.max(0) + R
+        sel = np.flatnonzero((q[:, 0] >= lo[0]) & (q[:, 0] <= hi[0]) & (q[:, 1] >= lo[1]) & (q[:, 1] <= hi[1]))
+        if len(sel) == 0:
+            continue
+        d, idx = cKDTree(xy).query(q[sel], k=k, distance_upper_bound=R)
+        if k == 1:
+            d = d[:, None]; idx = idx[:, None]
+        okl = np.isfinite(d[:, 0])
+        if not okl.any():
+            continue
+        ok = sel[okl]
+        d = d[okl]; idx = idx[okl]
+        valid = np.isfinite(d)
+        idx = np.where(valid, idx, 0)
+        d0 = d[:, 0]
+        wa = np.where(valid, np.exp(-(np.where(valid, d, 0) ** 2 - d0[:, None] ** 2) / (2 * sigma_along ** 2)), 0.0)
+        hr = (wa * hh[idx]).sum(1) / wa.sum(1)
+        t = np.clip(d0 / R, 0.0, 1.0)
+        c = np.clip(1.0 - d0 / core, 0.0, 1.0)
+        u = (1.0 / np.maximum(d0 - core, 0.25)) * (1.0 - t * t * (3 - 2 * t)) * (1.0 + 100.0 * c * c)
+        usum[ok] += u
+        uh[ok] += u * hr
+        dmin[ok] = np.minimum(dmin[ok], d0)
+    road_h = np.where(usum > 0, uh / np.maximum(usum, 1e-12), dem_h)
+    w = np.clip((dmin - blend_from) / (blend_to - blend_from), 0.0, 1.0)
+    w = np.where(np.isfinite(dmin), w * w * (3 - 2 * w), 1.0)   # weicher Übergang
+    return road_h * (1 - w) + dem_h * w
