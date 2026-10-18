@@ -111,3 +111,19 @@ def test_parse_maxheight():
     assert parse_maxheight("12'6\"") == 3.81
     for v in (None, "", "none", "default", "below_default", "abc", "40"):
         assert parse_maxheight(v) is None
+
+
+def test_terrain_grid_no_cliff_between_roads():
+    """Zwei parallele Straßen 50 m auseinander, 12 m Höhenunterschied: kein Sprung im Raster."""
+    import numpy as np
+    from osm2ets.terrain import blend_roads
+    xs = np.arange(0, 300, 5.0)
+    a = (np.column_stack([xs, np.zeros_like(xs)]), np.full(len(xs), 472.0))
+    b = (np.column_stack([xs, np.full_like(xs, 50.0)]), np.full(len(xs), 460.0))
+    zs = np.arange(-60, 111, 1.0)
+    q = np.column_stack([np.full_like(zs, 150.0), zs])
+    h = blend_roads(q, [a, b], np.full(len(zs), 450.0), 24.0, 110.0)
+    assert abs(h[zs == 0][0] - 472.0) < 0.05 and abs(h[zs == 50][0] - 460.0) < 0.05
+    between = (zs >= 0) & (zs <= 50)
+    assert np.abs(np.diff(h[between])).max() < 1.0      # früher: 12 m auf einen Schritt
+    assert np.abs(np.diff(h)).max() < 1.0
