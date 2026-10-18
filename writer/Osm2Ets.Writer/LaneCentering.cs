@@ -15,11 +15,18 @@ public static class LaneCentering
     public const float Ramp = 50f;
     public static int Shifted;
 
+    /// <summary>OSM-Lage und OSM-Läufe vor jeder Verschiebung (für die Prefab-Achse).</summary>
+    public static readonly Dictionary<RoadEntry, (List<double[]> Points, List<RunEntry> Runs)> Original = [];
+
     private static Vector2 P(double[] p) => new((float)p[0], (float)p[2]);
 
     public static void Apply(List<RoadEntry> roads, Func<RunEntry, ResolvedStyle> resolve)
     {
         Shifted = 0;
+        Original.Clear();
+        foreach (var r in roads)
+            Original[r] = (r.Points.Select(p => (double[])p.Clone()).ToList(),
+                           r.Runs.Select(x => new RunEntry { From = x.From, To = x.To, Lanes = x.Lanes, Highway = x.Highway, Oneway = x.Oneway }).ToList());
         ResolvedStyle St(RoadEntry r, int k) => resolve(r.Runs.FirstOrDefault(x => x.From <= k && k < x.To) ?? r.Runs[^1]);
         float Seg(RoadEntry r, int k) => St(r, k).Offset;
 
@@ -51,6 +58,13 @@ public static class LaneCentering
 
         foreach (var id in node.Keys.ToList())
             node[id] = (node[id].Sum / mainCount[id], node[id].N);
+        // Knoten mit Rampe (Anschlussstelle): Lage der OSM-Linie behalten – dort sitzt das Prefab,
+        // dessen zweispurige Achse mittig auf der OSM-Linie liegt
+        foreach (var r in roads)
+            if (r.Runs.Any(x => x.Highway is "motorway_link" or "trunk_link"))
+                foreach (var e in new[] { r.Start, r.End })
+                    if (e?.Kind == "node" && e.OsmNode is long id && node.ContainsKey(id))
+                        node[id] = (0f, node[id].N);
 
         foreach (var r in roads)
         {

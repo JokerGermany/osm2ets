@@ -61,6 +61,7 @@ public static class MapWriter
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
         var interchangePlans = new List<Interchanges.Plan>();
+        Interchanges.OffsetOf = run => mapping.Resolve(run).Offset;
         if (prefabs is not null)
         {
             foreach (var plan in Interchanges.Find(valid, warnings))

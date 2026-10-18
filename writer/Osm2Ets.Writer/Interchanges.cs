@@ -202,6 +202,74 @@ public static class Interchanges
         return r.Points.Count >= 2;
     }
 
+    /// <summary>Prefab-Richtung als Sehne zwischen Anker und dem OSM-Punkt am fernen Prefab-Ende –
+    /// so liegen in Kurven beide Enden auf der Straße (aus: OSM2ETS_PREFAB_TANGENT).</summary>
+    public static bool UseChord = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_TANGENT") is null;
+
+    /// <summary>Seitlicher Versatz der ETS2-Linie je Lauf (aus der Zuordnung, siehe LaneCentering).</summary>
+    public static Func<RunEntry, float> OffsetOf = _ => 0f;
+
+    /// <summary>
+    /// Lage der zweispurigen Prefab-Achse im Abstand dist vom Knoten: Straßenpunkt, ohne den
+    /// Versatz des Straßenmodells, also auf der OSM-Linie.
+    /// </summary>
+    private static Vector3 AxisAt(RoadEntry r, bool fromStart, float dist)
+    {
+        // OSM-Lage vor dem Mittig-Setzen (sonst steckt der Modellversatz schon in den Punkten)
+        var (srcPts, srcRuns) = LaneCentering.Original.TryGetValue(r, out var o) ? o : (r.Points, r.Runs);
+        bool raw = !ReferenceEquals(srcPts, r.Points);
+        var pts = fromStart ? srcPts : Enumerable.Reverse(srcPts).ToList();
+        int n = pts.Count;
+        double acc = 0;
+        for (int i = 0; i < n - 1; i++)
+        {
+            double s = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+            if ((acc + s >= dist && s > 0) || i == n - 2)
+            {
+                float t = s > 0 ? (float)Math.Clamp((dist - acc) / s, 0, 1) : 0;
+                var a = MapWriter.ToVector(pts[i]); var b = MapWriter.ToVector(pts[i + 1]);
+                var q = Vector3.Lerp(a, b, t);
+                int seg = fromStart ? i : n - 2 - i;
+                var run = srcRuns.FirstOrDefault(x => x.From <= seg && seg < x.To) ?? srcRuns[^1];
+                var d = fromStart ? b - a : a - b; d.Y = 0;            // Fahrtrichtung
+                if (d.LengthSquared() < 1e-6f) return q;
+                d = Vector3.Normalize(d);
+                var right = new Vector3(-d.Z, 0, d.X);
+                // Nur auf die OSM-Linie zurück. Die durchgehenden Spuren lägen bei lanes=3 (Ver-
+                // zögerungsspur) eigentlich 2,25 m weiter innen – mit den 4,5 m breiten ETS2-
+                // Spuren überschnitten sich dann aber die Gegenfahrbahnen (A 70: 5 m statt 9 m).
+                float lat = raw ? 0 : -OffsetOf(run);
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                    Console.Error.WriteLine($"AXIS {r.Id} seg {seg} lanes {run.Lanes} off {OffsetOf(run)} q {q} lat {lat}");
+                return q + right * lat;
+            }
+            acc += s;
+        }
+        return MapWriter.ToVector(pts[^1]);
+    }
+
+    private static Vector3 Chord(Vector3 from, Vector3 to, Vector3 fallback)
+    {
+        var d = to - from; d.Y = 0;
+        return d.LengthSquared() > 1 ? Vector3.Normalize(d) : fallback;
+    }
+
+    private static Vector3 PointAlong(List<double[]> pts, float dist)
+    {
+        double acc = 0;
+        for (int i = 0; i < pts.Count - 1; i++)
+        {
+            double s = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+            if (acc + s >= dist && s > 0)
+            {
+                float t = (float)((dist - acc) / s);
+                return Vector3.Lerp(MapWriter.ToVector(pts[i]), MapWriter.ToVector(pts[i + 1]), t);
+            }
+            acc += s;
+        }
+        return MapWriter.ToVector(pts[^1]);
+    }
+
     /// <summary>Höhe der Straße im Abstand dist (Draufsicht) vom Ende bzw. Anfang.</summary>
     private static float HeightFromEnd(RoadEntry r, float dist) => HeightAlong(Enumerable.Reverse(r.Points).ToList(), dist);
     private static float HeightFromStart(RoadEntry r, float dist) => HeightAlong(r.Points, dist);
@@ -458,6 +526,7 @@ public static class Interchanges
             if (SkipAtStructures && HasStructure(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack)) { p.Blocked = true; return false; }
             if (ArcLength(p.MainIn) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
             p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
+            if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, len), p.Anchor, p.Direction);
             return TrimEnd(p.MainIn, len + Slack) && TrimStart(p.Ramp, RampTrim);
         }
         else
@@ -466,6 +535,7 @@ public static class Interchanges
             if (SkipAtStructures && HasStructure(p.MainOut.Points, p.MainOut.Runs, false, len + Slack)) { p.Blocked = true; return false; }
             if (ArcLength(p.MainOut) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
             p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
+            if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, len), p.Direction);
             return TrimStart(p.MainOut, len + Slack) && TrimEnd(p.Ramp, RampTrim);
         }
     }
