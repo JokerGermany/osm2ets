@@ -54,8 +54,11 @@ public static class MapWriter
             valid.Add(entry);
         }
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
-        if (Environment.GetEnvironmentVariable("OSM2ETS_TWINSEP") is not null)   // Standard aus: OSM-Lage gilt
-            TwinSeparation.Apply(valid, run => mapping.Resolve(run).Width / 2, warnings);
+        // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
+        LaneCentering.Apply(valid, mapping.Resolve);
+        if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
+            TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
         var interchangePlans = new List<Interchanges.Plan>();
         if (prefabs is not null)

@@ -95,6 +95,11 @@ public class StyleSpec
     public float? TerrainRight { get; set; }
     /// <summary>Ungefähre Fahrbahnbreite in Metern (für den Geländeabstand zu Nachbarstraßen).</summary>
     public float? Width { get; set; }
+    /// <summary>Seitliche Verschiebung der ETS2-Straßenlinie gegenüber der OSM-Linie (m, + = rechts in
+    /// Fahrtrichtung), damit die Fahrspuren des Modells mittig auf der OSM-Linie liegen.</summary>
+    public float? Offset { get; set; }
+    /// <summary>Abstand des linken Modellrands von der OSM-Linie (m) – für Gegenfahrbahnen.</summary>
+    public float? EdgeLeft { get; set; }
     /// <summary>Unsichtbare Begrenzung am Straßenrand (ETS2 "boundary").</summary>
     public bool? Boundary { get; set; }
     public string? Resolution { get; set; }
@@ -107,6 +112,8 @@ public class StyleSpec
         if (TerrainLeft is < 0 or > 1000) errors.Add($"{name}.terrain_left: 0–1000 erwartet");
         if (TerrainRight is < 0 or > 1000) errors.Add($"{name}.terrain_right: 0–1000 erwartet");
         if (Width is <= 0 or > 60) errors.Add($"{name}.width: 0–60 erwartet");
+        if (Offset is < -20 or > 20) errors.Add($"{name}.offset: −20–20 erwartet");
+        if (EdgeLeft is < 0 or > 40) errors.Add($"{name}.edge_left: 0–40 erwartet");
         if (Resolution is not null && !Enum.TryParse<RoadResolution>(Resolution, true, out _))
             errors.Add($"{name}.resolution: erlaubt sind {string.Join(", ", Enum.GetNames<RoadResolution>())}");
         Left?.Validate($"{name}.left", errors);
@@ -130,7 +137,9 @@ public class StyleSpec
             SideSpec.Merge(baseStyle?.Left, Left),
             SideSpec.Merge(baseStyle?.Right, Right),
             Width ?? baseStyle?.Width ?? 8f,
-            Boundary ?? baseStyle?.Boundary ?? true);
+            Boundary ?? baseStyle?.Boundary ?? true,
+            Offset ?? (RoadType is null ? baseStyle?.Offset : null) ?? 0f,
+            EdgeLeft ?? (RoadType is null && Width is null ? baseStyle?.EdgeLeft : null) ?? -1f);
     }
 }
 
@@ -227,4 +236,10 @@ public sealed record ResolvedStyle(
     SideSpec? Left,
     SideSpec? Right,
     float Width = 8f,
-    bool Boundary = true);
+    bool Boundary = true,
+    float Offset = 0f,
+    float EdgeLeftRaw = -1f)
+{
+    /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
+    public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;
+}

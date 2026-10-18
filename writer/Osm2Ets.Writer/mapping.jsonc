@@ -17,18 +17,22 @@
 // (Normal | HighPoly | Superfine), left/right mit variant, look, traffic_rule,
 // left_edge, right_edge.
 {
-  // width = geschätzte Fahrbahnbreite (m, NICHT aus den Spieldaten gemessen) –
-  // nur für den Geländeabstand zu Nachbarstraßen. boundary=false: keine
+  // width = Modellbreite (m). Für ger13/ger16/ger2 aus den Vorlagenmodellen (.pmg, ETS2 1.61)
+  // gemessen, sonst geschätzt. offset = Verschiebung der ETS2-Linie nach rechts, damit die
+  // Fahrspuren mittig auf der OSM-Linie liegen; edge_left = linker Modellrand ab OSM-Linie.
+  // Annahme: Die Straßenlinie liegt bei x = 0 des Vorlagenmodells, +x = rechts.
+  // Gemessen (x des Modells): ger13 Spuren −4,45…4,65, gesamt −4,5…8,0;
+  // ger16 Spuren −8,94…4,66, gesamt −9,0…8,0; ger2 Spur −4,65…0,25, gesamt −5,5…2,5. boundary=false: keine
   // unsichtbare Randbegrenzung (Rampen ohne Prefab sind sonst nicht befahrbar).
   "default": { "road_type": "ger1", "width": 8, "boundary": false,
                "terrain_left": 20, "terrain_right": 20, "resolution": "HighPoly" },
   "rules": [
     { "name": "Autobahn 3+ Spuren", "match": { "highway": ["motorway", "trunk"], "oneway": true, "lanes_min": 3 },
-      "road_type": "ger16", "width": 14.5, "terrain_left": 4, "terrain_right": 30 },
+      "road_type": "ger16", "width": 17, "offset": 2.17, "edge_left": 6.83, "terrain_left": 4, "terrain_right": 30 },
     { "name": "Autobahn / Kraftfahrstraße, Richtungsfahrbahn", "match": { "highway": ["motorway", "trunk"], "oneway": true },
-      "road_type": "ger13", "width": 11, "terrain_left": 4, "terrain_right": 30 },
+      "road_type": "ger13", "width": 12.5, "offset": 0, "edge_left": 4.5, "terrain_left": 4, "terrain_right": 30 },
     { "name": "Autobahnrampe", "match": { "highway": ["motorway_link", "trunk_link"], "oneway": true },
-      "road_type": "ger2", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
+      "road_type": "ger2", "width": 8, "offset": 2.2, "edge_left": 3.3, "terrain_left": 10, "terrain_right": 10 },
     { "name": "sonstige Rampe, einspurig", "match": { "highway": ["primary_link", "secondary_link", "tertiary_link"], "oneway": true },
       "road_type": "ger5", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
     { "name": "Einbahn zweispurig", "match": { "oneway": true, "lanes_min": 2 }, "road_type": "ger9", "width": 9 },

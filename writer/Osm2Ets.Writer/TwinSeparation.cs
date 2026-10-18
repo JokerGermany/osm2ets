@@ -13,12 +13,12 @@ namespace Osm2Ets.Writer;
 /// </summary>
 public static class TwinSeparation
 {
-    public const float Gap = 1.0f;        // Luft zwischen den Modellrändern (m)
+    public const float Gap = 0f;            // Luft zwischen den Modellrändern (m)
     public const float MaxGap = 30f;      // nur Paare näher als das
     public const float Taper = 200f;      // Ein-/Auslauflänge der Verschiebung (m)
 
     public const float PrefabReach = 150f;  // Prefabs einer Anschlussstelle reichen so weit vom Knoten
-    public const float PrefabExtra = 3.75f; // zusätzliche Spur im Prefab (m)
+    public const float PrefabExtra = 0f;    // zusätzliche Spur im Prefab (m)
 
     public static int Moved;
     public static float MaxShift;
@@ -71,7 +71,7 @@ public static class TwinSeparation
                 foreach (var g in segs)
                 {
                     if (g.R == r) continue;
-                    if (MathF.Abs(Vector2.Dot(g.T, t)) < 0.95f) continue;
+                    if (Vector2.Dot(g.T, t) > -0.95f) continue;   // nur Gegenrichtung
                     var ab = g.B - g.A; float l2 = ab.LengthSquared();
                     float u = Math.Clamp(Vector2.Dot(p - g.A, ab) / l2, 0, 1);
                     var c = g.A + ab * u;
@@ -83,6 +83,8 @@ public static class TwinSeparation
                     float side = MathF.Sign(Vector2.Dot(p - c, nrm));
                     float v = side * need / 2;
                     if (MathF.Abs(v) > MathF.Abs(best)) best = v;
+                    if (Environment.GetEnvironmentVariable("OSM2ETS_TWINDEBUG") is not null && need > 2)
+                        Console.Error.WriteLine($"pair {r.Id}[{i}] vs {g.R.Id} d {d:0.0} hw {hw:0.0}+{g.Hw:0.0} need {need:0.0}");
                 }
                 push[i] = best;
             }
@@ -161,6 +163,8 @@ public static class TwinSeparation
             {
                 r.Points[i][0] += dv[i].X; r.Points[i][2] += dv[i].Y;
                 MaxShift = MathF.Max(MaxShift, dv[i].Length());
+                if (Environment.GetEnvironmentVariable("OSM2ETS_TWINDEBUG") is not null && dv[i].Length() > 1f)
+                    Console.Error.WriteLine($"twin {r.Id}[{i}] ({r.Points[i][0]:0},{r.Points[i][2]:0}) {dv[i].Length():0.0} m");
             }
         Moved = moved.Count;
 
