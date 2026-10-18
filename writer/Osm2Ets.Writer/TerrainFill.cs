@@ -18,6 +18,10 @@ public static class TerrainFill
     public const float RowSpacing = 40f;   // Abstand der Reihen (m)
     /// <summary>So weit neben der Fahrbahn bleibt das Füllgelände weg (Rest überlappt das Straßengelände).</summary>
     public const float MaskTerrain = 2f;
+    /// <summary>So weit reicht das Füllgelände unter das Straßengelände (m).</summary>
+    public const float FillOverlap = 8f;
+    /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
+    public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
     public const float PrefabLaneRadius = 2f;
     public const float FineSpacing = 1f;   // Reihenabstand für die Reste neben Straßen (m)
     public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
@@ -71,7 +75,7 @@ public static class TerrainFill
                 float hw = st[k].Width / 2;
                 // Füllgelände darf 3 m über den Geländestreifen der Straße reichen (keine Lücke)
                 float cap = WideRoadTerrain ? float.MaxValue : MaskTerrain;   // breit: Straßengelände nicht doppelt belegen
-                float wl = hw + MathF.Min(MathF.Max(0, st[k].TerrainLeft - 3), cap), wr = hw + MathF.Min(MathF.Max(0, st[k].TerrainRight - 3), cap);
+                float wl = hw + MathF.Min(MathF.Max(0, st[k].TerrainLeft - 6), cap), wr = hw + MathF.Min(MathF.Max(0, st[k].TerrainRight - 6), cap);   // 6 m Überlappung
                 for (float s = 0; s <= len; s += MaskCell / 2)
                 {
                     var c = a + dir * s;
@@ -237,8 +241,8 @@ public static class TerrainFill
             float l = float.MaxValue, r = float.MaxValue;
             for (int i = a; i <= b; i++) { l = MathF.Min(l, run[i].L); r = MathF.Min(r, run[i].R); }
             placed(run[a].X, run[b].X, l, r);
-            var pa = new Vector3(run[a].X, grid.HeightAt(run[a].X, z), z);
-            var pb = new Vector3(run[b].X, grid.HeightAt(run[b].X, z), z);
+            var pa = new Vector3(run[a].X, grid.HeightAt(run[a].X, z) - FillDrop, z);
+            var pb = new Vector3(run[b].X, grid.HeightAt(run[b].X, z) - FillDrop, z);
             t = t is null ? Terrain.Add(map, pa, pb, material, l, r) : t.Append(pb, material, l, r);
             t.Boundary = false;
             t.IgnoreCutPlanes = true;   // Prefabs schneiden sonst Gelände in ihrer Umgebung weg
@@ -307,7 +311,7 @@ public static class TerrainFill
                 float z = pa.Z + zSign * rowsD[j];
                 float h = grid.HeightAt(pa.X + x, z);
                 if (float.IsNaN(h)) continue;
-                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(x, h - pa.Y, zSign * rowsD[j]) });
+                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(x, h - FillDrop - pa.Y, zSign * rowsD[j]) });
                 n++;
             }
         return n;
@@ -356,7 +360,7 @@ public static class TerrainFill
                 if (float.IsNaN(h)) continue;
                 float roadY = pa.Y + (pb.Y - pa.Y) * u;
                 float tt = Math.Clamp((rowsD[j] - 3f) / 10f, 0, 1);   // erste 3 m auf Straßenhöhe
-                h = roadY + (h - roadY) * tt;
+                h = roadY + (h - roadY) * tt - RoadTerrainDrop;
                 var off = world
                     ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen ab Anfangsknoten
                     : new Vector3(x, h - pa.Y, zSign * d);                 // lokal
