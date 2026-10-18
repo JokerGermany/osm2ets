@@ -20,6 +20,7 @@ var tests = new List<(string Name, Action Body)>
     ("Knoten: geradeaus verbinden, Abzweig offen, Zweirichtung drehen", ConnectsThroughRoads),
     ("L5: Feldweg Geheimstraße, Fußweg und Parkplatzgasse nicht im Navi", MinorWaysHiddenFromNavigation),
     ("L5: Privatstraße behält ihren Typ, ist aber nicht im Navi", RestrictedWaysHidden),
+    ("Gelände: Mittelstreifen endet vor der Gegenfahrbahn (asymmetrische Modellränder)", MedianTerrainStopsAtOtherCarriageway),
 };
 
 int failed = 0;
@@ -360,3 +361,29 @@ static void RestrictedWaysHidden()
     Check(t.Secret && !t.ShowInUiMap && t.GpsAvoid, $"gesperrter Feldweg: secret {t.Secret}, ui_map {t.ShowInUiMap}");
 }
 
+
+static void MedianTerrainStopsAtOtherCarriageway()
+{
+    // ger16 („hw 3 lanes one way“): Modell −9,0…+8,0 m um die Straßenlinie (Mitte −0,5 m).
+    // Zwei Richtungsfahrbahnen, Linien 22 m bzw. 19 m auseinander: zwischen den linken
+    // Modellrändern bleiben 4 m bzw. 1 m Mittelstreifen.
+    foreach (var (dist, gap) in new[] { (22.0, 4f), (19.0, 1f) })
+    {
+        var st = new ResolvedStyle("ger16", 60, 60, RoadResolution.HighPoly, null, null, Width: 17, ModelCenter: -0.5f);
+        var east = MakeRoad("e", new[] { new[] { 0.0, 0, 0 }, new[] { 300.0, 0, 0 } }, MakeRun(0, 1, "motorway", oneway: true));
+        var west = MakeRoad("w", new[] { new[] { 300.0, 0, -dist }, new[] { 0.0, 0, -dist } }, MakeRun(0, 1, "motorway", oneway: true));
+        var styles = new Dictionary<RoadEntry, ResolvedStyle[]> { [east] = [st], [west] = [st] };
+        TerrainClearance.Widen(styles);
+        TerrainClearance.Apply([east, west], styles);
+        foreach (var r in new[] { east, west })
+        {
+            var s = styles[r][0];
+            // linke Seite (Mittelstreifen): reicht nicht bis an den fremden Modellrand …
+            Check(s.TerrainLeft <= gap - TerrainClearance.EdgeClear + 1e-3f, $"{r.Id} {dist} m: Mittelstreifen-Gelände {s.TerrainLeft} m bei {gap} m Lücke");
+            // … und beide zusammen decken die Lücke (kein Spalt zum Füllgelände)
+            Check(2 * s.TerrainLeft >= gap - 1e-3f, $"{r.Id} {dist} m: Lücke nicht gedeckt ({s.TerrainLeft} m je Seite)");
+            Check(s.TerrainRight == 60, $"{r.Id}: Außenseite verändert ({s.TerrainRight})");
+        }
+    }
+    TerrainClearance.Share = false; TerrainClearance.SearchRadius = 80f;
+}

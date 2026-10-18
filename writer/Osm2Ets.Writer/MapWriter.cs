@@ -198,7 +198,9 @@ public static class MapWriter
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } && TerrainFill.WideRoadTerrain) TerrainClearance.Widen(styles);
         string Stat(string n) { var all = styles.Values.SelectMany(x => x).ToList(); return $"{n}: L {all.Average(x => x.TerrainLeft):0.0} R {all.Average(x => x.TerrainRight):0.0} L0 {all.Count(x => x.TerrainLeft <= 0)} R0 {all.Count(x => x.TerrainRight <= 0)}"; }
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("vor"));
+        TerrainClearance.HardLimited = 0;
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        if (TerrainClearance.HardLimited > 0) warnings.Add($"Info: Straßengelände an {TerrainClearance.HardLimited} Seiten schmaler als 2 m (fremder Fahrbahnrand näher)");
         if (TerrainClearance.Share) terrainClamped += TerrainClearance.ClampCurves(valid, styles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
@@ -370,14 +372,22 @@ public static class MapWriter
                 foreach (var entry in valid)
                 {
                     if (!firstItem.TryGetValue(entry, out var it)) continue;
-                    var hw = styles[entry][0].Width / 2;
                     var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
                     TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'D';
                     TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
-                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
+                    int seg = 0;
+                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road, seg++)
                     {
                         rd.Recalculate();
-                        float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
+                        // Geländebeginn je Seite = Rand des Straßenmodells. Die Einbahn-Vorlagen sind
+                        // asymmetrisch (ger13: −4,5…+8,0 m, ger2: −5,5…+2,5 m um die Straßenlinie);
+                        // mit der halben Breite (symmetrisch) lag die erste Geländereihe rechts bzw.
+                        // links INNERHALB des Modells – das Spiel setzt Reihe 0 an den Modellrand,
+                        // die Quads dazwischen klappten um (schwarzer Streifen entlang der Fahrbahn).
+                        var st = styles[entry][Math.Min(seg, styles[entry].Length - 1)];
+                        var (edL, edR) = TerrainClearance.Edges(st);
+                        float eL = TerrainFill.RoadEdgeInData ? edL : 0;
+                        float eR = TerrainFill.RoadEdgeInData ? edR : 0;
                         var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
                         Vector2 Tan(Quaternion q)
                         {
@@ -387,16 +397,22 @@ public static class MapWriter
                             t = Vector2.Normalize(t);
                             return Vector2.Dot(t, ch) < 0 ? -t : t;
                         }
+                        Vector3 Dir3(Quaternion q)
+                        {
+                            var v = Vector3.Transform(-Vector3.UnitZ, q);
+                            return Vector3.Dot(v, pb - pa) < 0 ? -v : v;
+                        }
                         Vector2? ta = null, tb = null;
-                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
+                        Vector3? da = null, db = null;
+                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); da = Dir3(rd.Node.Rotation); db = Dir3(rd.ForwardNode.Rotation); }
                         for (int tries = 0; tries < 4; tries++)
                         {
                             Func<float, float, float>? cap = others is null ? null : (x, z) => others.OtherDistance(x, z, entry, TerrainFill.GoreDist);
-                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb, cap) < 0) bad++;
-                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb, cap) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, eL, ta, tb, cap, da, db) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, eR, ta, tb, cap, da, db) < 0) bad++;
                             // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
-                            float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, e, ta, tb);
-                            float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, e, ta, tb);
+                            float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, eL, ta, tb, da, db);
+                            float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, eR, ta, tb, da, db);
                             if (nl >= rd.Left.Terrain.Size && nr >= rd.Right.Terrain.Size) break;
                             rd.Left.Terrain.Size = nl; rd.Right.Terrain.Size = nr; folded++;
                             rd.Recalculate();
@@ -491,6 +507,9 @@ public static class MapWriter
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
     }
+
+    /// <summary>Geländebeginn am asymmetrischen Modellrand (aus: OSM2ETS_RT_SYMMETRIC).</summary>
+    public static bool UseModelEdges = Environment.GetEnvironmentVariable("OSM2ETS_RT_SYMMETRIC") is null;
 
     /// <summary>Navi-/Karten-Schalter aus der Zuordnung (nur gesetzte Werte).</summary>
     private static void ApplyFlags(Road road, ResolvedStyle style)

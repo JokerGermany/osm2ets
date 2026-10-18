@@ -423,7 +423,7 @@ public static class TerrainFill
     /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
     /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
     /// </summary>
-    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float>? otherDist = null)
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float>? otherDist = null, Vector3? dA = null, Vector3? dB = null)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
@@ -447,6 +447,23 @@ public static class TerrainFill
             return d.LengthSquared() > 1e-8f ? Vector2.Normalize(d) : f;
         }
         bool world = Mode is 'C' or 'D';
+        // Fahrbahn wie im Spiel als 3D-Hermite-Kurve (Knotendrehung samt Neigung, Tangentenlänge =
+        // Knotenabstand): Höhe und Lage. Mit der Sehnenhöhe lag das Gelände dort, wo die Kurve
+        // durchhängt (Gefällewechsel), bis über 10 cm zu hoch – am Rand über dem Asphalt.
+        bool curve3 = world && dA is not null && dB is not null && UseHermiteHeight;
+        float len3 = Vector3.Distance(pa, pb);
+        Vector3 C3(float t)
+        {
+            float t2 = t * t, t3 = t2 * t;
+            return (2*t3-3*t2+1)*pa + (t3-2*t2+t)*len3*dA!.Value + (-2*t3+3*t2)*pb + (t3-t2)*len3*dB!.Value;
+        }
+        Vector2 D3(float t)
+        {
+            float t2 = t * t;
+            var d = (6*t2-6*t)*pa + (3*t2-4*t+1)*len3*dA!.Value + (-6*t2+6*t)*pb + (3*t2-2*t)*len3*dB!.Value;
+            var d2 = new Vector2(d.X, d.Z);
+            return d2.LengthSquared() > 1e-8f ? Vector2.Normalize(d2) : f;
+        }
         int n = 0;
         for (int j = 1; j < rowsD.Count; j++)
             for (int i = 0; i <= cols; i++)
@@ -454,12 +471,13 @@ public static class TerrainFill
                 float u = (float)i / cols;
                 float d = edge + rowsD[j];
                 Vector2 c, nrm; float x;
-                if (world) { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
+                float roadY = pa.Y + (pb.Y - pa.Y) * u;
+                if (curve3) { var c3 = C3(u); c = new Vector2(c3.X, c3.Z); roadY = c3.Y; var tg = D3(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
+                else if (world) { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
                 else { x = len * u; c = a + f * x; nrm = new Vector2(-f.Y, f.X); }
                 var w = c + nrm * (zSign * d);
                 float h = grid.HeightAt(w.X, w.Y);
                 if (float.IsNaN(h)) continue;
-                float roadY = pa.Y + (pb.Y - pa.Y) * u;
                 // erste NearFlat m auf Straßenhöhe, bis NearFlat+NearBlend m ins Raster übergehen.
                 // Kurz halten: in Zwickeln zwischen zwei Straßen (Gabelung) zieht sonst jedes
                 // Straßengelände zur eigenen Fahrbahnhöhe – dort, wo sich beide überlappen,
@@ -491,7 +509,7 @@ public static class TerrainFill
     }
 
     /// <summary>Größte Breite, bis zu der keine Quad-Zeile umklappt (Kreuzprodukt wechselt Vorzeichen).</summary>
-    internal static float FoldFreeSize(Road rd, RoadTerrain side, float zSign, float edge, Vector2? tA, Vector2? tB)
+    internal static float FoldFreeSize(Road rd, RoadTerrain side, float zSign, float edge, Vector2? tA, Vector2? tB, Vector3? dA = null, Vector3? dB = null)
     {
         var q = side.QuadData;
         if (q.Offsets.Count == 0 || side.Size <= 0) return side.Size;
@@ -503,11 +521,23 @@ public static class TerrainFill
         var a = p0; var b = new Vector2(rd.ForwardNode.Position.X, rd.ForwardNode.Position.Z);
         float len = Vector2.Distance(a, b); if (len < 1e-3f) return side.Size;
         var f = (b - a) / len; var ta = tA ?? f; var tb = tB ?? f;
+        var pa3 = rd.Node.Position; var pb3 = rd.ForwardNode.Position; float len3 = Vector3.Distance(pa3, pb3);
+        bool curve3 = dA is not null && dB is not null && UseHermiteHeight;
         for (int i = 0; i <= q.Cols; i++)
         {
             float t = (float)i / q.Cols, t2 = t * t, t3 = t2 * t;
-            var c = (2*t3-3*t2+1)*a + (t3-2*t2+t)*len*ta + (-2*t3+3*t2)*b + (t3-t2)*len*tb;
-            var d = (6*t2-6*t)*a + (3*t2-4*t+1)*len*ta + (-6*t2+6*t)*b + (3*t2-2*t)*len*tb;
+            Vector2 c, d;
+            if (curve3)
+            {
+                var c3 = (2*t3-3*t2+1)*pa3 + (t3-2*t2+t)*len3*dA!.Value + (-2*t3+3*t2)*pb3 + (t3-t2)*len3*dB!.Value;
+                var d3 = (6*t2-6*t)*pa3 + (3*t2-4*t+1)*len3*dA!.Value + (-6*t2+6*t)*pb3 + (3*t2-2*t)*len3*dB!.Value;
+                c = new Vector2(c3.X, c3.Z); d = new Vector2(d3.X, d3.Z);
+            }
+            else
+            {
+                c = (2*t3-3*t2+1)*a + (t3-2*t2+t)*len*ta + (-2*t3+3*t2)*b + (t3-t2)*len*tb;
+                d = (6*t2-6*t)*a + (3*t2-4*t+1)*len*ta + (-6*t2+6*t)*b + (3*t2-2*t)*len*tb;
+            }
             d = d.LengthSquared() > 1e-8f ? Vector2.Normalize(d) : f;
             v[(i, 0)] = c + new Vector2(-d.Y, d.X) * (zSign * edge);
         }
@@ -526,6 +556,9 @@ public static class TerrainFill
             }
         return side.Size;
     }
+
+    /// <summary>Straßengelände folgt der Hermite-Höhe der Fahrbahn (aus: OSM2ETS_RT_CHORD).</summary>
+    public static bool UseHermiteHeight = Environment.GetEnvironmentVariable("OSM2ETS_RT_CHORD") is null;
 
     /// <summary>Testvariante: A lokal ab Geländebeginn, B lokal ab Straßenmitte, C Weltachsen.</summary>
     [ThreadStatic] public static char Mode;

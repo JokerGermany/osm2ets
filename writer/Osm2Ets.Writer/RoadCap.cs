@@ -16,6 +16,15 @@ public sealed class RoadCap
 {
     public static float Margin = Env("OSM2ETS_CAP_MARGIN", 2f);
     public static float Slope = Env("OSM2ETS_CAP_SLOPE", 0.7f);
+    public static float UnderDrop = Env("OSM2ETS_CAP_UNDER", 0.4f);
+    /// <summary>
+    /// Neben Straßen (nicht Prefabs) bleibt die Grenze so weit flach auf Fahrbahnhöhe. Die
+    /// Füllquads sind bis 16 m lang; steigt die Grenze schon 2 m neben dem Rand an, liegt ein
+    /// Eckpunkt einige Meter neben der Fahrbahn hoch und die Fläche zum nächsten Eckpunkt (unter
+    /// der Fahrbahn) schneidet den Asphaltrand – auf der A 9 bis fast 1 m darüber. Sichtbar ist
+    /// dort ohnehin das Straßengelände (60 m breit), das Füllgelände liegt darunter.
+    /// </summary>
+    public static float FlatReach = Env("OSM2ETS_CAP_FLAT", 17f);
     public const float DeckDrop = 0.3f, BridgeMargin = 0.5f, BridgeSlope = 0.5f, Cell = 25f, Reach = 12f, LaneHalf = 3f;
     /// <summary>Spurpunkte der Prefabs mit Höhe (vor dem Füllgelände gesetzt).</summary>
     public static List<Vector3>? PrefabLanes;
@@ -64,7 +73,7 @@ public sealed class RoadCap
         int i = segs.Count;
         segs.Add((a, b, hw, center, drop, bridge));
         owners.Add(adding);
-        float pad = hw + MathF.Abs(center) + Margin + Reach;
+        float pad = hw + MathF.Abs(center) + MathF.Max(Margin, FlatReach) + Reach;
         int x0 = (int)MathF.Floor((MathF.Min(a.X, b.X) - pad) / Cell), x1 = (int)MathF.Floor((MathF.Max(a.X, b.X) + pad) / Cell);
         int z0 = (int)MathF.Floor((MathF.Min(a.Z, b.Z) - pad) / Cell), z1 = (int)MathF.Floor((MathF.Max(a.Z, b.Z) + pad) / Cell);
         for (int x = x0; x <= x1; x++)
@@ -102,16 +111,23 @@ public sealed class RoadCap
             float y = a.Y + (b.Y - a.Y) * uc - drop;
             if (bridge)
             {
-                // knapp unter dem Überbau, daneben sanft zurück aufs Raster (keine Stufe unter der Kante)
-                float beyondB = outside - BridgeMargin;
+                // knapp unter dem Überbau, daneben sanft zurück aufs Raster (keine Stufe unter der Kante);
+                // flach so weit wie bei Straßen – Brücken auf Geländehöhe (Bachdurchlass, OSM-Brücke
+                // ohne Tal im Raster) bekämen sonst über die groben Füllquads Erde aufs Deck
+                float beyondB = outside - MathF.Max(BridgeMargin, FlatReach);
                 if (beyondB > Reach) continue;
                 y += MathF.Max(0, beyondB) * BridgeSlope;
             }
             else
             {
-                float beyond = outside - Margin;
+                float flat = owners[i] is null ? Margin : MathF.Max(Margin, FlatReach);
+                float beyond = outside - flat;
                 if (beyond > Reach) continue;
                 y += MathF.Max(0, beyond) * Slope;
+                // unter dem Asphalt tiefer: das Spiel zieht die Fahrbahn zwischen den Knoten als
+                // Hermite-Kurve (bei Gefällewechseln einige cm unter der Sehne), und grobe Füllquads
+                // interpolieren über den Fahrbahnrand – sonst schimmert Erde durch den Asphalt
+                if (outside < Margin) y -= UnderDrop * (1 - outside / Margin);
             }
             if (Probe is { } pr && Vector2.Distance(pr, p) < 4f && y < 1e6f)
                 Console.Error.WriteLine($"CAP at ({x:0.0},{z:0.0}): seg {a} -> {b} hw {hw:0.0} c {center:0.0} bridge {bridge} outside {outside:0.0} cap {y:0.00}");
