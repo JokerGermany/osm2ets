@@ -95,6 +95,10 @@ extras:
   rest_loop_max_m: 1500
   # 3. Notfallbuchten/Notauffahrten (highway=escape), die direkt an der Strecke liegen
   escape: true
+  # 4. Straßenenden weiterführen: Wo die Auswahl endet, OSM aber weitergeht, die
+  #    anschließenden Straßen so weit (Spielmeter; bei 1:1 = Echtmeter) mitnehmen – an weiteren Abzweigen nur
+  #    geradeaus. Danach endet die Straße offen. 0 = aus.
+  end_extension_m: 50
   # Straßenklassen, über die Verbindungen (2.) und Zufahrten (1.) führen dürfen
   via_highway: *drivable
 

@@ -183,6 +183,9 @@ In addition, in every level (`extras` and `industry` in the profile):
    rest areas and always count, up to 1.5 km. Other loops on the same road (e.g. village
    streets) only count if the path through the network is at least 1.5 times as long.
 3. **Emergency escape lanes** (`highway=escape`) directly next to the route.
+4. **Road ends continued**: where the selection ends but the road continues in OSM, the
+   adjoining roads are included for 50 m (game metres), going straight on at further
+   junctions. The road then ends open (`extras.end_extension_m`).
 
 L5 adds all ways. Ways without truck traffic get their own flags in the game
 (`mapping.jsonc`):

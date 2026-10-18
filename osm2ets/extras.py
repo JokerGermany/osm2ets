@@ -189,3 +189,107 @@ def escape_lanes(net, network_nodes: set) -> dict:
     if marked:
         log.info("Notfallbuchten (highway=escape): %d Kanten", len(marked))
     return {"edges": len(marked)}
+
+
+def extend_ends(net, xy: dict, loc: dict, classes: frozenset, length_m: float,
+                id_start: int = -1_000_000_000) -> dict:
+    """4. Straßenenden weiterführen: An jedem Ende der Auswahl, an dem es in OSM weitergeht,
+    werden die anschließenden Straßen ``length_m`` Meter (Echtmeter) mit aufgenommen – an
+    weiteren Abzweigen nur geradeaus. Ganze Kanten bekommen die Rolle 'connector'; das letzte,
+    angeschnittene Stück wird als neue Kante mit einem berechneten Endknoten (negative ID,
+    in der Ausgabe ein offenes Ende "cut") zurückgegeben.
+
+    Rückgabe: {"ends", "edges", "partial": [Edge], "locations": {id: (lon, lat)}}.
+    """
+    from .network import ROLE_CONNECTOR, Edge
+    from .osmread import Way
+
+    stats = {"ends": 0, "edges": 0, "partial": [], "locations": {}}
+    if length_m <= 0:
+        return stats
+    deg: dict[int, int] = {}
+    for e in net.edges:
+        if e.role is not None:
+            deg[e.u] = deg.get(e.u, 0) + 1
+            deg[e.v] = deg.get(e.v, 0) + 1
+    in_sel = set(deg)
+    ends = [n for n, d in deg.items() if d == 1]
+    next_id = id_start
+    marked: set[int] = set()
+
+    def usable(e):
+        return e.role is None and e.idx not in marked and e.highway in classes
+
+    def outward(e, start):
+        """Knoten der Kante von start aus."""
+        return e.node_ids(reverse=(e.v == start and e.u != start))
+
+    def heading(a, b):
+        pa, pb = xy.get(a), xy.get(b)
+        if pa is None or pb is None or pa == pb:
+            return None
+        return math.atan2(pb[1] - pa[1], pb[0] - pa[0])
+
+    for n in sorted(ends):
+        starts = [(ei, end) for ei, end in net.adjacency.get(n, ()) if usable(net.edges[ei])]
+        if not starts:
+            continue
+        stats["ends"] += 1
+        for ei, end in starts:
+            e = net.edges[ei]
+            node, left = n, length_m
+            while e is not None and usable(e):
+                ids = outward(e, node)
+                if any(i not in xy for i in ids):
+                    break
+                acc = 0.0
+                cut = None
+                for k in range(1, len(ids)):
+                    seg = math.dist(xy[ids[k - 1]], xy[ids[k]])
+                    if acc + seg >= left:
+                        cut = (k, (left - acc) / seg if seg > 0 else 0.0)
+                        break
+                    acc += seg
+                if cut is None:
+                    # ganze Kante
+                    marked.add(e.idx)
+                    stats["edges"] += 1
+                    far = ids[-1]
+                    left -= acc
+                    if far in in_sel or left <= 1.0:
+                        break
+                    # geradeaus weiter (kleinste Richtungsänderung, höchstens 45°)
+                    h0 = heading(ids[-2], far)
+                    best, bd = None, math.radians(45)
+                    for ej, en in net.adjacency.get(far, ()):
+                        f = net.edges[ej]
+                        if ej == e.idx or not usable(f):
+                            continue
+                        nxt = outward(f, far)
+                        h1 = heading(far, nxt[1])
+                        if h0 is None or h1 is None:
+                            continue
+                        d = abs((h1 - h0 + math.pi) % (2 * math.pi) - math.pi)
+                        if d < bd:
+                            best, bd = f, d
+                    e, node = best, far
+                    continue
+                # angeschnittene Kante: neuer Endknoten
+                k, t = cut
+                a, b = ids[k - 1], ids[k]
+                (la, pa), (lb, pb) = loc[a], loc[b]
+                nid = next_id
+                next_id -= 1
+                stats["locations"][nid] = (la + t * (lb - la), pa + t * (pb - pa))
+                keep = ids[:k] + [nid]
+                nodes = keep if node == e.u else keep[::-1]   # Wegrichtung beibehalten (Einbahn)
+                from array import array
+                way = Way(id=e.way.id, nodes=array("q", nodes), tags=dict(e.way.tags))
+                stats["partial"].append(Edge(idx=-1, way=way, i0=0, i1=len(nodes) - 1,
+                                             oneway=e.oneway, role=ROLE_CONNECTOR))
+                break
+    for ei in marked:
+        net.edges[ei].role = ROLE_CONNECTOR
+    log.info("Straßenenden weitergeführt: %d Enden, %d ganze Kanten, %d angeschnitten",
+             stats["ends"], stats["edges"], len(stats["partial"]))
+    return stats

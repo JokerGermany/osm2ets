@@ -178,6 +178,10 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
    Schleifen an derselben Straße (z. B. Dorfstraßen) zählen nur, wenn der Weg über das
    Netz mindestens 1,5-mal so lang ist.
 3. **Notfallbuchten** (`highway=escape`), die direkt an der Strecke liegen.
+4. **Straßenenden weitergeführt**: Wo die Auswahl endet, die Straße in OSM aber
+   weitergeht, werden die anschließenden Straßen 50 m (Spielmeter) mitgenommen, an
+   weiteren Abzweigen nur geradeaus. Danach endet die Straße offen
+   (`extras.end_extension_m`).
 
 In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Schalter
 (`mapping.jsonc`):

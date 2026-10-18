@@ -60,7 +60,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     use_links = float(ext.get("same_level_max_m", 0)) > 0
     use_escape = bool(ext.get("escape"))
     via = frozenset(ext.get("via_highway", frozenset()))
-    extra_classes = (via if use_links else frozenset()) | (ind.get("highway", frozenset()) if use_ind else frozenset()) \
+    use_ends = float(ext.get("end_extension_m", 0)) > 0
+    extra_classes = (via if use_links or use_ends else frozenset()) | (ind.get("highway", frozenset()) if use_ind else frozenset()) \
         | (frozenset({"escape"}) if use_escape else frozenset())
     excl_service = lod.exclude_service if lod.exclude_service is not None else profile.exclude_service
     excl_access = lod.exclude_access if lod.exclude_access is not None else profile.exclude_access
@@ -70,8 +71,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     ways = [w for w in all_ways if w.tags.get("highway") in lod.all_classes]
     net = Network(ways, profile)
     selected = net.select(lod)
-    industry_stats = links_stats = escape_stats = services_stats = None
-    if use_ind or use_links or use_escape:
+    industry_stats = links_stats = escape_stats = services_stats = ends_stats = None
+    if use_ind or use_links or use_escape or use_ends:
         from .extras import escape_lanes, local_xy, same_level_links
         # alle Wege, damit an Einmündungen ins Netz geteilt wird; Netzwege selbst sind gesperrt
         net2 = Network(all_ways, profile)
@@ -134,6 +135,12 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                 if e.role not in (None, "taken"):
                     starts2.update(e.node_ids())
             services_stats = connect_services(net2, starts2, targets, loc, ind["highway"], ind["max_distance_m"])
+        # 4. Straßenenden weiterführen (zuletzt, damit auch Zufahrten und Verbindungen enden)
+        # Länge in Spielmetern (wie die Mindest-Segmentlänge), also × Maßstab in Echtmetern
+        ext_len = float(ext.get("end_extension_m", 0)) * profile.scale_h
+        if ext_len > 0:
+            from .extras import extend_ends
+            ends_stats = extend_ends(net2, xy, loc, via | lod.all_classes, ext_len)
         new = [e for e in net2.edges if e.role not in (None, "taken")]
         if new:
             # Netzkanten an den neuen Einmündungen teilen: Auswahl aus net2 übernehmen
@@ -147,6 +154,11 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                         resel.append(e)
                         break
             selected = resel + new
+        if ends_stats and ends_stats["partial"]:
+            top = max(e.idx for e in selected) + 1 if selected else 0
+            for k, e in enumerate(ends_stats["partial"]):
+                e.idx = top + k
+            selected = selected + ends_stats["partial"]
     chains = build_chains(selected)
     log.info("%d durchgehende Ketten", len(chains))
 
@@ -154,7 +166,9 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     for c in chains:
         needed.update(c.node_ids())
     log.info("Lese Koordinaten für %d Knoten ...", len(needed))
-    locations = read_node_locations(input_path, needed)
+    locations = read_node_locations(input_path, {n for n in needed if n > 0})
+    if ends_stats:
+        locations.update(ends_stats["locations"])   # berechnete Endpunkte der Verlängerungen
 
     projector = Projector(profile.crs, profile.origin_lonlat)
     pieces = []
@@ -215,6 +229,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     stats["same_level_links"] = links_stats
     stats["escape_lanes"] = escape_stats
     stats["services_access"] = services_stats
+    stats["end_extensions"] = ({k: v for k, v in ends_stats.items() if k in ("ends", "edges")}
+                               | {"partial": len(ends_stats["partial"])}) if ends_stats else None
     crossings = crossing_clearances(roads)
     low = [c for c in crossings if c["clearance_m"] < MIN_CLEARANCE_M]
     stats["grade_separated_crossings"] = len(crossings)
@@ -255,7 +271,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
 def _end_info(p, at_start: bool) -> dict:
     nid = int(p.dense.node_ids[0 if at_start else -1])
     cut = p.start_cut if at_start else p.end_cut
-    if cut or nid == NO_NODE:
+    if cut or nid == NO_NODE or nid < 0:   # < 0: berechneter Endpunkt einer Verlängerung
         return {"kind": "cut"}
     return {"kind": "node", "osm_node": nid}
 

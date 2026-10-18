@@ -214,6 +214,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         "same_level_ratio": _float(ext, "same_level_ratio", "extras", default=1.5),
         "rest_loop_max_m": _float(ext, "rest_loop_max_m", "extras", default=1500.0, positive=False),
         "escape": bool(ext.get("escape", True)),
+        "end_extension_m": _float(ext, "end_extension_m", "extras", default=50.0, positive=False),
         "via_highway": _str_set(ext.get("via_highway", drivable_default), "extras.via_highway"),
     }
 

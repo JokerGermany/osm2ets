@@ -48,7 +48,9 @@ def test_short_link_between_two_ramps_in_l1(tmp_path, profile):
 def test_long_link_is_not_added(tmp_path, profile):
     nodes, ways = _interchange(700)
     model = build(str(write_osm(tmp_path / "b.osm", nodes, ways)), profile, "L1")
-    assert 11 not in _ways_in(model)
+    # nicht verbunden: von Weg 11 nur die beiden 50-m-Verlängerungen an den Rampenenden
+    km = sum(r["length_m"] for r in model["roads"] if 11 in r["runs"][0]["osm_ways"])
+    assert km <= 101, km
 
 
 def test_loop_at_same_road_is_rejected(tmp_path, profile):
@@ -157,3 +159,28 @@ def test_private_ways_only_in_l5_and_marked(tmp_path, profile):
     assert access[2] == "private"
     assert access[3] is None and access[1] is None
 
+
+
+def test_road_ends_are_extended_50_m(tmp_path, profile):
+    # L1: Rampe endet an der Bundesstraße (T-Kreuzung); die geht in beide Richtungen weiter
+    nodes = {1: _pt(-2000, 0), 2: _pt(-200, 0), 3: _pt(2000, 0),
+             21: _pt(0, -300),
+             30: _pt(-400, -300), 31: _pt(-20, -300), 32: _pt(400, -300),
+             40: _pt(0, -320), 41: _pt(0, -600)}          # kurze Gemeindestraße an 21 (geradeaus)
+    ways = [(1, [1, 2, 3], {"highway": "motorway", "oneway": "no", "ref": "A 9"}),
+            (2, [2, 21], {"highway": "motorway_link", "oneway": "no"}),
+            (3, [30, 31, 21, 32], {"highway": "primary", "ref": "B 1"}),
+            (4, [21, 40, 41], {"highway": "unclassified"})]
+    profile.extras["same_level_max_m"] = 0          # nur die Verlängerung prüfen
+    profile.industry["enabled"] = False
+    model = build(str(write_osm(tmp_path / "x.osm", nodes, ways)), profile, "L1")
+    ext = [r for r in model["roads"] if r["runs"][0]["role"] == "connector"]
+    lengths = sorted(round(r["length_m"]) for r in ext)
+    # drei Arme ab Knoten 21: B 1 nach West und Ost, Gemeindestraße nach Süden – je 50 m
+    assert len(ext) == 3 and all(abs(L - 50) <= 1 for L in lengths), lengths
+    assert all(r["end"]["kind"] == "cut" or r["start"]["kind"] == "cut" for r in ext)
+    assert model["stats"]["end_extensions"]["ends"] == 1
+    # ohne Verlängerung endet die Rampe einfach
+    profile.extras["end_extension_m"] = 0
+    model0 = build(str(write_osm(tmp_path / "y.osm", nodes, ways)), profile, "L1")
+    assert not [r for r in model0["roads"] if r["runs"][0]["role"] == "connector"]
