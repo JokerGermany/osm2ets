@@ -102,6 +102,7 @@ public static class TerrainClearance
         }
 
         int clamped = 0;
+        float MinSide = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_RT_MIN"), System.Globalization.CultureInfo.InvariantCulture, out var ms) ? ms : 2f;
         foreach (var s in segs.Skip(firstRoadSeg))
         {
             var style = styles[s.Road][s.Index];
@@ -166,6 +167,11 @@ public static class TerrainClearance
                     }
                 }
             }
+            // Mindestbreite wie in der SCS-Karte (1,5–2,2 m an der Zwickel-/Mittelstreifenseite):
+            // ohne Straßengelände stößt der Asphaltrand direkt an das tiefer liegende Füllgelände,
+            // im Editor als schwarzer Streifen entlang der Fahrbahn
+            left = MathF.Max(left, MathF.Min(style.TerrainLeft, MinSide));
+            right = MathF.Max(right, MathF.Min(style.TerrainRight, MinSide));
             if (left < style.TerrainLeft - 0.01f || right < style.TerrainRight - 0.01f)
             {
                 styles[s.Road][s.Index] = style with { TerrainLeft = MathF.Floor(left * 2) / 2, TerrainRight = MathF.Floor(right * 2) / 2 };
