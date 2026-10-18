@@ -89,7 +89,7 @@ static void MappingResolve()
     var mw = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true));
     Check(mw.RoadType == "ger13" && mw.TerrainLeft == 4 && mw.TerrainRight == 30, $"Autobahn-Gelände {mw.TerrainLeft}/{mw.TerrainRight}");
     var bridge = cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true, bridge: true));
-    Check(bridge.TerrainLeft == mw.TerrainLeft, "Brücke vorläufig mit Gelände wie die Straße");
+    Check(bridge.TerrainLeft == 0 && bridge.TerrainRight == 0 && bridge.RoadType == mw.RoadType, "Brücke ohne Geländestreifen, sonst wie die Straße");
     Check(bridge.RoadType == mw.RoadType, "Brücke behält Straßentyp");
     var link = cfg.Resolve(MakeRun(0, 1, "motorway_link", role: "link", oneway: true));
     Check(link.TerrainLeft == 10, "Rampe");
@@ -151,8 +151,8 @@ static void BuildProducesExpectedMap()
     Check(res.RoadsWritten == 2 && res.RoadsSkipped == 1, $"geschrieben {res.RoadsWritten}, übersprungen {res.RoadsSkipped}");
     Check(res.Items == 2 + 5, $"Straßenstücke {res.Items}");
     Check(map.MapItems.Values.OfType<Road>().Count() == 7, "Anzahl Road-Items");
-    // Brücken haben in der mitgelieferten Zuordnung keinen eigenen Stil mehr
-    Check(res.StyleChanges == 0, $"Typwechsel {res.StyleChanges}");
+    // Brücke: gleicher Straßentyp, aber ohne Geländestreifen → Wechsel hinein und heraus
+    Check(res.StyleChanges == 2, $"Typwechsel {res.StyleChanges}");
     Check(res.StartRoad == "c0p0", "Startpunkt auf der Autobahn");
     // Abschnitt 4 (nicht Brücke, Nachbarn nicht Brücke), Mitte zwischen z=1600 und z=1500
     Check(res.StartPosition.Y == 0 && Math.Abs(res.StartPosition.Z - 1550) < 0.01, $"Startpunkt: {res.StartPosition}");
