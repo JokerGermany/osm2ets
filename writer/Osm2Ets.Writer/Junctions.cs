@@ -43,6 +43,11 @@ public static class Junctions
     public const float MaxBend = 75f;
 
     /// <summary>Länge des Bogens je nach Abweichung (m); 0 = gerader Einlauf genügt.</summary>
+    /// <summary>Größte Abweichung eines Arms von der Prefab-Knotenrichtung (Grad); sonst ohne Prefab.
+    /// OSM2ETS_JUNCTION_MAXDEG überschreibt.</summary>
+    public static float MaxArmDeg = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JUNCTION_MAXDEG"),
+        System.Globalization.CultureInfo.InvariantCulture, out var md) ? md : 45f;
+
     public static float BendLength(float deg) => deg < 20 ? 0 : MathF.Min(25 + 1.2f * deg, 110);
 
     /// <summary>Gerader Einlauf in den Prefab-Knoten (m); kürzer als an Anschlussstellen.</summary>
@@ -302,6 +307,18 @@ public static class Junctions
             for (int i = 0; i < p.Arms.Length; i++)   // Bögen zur neuen Drehung neu bestimmen
                 if (i != p.SnapArm)
                     p.Bend[i] = BendLength(MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI);
+
+        // Passt ein Arm im Winkel gar nicht zum Prefab (z. B. spitz einmündende Rampe an einem
+        // T-Prefab), müsste die Straße auf bis zu 110 m in einem Bogen zum Prefab-Knoten umgelegt
+        // werden – bei kurzen Straßen fast ganz, weit neben ihrer OSM-Lage (Rampe an der B 85: 45 m).
+        // Dann lieber ohne Prefab.
+        for (int i = 0; i < p.Arms.Length; i++)
+        {
+            if (i == p.SnapArm) continue;
+            float e = MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI;
+            if (e > MaxArmDeg)
+            { reason = $"{p.Arms[i].Road.Id} weicht {e:0}° von der Prefab-Richtung ab (höchstens {MaxArmDeg:0}°)"; return false; }
+        }
 
         // Drehung als Quaternion: lokalen Ausgang von Knoten 0 auf die Zielrichtung drehen
         var v0 = Out(p.NodeOf[0]);
