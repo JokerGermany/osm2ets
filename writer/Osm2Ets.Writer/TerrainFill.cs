@@ -312,7 +312,7 @@ public static class TerrainFill
     /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
     /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
     /// </summary>
-    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge)
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
@@ -334,7 +334,16 @@ public static class TerrainFill
             {
                 float x = cols > 1 ? len * i / (cols - 1) : 0;
                 float d = edge + rowsD[j];
-                var w = new Vector2(pa.X, pa.Z) + f * x + rn * (zSign * d);
+                // Querrichtung zwischen den Knotentangenten überblenden, damit benachbarte
+                // Stücke an der Fuge dieselbe Kante haben (sonst Keile außen, Falten innen)
+                var nrm = rn;
+                if (tA is { } ta && tB is { } tb)
+                {
+                    float u = cols > 1 ? (float)i / (cols - 1) : 0;
+                    var t = Vector2.Normalize(Vector2.Lerp(ta, tb, u));
+                    nrm = new Vector2(-t.Y, t.X);
+                }
+                var w = new Vector2(pa.X, pa.Z) + f * x + nrm * (zSign * d);
                 float h = grid.HeightAt(w.X, w.Y);
                 if (float.IsNaN(h)) continue;
                 float roadY = pa.Y + (pb.Y - pa.Y) * (cols > 1 ? (float)i / (cols - 1) : 0);

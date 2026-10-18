@@ -285,8 +285,18 @@ public static class MapWriter
                         rd.Recalculate();
                         float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
                         var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
-                        if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg, pa, pb, rd.Left.Terrain.Size, -1, e) < 0) bad++;
-                        if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg, pa, pb, rd.Right.Terrain.Size, +1, e) < 0) bad++;
+                        Vector2 Tan(Quaternion q)
+                        {
+                            var v = Vector3.Transform(-Vector3.UnitZ, q); var t = new Vector2(v.X, v.Z);
+                            var ch = new Vector2(pb.X - pa.X, pb.Z - pa.Z);
+                            if (t.LengthSquared() < 1e-6f) t = ch;
+                            t = Vector2.Normalize(t);
+                            return Vector2.Dot(t, ch) < 0 ? -t : t;
+                        }
+                        Vector2? ta = null, tb = null;
+                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
+                        if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb) < 0) bad++;
+                        if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb) < 0) bad++;
                         shaped++;
                         if (rd == lastItem[entry]) break;
                     }
