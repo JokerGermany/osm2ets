@@ -23,6 +23,11 @@ public static class TerrainFill
     public static bool FillUnderRoads = Environment.GetEnvironmentVariable("OSM2ETS_FILL_MASKROADS") is null;
     /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
     public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
+    /// <summary>Füllstücke verketten (alt, OSM2ETS_FILL_CHAIN=1) – siehe Emit.</summary>
+    public static bool Chain = Environment.GetEnvironmentVariable("OSM2ETS_FILL_CHAIN") is not null;
+    /// <summary>Mittellinie (Zeile 0) mit eigenen Höhenpunkten belegen, wie in der SCS-Karte
+    /// (dort ~7,5 % aller Offsets in Zeile 0). Aus: OSM2ETS_FILL_NOROW0.</summary>
+    public static bool Row0 = Environment.GetEnvironmentVariable("OSM2ETS_FILL_NOROW0") is null;
     public const float PrefabLaneRadius = 2f;
     public const float FineSpacing = 1f;   // Reihenabstand für die Reste neben Straßen (m)
     public const float Overlap = 2f;       // jede Seite reicht so weit über die Nachbarreihe (keine Lücken)
@@ -319,7 +324,13 @@ public static class TerrainFill
             placed(run[a].X, run[b].X, l, r);
             var pa = new Vector3(run[a].X, grid.HeightAt(run[a].X, z) - FillDrop, z);
             var pb = new Vector3(run[b].X, grid.HeightAt(run[b].X, z) - FillDrop, z);
-            t = t is null ? Terrain.Add(map, pa, pb, material, l, r) : t.Append(pb, material, l, r);
+            // Jedes Stück eigenständig (nicht per Append verkettet): TruckLib mittelt an einem
+            // gemeinsamen Knoten die Richtung beider Nachbarstücke. Wechselt die Steigung dort
+            // stark (Böschung neben Straße), wölbt sich die Mittellinie des Stücks als Hermite-
+            // Kurve meterhoch auf – der „Keil“ auf der A 70 an der B 85 (bis ~3 m über der Fahrbahn).
+            // Eigenständig zeigt jeder Knoten entlang der eigenen Sehne.
+            t = Chain ? (t is null ? Terrain.Add(map, pa, pb, material, l, r) : t.Append(pb, material, l, r))
+                      : Terrain.Add(map, pa, pb, material, l, r);
             t.Boundary = false;
             t.IgnoreCutPlanes = true;   // Prefabs schneiden sonst Gelände in ihrer Umgebung weg
             t.ViewDistance = 1000;
@@ -380,7 +391,7 @@ public static class TerrainFill
         if (rowsD.Count == rows) RowShort++;
         // QuadData.Cols/Rows zählen Quads; die Eckpunkte laufen 0..Cols bzw. 0..Rows
         // (so auch in der SCS-Originalkarte). Früher fehlte die letzte Spalte → Wand am Stückende.
-        for (int j = 1; j < rowsD.Count; j++)
+        for (int j = Row0 ? 0 : 1; j < rowsD.Count; j++)
             for (int i = 0; i <= cols; i++)
             {
                 float x = len * i / cols;
