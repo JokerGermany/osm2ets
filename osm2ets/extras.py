@@ -213,7 +213,7 @@ def extend_ends(net, xy: dict, loc: dict, classes: frozenset, length_m: float,
             deg[e.u] = deg.get(e.u, 0) + 1
             deg[e.v] = deg.get(e.v, 0) + 1
     in_sel = set(deg)
-    ends = [n for n, d in deg.items() if d == 1]
+    ends = sorted(deg)
     next_id = id_start
     marked: set[int] = set()
 
@@ -230,8 +230,47 @@ def extend_ends(net, xy: dict, loc: dict, classes: frozenset, length_m: float,
             return None
         return math.atan2(pb[1] - pa[1], pb[0] - pa[0])
 
-    for n in sorted(ends):
-        starts = [(ei, end) for ei, end in net.adjacency.get(n, ()) if usable(net.edges[ei])]
+    def straight(n, came_from):
+        """Unbenutzte Kante, die eine bei n endende Kante geradeaus fortsetzt (≤ 45°), sonst None.
+        Gibt es geradeaus schon eine ausgewählte Kante, geht die Straße weiter: None."""
+        h0 = heading(came_from, n)
+        if h0 is None:
+            return None
+        best, bd, sel_straight = None, math.radians(45), False
+        for ej, en in net.adjacency.get(n, ()):
+            f = net.edges[ej]
+            nxt = outward(f, n)
+            if len(nxt) < 2 or nxt[1] == came_from:
+                continue
+            h1 = heading(n, nxt[1])
+            if h1 is None:
+                continue
+            d = abs((h1 - h0 + math.pi) % (2 * math.pi) - math.pi)
+            if d > math.radians(45):
+                continue
+            if f.role is not None:
+                sel_straight = True
+            elif usable(f) and d < bd:
+                best, bd = (ej, en), d
+        return None if sel_straight else best
+
+    for n in ends:
+        if deg[n] == 1:
+            # echtes Ende der Auswahl: alle anschließenden Straßen
+            starts = [(ei, end) for ei, end in net.adjacency.get(n, ()) if usable(net.edges[ei])]
+        else:
+            # Straße hört an einer Kreuzung auf, geht in OSM aber geradeaus weiter
+            starts = []
+            for ei, end in net.adjacency.get(n, ()):
+                e = net.edges[ei]
+                if e.role is None:
+                    continue
+                ids = outward(e, n)
+                if len(ids) < 2:
+                    continue
+                c = straight(n, ids[1])
+                if c is not None and c not in starts:
+                    starts.append(c)
         if not starts:
             continue
         stats["ends"] += 1

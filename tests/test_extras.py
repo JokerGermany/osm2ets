@@ -41,7 +41,10 @@ def test_short_link_between_two_ramps_in_l1(tmp_path, profile):
     model = build(str(write_osm(tmp_path / "a.osm", nodes, ways)), profile, "L1")
     w = _ways_in(model)
     assert w[11] == {"connector"}            # Bundesstraße zwischen den Rampen (300 m)
-    assert 10 not in w and 12 not in w       # darüber hinaus nicht
+    # darüber hinaus nur die 50-m-Verlängerung der Bundesstraße
+    for wid in (10, 12):
+        km = sum(r["length_m"] for r in model["roads"] if wid in r["runs"][0]["osm_ways"])
+        assert 49 <= km <= 51, (wid, km)
     assert model["stats"]["same_level_links"]["links"] == 1
 
 
