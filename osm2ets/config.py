@@ -81,6 +81,7 @@ class Profile:
     exclude_service: frozenset
     lods: dict = field(default_factory=dict)
     industry: dict = field(default_factory=dict)
+    extras: dict = field(default_factory=dict)
 
     def lod(self, name: str) -> LodConfig:
         try:
@@ -195,6 +196,19 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         raise ConfigError("lods: mindestens eine Detailstufe erwartet")
     lods = {str(k): _parse_lod(str(k), v or {}) for k, v in lods_raw.items()}
 
+    ext = data.get("extras") or {}
+    if not isinstance(ext, dict):
+        raise ConfigError("extras: YAML-Objekt erwartet")
+    drivable_default = ["motorway", "trunk", "primary", "secondary", "tertiary", "motorway_link",
+                        "trunk_link", "primary_link", "secondary_link", "tertiary_link", "unclassified",
+                        "residential", "living_street", "service", "road"]
+    extras = {
+        "same_level_max_m": _float(ext, "same_level_max_m", "extras", default=500.0, positive=False),
+        "same_level_ratio": _float(ext, "same_level_ratio", "extras", default=1.5),
+        "escape": bool(ext.get("escape", True)),
+        "via_highway": _str_set(ext.get("via_highway", drivable_default), "extras.via_highway"),
+    }
+
     profile = Profile(
         name=str(data.get("name", "profil")),
         description=str(data.get("description", "")),
@@ -217,10 +231,10 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         exclude_access=_str_set(net.get("exclude_access", []), "network.exclude_access"),
         exclude_service=_str_set(net.get("exclude_service", []), "network.exclude_service"),
         lods=lods,
+        extras=extras,
         industry={
             "enabled": bool((data.get("industry") or {}).get("enabled", True)),
-            "highway": _str_set((data.get("industry") or {}).get(
-                "highway", ["tertiary", "unclassified", "residential", "service", "living_street"]), "industry.highway"),
+            "highway": _str_set((data.get("industry") or {}).get("highway", drivable_default), "industry.highway"),
             "max_distance_m": float((data.get("industry") or {}).get("max_distance_m", 300.0)),
             "inside_m": float((data.get("industry") or {}).get("inside_m", 150.0)),
         },

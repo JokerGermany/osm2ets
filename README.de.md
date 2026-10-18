@@ -3,9 +3,9 @@
 **Deutsch** · [English](README.md)
 
 Erzeugt aus OpenStreetMap-Daten ETS2-Kartendateien in wählbarem Maßstab (Standard 1:1)
-und in Detailstufen. Die gröbste Stufe enthält nur das Fernstraßennetz – in Deutschland
-Autobahnen und Bundesstraßen – plus Rampen und die anschließenden Straßen bis zur
-nächsten Kreuzung.
+und in fünf Detailstufen. Die gröbste Stufe enthält nur Autobahnen und Kraftfahrstraßen
+mit ihren Rampen, dazu kurze Verbindungsstücke, Notfallbuchten und die Zufahrten zu
+nahen Industrie- und Gewerbegebieten.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ v1–v46 (siehe Commits).
 
 | Bereich | Stand |
 |---|---|
-| Straßennetz L1–L4 aus OSM, Maßstab 1:N, fester Ursprung | umgesetzt, getestet |
+| Straßennetz L1–L5 aus OSM, Maßstab 1:N, fester Ursprung | umgesetzt, getestet |
 | Echte Straßenvorlagen (ger13/ger16 Autobahn, ger2 Rampe, ger1/ger5/ger9/ger29) | umgesetzt, im Spiel befahrbar |
 | Durchgehende Straßen an Knoten verbunden, keine unsichtbaren Wände | umgesetzt, im Spiel geprüft |
 | Autobahn-Aus-/Einfahrt mit Prefabs (2 Spuren, Rampe rechts) | umgesetzt, im Editor geprüft |
@@ -145,21 +145,40 @@ Startpunkt für Run Map: Mitte der längsten Autobahnfahrbahn, nicht auf einer B
 
 ## Detailstufen (Profil `de`)
 
-| Stufe | Kernnetz | Anschlussstraßen (bis zur nächsten Kreuzung) |
-|---|---|---|
-| L1 | motorway, trunk, Bundesstraßen (B-Nummer im `ref`), Rampen | primary … living_street |
-| L2 | + alle primary, secondary, tertiary (Landes-/Staats-, Kreisstraßen) | unclassified, residential, living_street |
-| L3 | + unclassified, residential, living_street | service |
-| L4 | + service (z. B. Rastanlagen) | – |
+Jede Stufe enthält die vorige. Maßgeblich ist die OSM-Klasse (`highway=*`), nicht die
+Nummer im `ref`-Tag.
 
-„Kreuzung" heißt: ein Knoten, an dem sich mindestens drei Straßenstücke der Klassen
-dieser Stufe treffen (Kern, Rampen, Anschlussklassen). Alles andere zählt nicht – also
-weder Feld-, Fuß- und Radwege noch `access=private`/`no`, in L1/L2 auch keine
-`service`-Wege, in L3/L4 keine Parkplatzgassen und Grundstückszufahrten.
-Die Tiefe (`connectors.depth`) ist im Profil einstellbar.
+| Stufe | Kernnetz (mit Rampen) |
+|---|---|
+| L1 | motorway, trunk (+ motorway_link, trunk_link) |
+| L2 | + primary (+ primary_link), meist Bundesstraßen |
+| L3 | + secondary (+ secondary_link), meist Landes-/Staatsstraßen |
+| L4 | + tertiary (+ tertiary_link), meist Kreisstraßen |
+| L5 | + alle übrigen befahrbaren Straßen: unclassified, residential, living_street, service, road |
 
-Bundesstraßen werden an der B-Nummer erkannt, weil `primary` in OSM nur meistens
-Bundesstraße bedeutet.
+Rampen gehören nur dazu, wenn sie das Kernnetz berühren.
+
+Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
+
+1. **Industrie, Gewerbe, Firmen** höchstens 300 m (Weg entlang der Straße) von einer
+   Kreuzung oder Abfahrt des Netzes. Ein erreichtes Gebiet wird ganz aufgenommen, mit
+   allen Straßen darin. Auf Autobahnen und Kraftfahrstraßen selbst beginnt keine
+   Zufahrt, nur an Rampenenden. Eine Firma neben der Autobahn ohne nahe Ausfahrt zieht
+   so keine kilometerlangen Straßen nach sich. Ziele: `landuse=industrial|commercial|
+   retail|quarry|farmyard|port`, `industrial=*`, `man_made=works`,
+   `building=warehouse|industrial`, `craft=*`, `office=company`.
+2. **Kurze Verbindungen gleicher Stufe**: ein Weg über andere Straßen, höchstens 500 m
+   lang, der zwei Straßen der Stufe verbindet, z. B. das Stück Bundesstraße zwischen zwei
+   Autobahnrampen in L1. Schleifen an derselben Straße (Tankstelle, Rastplatz) zählen
+   nicht: Der Weg über das Netz muss mindestens 1,5-mal so lang sein.
+3. **Notfallbuchten** (`highway=escape`), die direkt an der Strecke liegen.
+
+Nicht befahrbar und deshalb nie dabei: `track` (Feld- und Waldwege), Fuß-, Rad- und
+Reitwege, Treppen, Fußgängerzonen, Baustellen, geplante Straßen, `access=private`/`no`,
+Parkplatzgassen und Grundstückszufahrten.
+
+Der frühere Mechanismus „Anschlussstraßen bis zur nächsten Kreuzung“
+(`connectors.depth`) ist weiter im Profil einstellbar, im Profil `de` aber aus.
 
 ## Maßstab und Koordinaten
 

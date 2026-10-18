@@ -4,7 +4,7 @@
 In allen Detailstufen werden Flächen, die nahe am gewählten Netz liegen, über den
 kürzesten Weg aus öffentlichen Straßen angebunden – in ETS2 sitzen dort später die
 Firmen (Auftragsziele). Ziele:
-  * Flächen (geschlossene Wege): landuse=industrial|commercial|retail|quarry|farmyard,
+  * Flächen (geschlossene Wege): landuse=industrial|commercial|retail|quarry|farmyard|port,
     industrial=*, man_made=works, building=warehouse|industrial, craft=*
   * Punkte (Knoten) mit industrial=*, man_made=works, craft=*, office=company
 Multipolygon-Relationen werden (noch) nicht ausgewertet.
@@ -20,7 +20,7 @@ import osmium
 
 log = logging.getLogger(__name__)
 
-AREA_LANDUSE = {"industrial", "commercial", "retail", "quarry", "farmyard"}
+AREA_LANDUSE = {"industrial", "commercial", "retail", "quarry", "farmyard", "port"}
 AREA_BUILDING = {"warehouse", "industrial"}
 
 

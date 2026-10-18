@@ -3,11 +3,11 @@
 # Straßenkategorien folgen der in Deutschland üblichen OSM-Konvention:
 #   motorway  = Bundesautobahn
 #   trunk     = autobahnähnliche Straße / Kraftfahrstraße
-#   primary   = meist Bundesstraße (zusätzlich über die B-Nummer im ref-Tag erkannt)
+#   primary   = meist Bundesstraße
 #   secondary = meist Landes-/Staatsstraße
 #   tertiary  = meist Kreisstraße
-# Das ist eine Konvention, keine harte Regel – deshalb erkennt L1 Bundesstraßen
-# zusätzlich an der Nummer ("B 85") statt nur an der Klasse.
+# Das ist eine Konvention, keine harte Regel. Die Detailstufen richten sich nach der
+# Klasse (highway=*), nicht nach der Nummer im ref-Tag.
 
 name: de
 description: Deutschland
@@ -73,59 +73,72 @@ network:
   # service-Wege dieser Arten zählen nicht als Straße.
   exclude_service: [parking_aisle, driveway, drive-through, emergency_access]
 
-# Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen
+# Befahrbare Straßenklassen (alles, worüber Zusatzstraßen der Detailstufen führen dürfen).
+# Nicht dabei: track (Feld-/Waldwege), path, footway, cycleway, bridleway, steps,
+# pedestrian, construction, proposed, raceway, busway.
+drivable: &drivable [motorway, trunk, primary, secondary, tertiary,
+                     motorway_link, trunk_link, primary_link, secondary_link, tertiary_link,
+                     unclassified, residential, living_street, service, road]
+
+# Zusätzlich in JEDER Detailstufe (siehe extras.py):
+extras:
+  # 2. Kurze Verbindung zwischen zwei Straßen der Stufe (z. B. das Stück Bundesstraße
+  #    zwischen zwei Autobahnrampen in L1): höchstens so lang (Echtmeter) ...
+  same_level_max_m: 500
+  #    ... und nur, wenn der Weg über das Netz der Stufe mindestens so viel länger ist –
+  #    sonst wäre es nur eine Schleife an derselben Straße (Tankstelle, Rastplatz).
+  same_level_ratio: 1.5
+  # 3. Notfallbuchten/Notauffahrten (highway=escape), die direkt an der Strecke liegen
+  escape: true
+  # Straßenklassen, über die Verbindungen (2.) und Zufahrten (1.) führen dürfen
+  via_highway: *drivable
+
+# 1. Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen: Ziele höchstens
+#    max_distance_m (Weg entlang der Straße) von einer Kreuzung bzw. Abfahrt des Netzes;
+#    erreichte Gebiete werden ganz aufgenommen. Auf Autobahnen/Kraftfahrstraßen selbst
+#    beginnt keine Zufahrt (nur an Rampenenden) – eine Firma neben der Autobahn ohne nahe
+#    Ausfahrt zieht so keine kilometerlangen Straßen nach sich.
 industry:
   enabled: true
   # Straßenklassen, über die eine Zufahrt führen darf
-  highway: [tertiary, unclassified, residential, service, living_street]
+  highway: *drivable
   # Höchstens so weit (Echtmeter, Weg entlang der Straße) vom gewählten Netz entfernt
   max_distance_m: 300
   # So weit wird noch ins Gebiet hineingefahren (Platz für ein Firmen-Prefab)
   inside_m: 150
 
+# Detailstufen: jede Stufe enthält die vorige (Kern = Straßenklassen der Stufe,
+# Rampen nur, wenn sie das Kernnetz berühren) plus die Zusätze oben (extras, industry).
 lods:
   L1:
-    description: >-
-      Autobahnen, Kraftfahr- und Bundesstraßen inkl. Rampen sowie die
-      anschließenden Straßen bis zur nächsten Kreuzung
+    description: Autobahnen und Kraftfahrstraßen mit Rampen
     core:
       - highway: [motorway, trunk]
-      - highway: [primary, secondary, tertiary]
-        ref_regex: '(^|;)\s*B\s?\d+'
-    links: [motorway_link, trunk_link, primary_link]
-    connectors:
-      # Wie viele Kreuzungen weit anschließende Straßen verfolgt werden.
-      depth: 1
-      highway: [primary, secondary, tertiary, unclassified, residential,
-                living_street, secondary_link, tertiary_link]
+    links: [motorway_link, trunk_link]
 
   L2:
-    description: L1 + Landes-/Staats- und Kreisstraßen
+    description: L1 + primary (meist Bundesstraßen) mit Rampen
+    core:
+      - highway: [motorway, trunk, primary]
+    links: [motorway_link, trunk_link, primary_link]
+
+  L3:
+    description: L2 + secondary (meist Landes-/Staatsstraßen) mit Rampen
+    core:
+      - highway: [motorway, trunk, primary, secondary]
+    links: [motorway_link, trunk_link, primary_link, secondary_link]
+
+  L4:
+    description: L3 + tertiary (meist Kreisstraßen) mit Rampen
     core:
       - highway: [motorway, trunk, primary, secondary, tertiary]
     links: [motorway_link, trunk_link, primary_link, secondary_link, tertiary_link]
-    connectors:
-      depth: 1
-      highway: [unclassified, residential, living_street]
 
-  L3:
-    description: L2 + Gemeinde- und Innerortsstraßen
-    core:
-      - highway: [motorway, trunk, primary, secondary, tertiary,
-                  unclassified, residential, living_street]
-    links: [motorway_link, trunk_link, primary_link, secondary_link, tertiary_link]
-    connectors:
-      depth: 1
-      highway: [service]
-
-  L4:
+  L5:
     description: >-
-      L3 + Erschließungswege (service, z. B. Rastanlagen). Flächen und
-      Gebäude sind in dieser Version noch nicht umgesetzt.
+      L4 + alle übrigen befahrbaren Straßen (unclassified, residential, living_street,
+      service, road). Flächen und Gebäude sind in dieser Version noch nicht umgesetzt.
     core:
       - highway: [motorway, trunk, primary, secondary, tertiary,
-                  unclassified, residential, living_street, service]
+                  unclassified, residential, living_street, service, road]
     links: [motorway_link, trunk_link, primary_link, secondary_link, tertiary_link]
-    connectors:
-      depth: 0
-      highway: []

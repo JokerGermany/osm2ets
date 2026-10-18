@@ -55,19 +55,22 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
 
     log.info("Lese Wege aus %s ...", input_path)
     ind = profile.industry or {}
+    ext = profile.extras or {}
     use_ind = bool(ind.get("enabled"))
-    classes = lod.all_classes | (ind.get("highway", frozenset()) if use_ind else frozenset())
-    all_ways = read_ways(input_path, classes, profile.exclude_access, profile.exclude_service)
+    use_links = float(ext.get("same_level_max_m", 0)) > 0
+    use_escape = bool(ext.get("escape"))
+    via = frozenset(ext.get("via_highway", frozenset()))
+    extra_classes = (via if use_links else frozenset()) | (ind.get("highway", frozenset()) if use_ind else frozenset()) \
+        | (frozenset({"escape"}) if use_escape else frozenset())
+    all_ways = read_ways(input_path, lod.all_classes | extra_classes, profile.exclude_access, profile.exclude_service)
     # Auswahl der Detailstufe nur auf ihren eigenen Klassen (sonst enden Anschlussstraßen
     # an jeder zusätzlichen Einmündung)
     ways = [w for w in all_ways if w.tags.get("highway") in lod.all_classes]
     net = Network(ways, profile)
     selected = net.select(lod)
-    industry_stats = None
-    if use_ind:
-        from .industry import connect, read_targets
-        targets, tnodes = read_targets(input_path)
-        used = {e.way.id for e in selected}
+    industry_stats = links_stats = escape_stats = None
+    if use_ind or use_links or use_escape:
+        from .extras import escape_lanes, local_xy, same_level_links
         # alle Wege, damit an Einmündungen ins Netz geteilt wird; Netzwege selbst sind gesperrt
         net2 = Network(all_ways, profile)
         spans: dict = {}
@@ -79,23 +82,45 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         nn = set()
         for e in selected:
             nn.update(e.node_ids())   # auch Einmündungen mitten in einem Netzstück
+        targets, tnodes = [], set()
+        if use_ind:
+            from .industry import read_targets
+            targets, tnodes = read_targets(input_path)
         cand = set(tnodes) | nn
         for e in net2.edges:
-            if e.highway in ind["highway"]:
+            if e.role is None:
                 cand.update(e.node_ids())
         loc = read_node_locations(input_path, cand)
-        major = {"motorway", "trunk", "motorway_link", "trunk_link"}
-        on_major = set()
-        for e in selected:
-            if e.highway in major:
-                ids = e.node_ids()
-                on_major.update(ids[1:-1] if e.highway.endswith("_link") else ids)
-        # Knoten, an denen auch eine nicht-autobahnartige Netzstraße endet, bleiben Start
-        for e in selected:
-            if e.highway not in major:
-                on_major.difference_update(e.node_ids())
-        industry_stats = connect(net2, nn, targets, loc, ind["highway"], ind["max_distance_m"], ind["inside_m"],
-                                 no_start=on_major)
+        xy = local_xy(loc)
+        # 2. kurze Verbindungen zwischen zwei Straßen der Stufe
+        if use_links:
+            links_stats = same_level_links(net2, nn, xy, via, float(ext["same_level_max_m"]),
+                                           float(ext.get("same_level_ratio", 1.5)))
+        # 3. Notfallbuchten direkt an der Strecke
+        if use_escape:
+            escape_stats = escape_lanes(net2, nn)
+        # 1. Zufahrten zu Industrie/Gewerbe, ab Kreuzungen/Abfahrten des Netzes (inkl. 2./3.)
+        if use_ind:
+            from .industry import connect
+            starts = set(nn)
+            for e in net2.edges:
+                if e.role not in (None, "taken"):
+                    starts.update(e.node_ids())
+            major = {"motorway", "trunk", "motorway_link", "trunk_link"}
+            on_major = set()
+            for e in selected:
+                if e.highway in major:
+                    ids = e.node_ids()
+                    on_major.update(ids[1:-1] if e.highway.endswith("_link") else ids)
+            # Knoten, an denen auch eine nicht-autobahnartige Netzstraße endet, bleiben Start
+            for e in selected:
+                if e.highway not in major:
+                    on_major.difference_update(e.node_ids())
+            for e in net2.edges:
+                if e.role not in (None, "taken"):
+                    on_major.difference_update(e.node_ids())
+            industry_stats = connect(net2, starts, targets, loc, ind["highway"], ind["max_distance_m"],
+                                     ind["inside_m"], no_start=on_major)
         new = [e for e in net2.edges if e.role not in (None, "taken")]
         if new:
             # Netzkanten an den neuen Einmündungen teilen: Auswahl aus net2 übernehmen
@@ -174,6 +199,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     stats = _stats(kept, roads, junctions, profile, dropped)
     stats["elevation"] = elevation_stats
     stats["industry_access"] = industry_stats
+    stats["same_level_links"] = links_stats
+    stats["escape_lanes"] = escape_stats
     crossings = crossing_clearances(roads)
     low = [c for c in crossings if c["clearance_m"] < MIN_CLEARANCE_M]
     stats["grade_separated_crossings"] = len(crossings)

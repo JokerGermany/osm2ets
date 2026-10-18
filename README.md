@@ -3,9 +3,9 @@
 [Deutsch](README.de.md) · **English**
 
 Generates ETS2 map files from OpenStreetMap data at a selectable scale (default 1:1)
-and in several detail levels. The coarsest level contains only the trunk road network –
-in Germany motorways (Autobahnen) and federal roads (Bundesstraßen) – plus ramps and the
-connecting roads up to the next junction.
+and in five detail levels. The coarsest level contains only motorways and expressways
+with their ramps, plus short connecting pieces, emergency escape lanes and the access
+roads to nearby industrial and commercial areas.
 
 ```mermaid
 flowchart LR
@@ -26,7 +26,7 @@ v1–v46 (see commits).
 
 | Area | Status |
 |---|---|
-| Road network L1–L4 from OSM, scale 1:N, fixed origin | implemented, tested |
+| Road network L1–L5 from OSM, scale 1:N, fixed origin | implemented, tested |
 | Real road templates (ger13/ger16 motorway, ger2 ramp, ger1/ger5/ger9/ger29) | implemented, drivable in game |
 | Through roads connected at nodes, no invisible walls | implemented, checked in game |
 | Motorway exit/entry with prefabs (2 lanes, ramp on the right) | implemented, checked in editor |
@@ -152,20 +152,40 @@ Start point for Run Map: middle of the longest motorway carriageway, not on a br
 
 ## Detail levels (profile `de`)
 
-| Level | Core network | Connecting roads (up to the next junction) |
-|---|---|---|
-| L1 | motorway, trunk, federal roads (B number in `ref`), ramps | primary … living_street |
-| L2 | + all primary, secondary, tertiary (state and district roads) | unclassified, residential, living_street |
-| L3 | + unclassified, residential, living_street | service |
-| L4 | + service (e.g. rest areas) | – |
+Each level contains the previous one. What counts is the OSM class (`highway=*`), not the
+number in the `ref` tag.
 
-"Junction" means a node where at least three road pieces of this level's classes meet
-(core, ramps, connecting classes). Nothing else counts – no field, foot or cycle paths, no
-`access=private`/`no`, no `service` ways in L1/L2, and no parking aisles or driveways in
-L3/L4. The depth (`connectors.depth`) is configurable in the profile.
+| Level | Core network (with ramps) |
+|---|---|
+| L1 | motorway, trunk (+ motorway_link, trunk_link) |
+| L2 | + primary (+ primary_link), mostly federal roads |
+| L3 | + secondary (+ secondary_link), mostly state roads |
+| L4 | + tertiary (+ tertiary_link), mostly district roads |
+| L5 | + all other drivable roads: unclassified, residential, living_street, service, road |
 
-Federal roads are recognised by their B number, because `primary` in OSM only usually
-means Bundesstraße.
+Ramps are only included if they touch the core network.
+
+In addition, in every level (`extras` and `industry` in the profile):
+
+1. **Industrial and commercial areas, companies** at most 300 m (along the road) from a
+   junction or exit of the network. A reached area is included as a whole, with all roads
+   inside it. No access starts on motorways or expressways themselves, only at ramp ends –
+   so a company next to the motorway without a nearby exit does not pull in kilometres of
+   roads. Targets: `landuse=industrial|commercial|retail|quarry|farmyard|port`,
+   `industrial=*`, `man_made=works`, `building=warehouse|industrial`, `craft=*`,
+   `office=company`.
+2. **Short links within the level**: a path over other roads, at most 500 m long, that
+   connects two roads of the level – e.g. the piece of federal road between two motorway
+   ramps in L1. Loops on the same road (petrol station, rest area) do not count: the path
+   through the network must be at least 1.5 times as long.
+3. **Emergency escape lanes** (`highway=escape`) directly next to the route.
+
+Never included because not drivable: `track` (farm and forest tracks), foot, cycle and
+bridle paths, steps, pedestrian zones, construction, proposed roads, `access=private`/`no`,
+parking aisles and driveways.
+
+The former mechanism "connecting roads up to the next junction" (`connectors.depth`) can
+still be configured in a profile, but is off in profile `de`.
 
 ## Scale and coordinates
 

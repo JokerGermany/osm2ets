@@ -25,7 +25,7 @@ def test_tunnel_under_road_is_lowered(tmp_path, profile):
             (2, [10, 11], {"highway": "primary", "ref": "B 2"}),
             (3, [11, 12], {"highway": "primary", "ref": "B 2", "tunnel": "yes", "layer": "-1"}),
             (4, [12, 13], {"highway": "primary", "ref": "B 2"})]
-    model = build(str(write_osm(tmp_path / "t.osm", nodes, ways)), profile, "L1")
+    model = build(str(write_osm(tmp_path / "t.osm", nodes, ways)), profile, "L2")
     c = crossing_clearances(model["roads"])
     assert len(c) == 1 and c[0]["clearance_m"] >= profile.bridge_clearance_m - 0.3
     upper = next(r for r in model["roads"] if r["runs"][0]["ref"] == "B 1")
@@ -38,7 +38,7 @@ def test_short_bridge_is_not_lifted(tmp_path, profile):
     ways = [(1, [1, 2], {"highway": "primary", "ref": "B 1"}),
             (2, [2, 3], {"highway": "primary", "ref": "B 1", "bridge": "yes", "layer": "1"}),
             (3, [3, 4], {"highway": "primary", "ref": "B 1"})]
-    model = build(str(write_osm(tmp_path / "b.osm", nodes, ways)), profile, "L1")
+    model = build(str(write_osm(tmp_path / "b.osm", nodes, ways)), profile, "L2")
     assert max(p[1] for r in model["roads"] for p in r["points"]) < 0.01
     assert model["stats"]["elevation"]["bridges_ignored_short"] == 1
 
@@ -50,7 +50,8 @@ def test_short_piece_between_junctions_is_kept(tmp_path, profile):
     ways = [(1, [1, 2, 3, 4], {"highway": "primary", "ref": "B 1"}),
             (2, [2, 5], {"highway": "residential"}),
             (3, [3, 6], {"highway": "residential"})]
-    model = build(str(write_osm(tmp_path / "s.osm", nodes, ways)), profile, "L1")
+    # L5: die Seitenstraßen gehören dazu, 2 und 3 sind also Kreuzungen
+    model = build(str(write_osm(tmp_path / "s.osm", nodes, ways)), profile, "L5")
     short = [r for r in model["roads"] if r["start"].get("osm_node") in (2, 3) and r["end"].get("osm_node") in (2, 3)]
     assert len(short) == 1 and len(short[0]["points"]) == 2
     assert short[0]["length_m"] == pytest.approx(3.0, abs=0.2)
@@ -62,7 +63,7 @@ def test_everything_too_short_gives_clear_error(tmp_path, profile):
     nodes = {1: _pt(0, 0), 2: _pt(1, 0)}
     ways = [(1, [1, 2], {"highway": "primary", "ref": "B 1"})]
     with pytest.raises(RuntimeError, match="Spielminimum"):
-        build(str(write_osm(tmp_path / "x.osm", nodes, ways)), profile, "L1")
+        build(str(write_osm(tmp_path / "x.osm", nodes, ways)), profile, "L2")
 
 
 def test_viaduct_junction_follows_deck(tmp_path, profile):

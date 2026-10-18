@@ -23,7 +23,7 @@ def test_oneway_sign(profile):
 
 
 def test_read_ways_filters(synthetic_osm, profile):
-    lod = profile.lod("L1")
+    lod = profile.lod("L5")
     ways = read_ways(str(synthetic_osm), lod.all_classes, profile.exclude_access, profile.exclude_service)
     ids = {w.id for w in ways}
     assert 1013 not in ids          # track
@@ -34,43 +34,49 @@ def test_read_ways_filters(synthetic_osm, profile):
 def test_l1_selection(synthetic_osm, profile):
     lod = profile.lod("L1")
     ways = read_ways(str(synthetic_osm), lod.all_classes, profile.exclude_access, profile.exclude_service)
-    net = Network(ways, profile)
-    roles = _roles(net.select(lod))
-
-    # Kern: Autobahn (an der Ausfahrt 2 geteilt) und Bundesstraße
+    roles = _roles(Network(ways, profile).select(lod))
+    # Kern: nur Autobahn (an der Ausfahrt 2 geteilt), Rampe am Kernnetz
     assert roles[(1001, 1, 2)] == "core" and roles[(1001, 2, 3)] == "core"
     assert roles[(1002, 11, 13)] == "core"
-    assert roles[(1006, 51, 52)] == "core" and roles[(1007, 52, 53)] == "core"
-    assert roles[(1008, 53, 32)] == "core" and roles[(1008, 32, 54)] == "core"
-    # Rampe am Kernnetz
     assert roles[(1003, 2, 22)] == "link"
-    # Anschlussstraßen bis zur nächsten Kreuzung
-    assert roles[(1004, 31, 22)] == "connector"   # nach Süden bis zum Ende
-    assert roles[(1004, 22, 32)] == "connector"   # nach Norden bis zur Bundesstraße
-    assert roles[(1004, 32, 33)] == "connector"   # von der Bundesstraße bis zur Kreuzung 33
-    assert roles[(1009, 51, 61)] == "connector"   # Wohnstraße bis zur Kreuzung 61
-    # nicht weiter als bis zur nächsten Kreuzung
-    assert (1004, 33, 34) not in roles
-    assert (1005, 33, 41) not in roles
-    assert (1009, 61, 62) not in roles
-    assert (1010, 61, 63) not in roles
-    # nicht angebunden
-    assert (1011, 71, 72) not in roles
-    assert (1012, 72, 73) not in roles
+    # Bundes- und Landesstraßen gehören nicht zu L1 (keine Anschlussstraßen mehr)
+    assert not any(w in (1004, 1006, 1007, 1008, 1009, 1011, 1012) for w, _, _ in roles)
 
 
-def test_connector_depth_two(synthetic_osm, profile):
-    from dataclasses import replace
-    lod = replace(profile.lod("L1"), connector_depth=2)
+def test_l2_selection(synthetic_osm, profile):
+    lod = profile.lod("L2")
     ways = read_ways(str(synthetic_osm), lod.all_classes, profile.exclude_access, profile.exclude_service)
     roles = _roles(Network(ways, profile).select(lod))
-    assert roles[(1004, 33, 34)] == "connector"
-    assert roles[(1005, 33, 41)] == "connector"
-    assert roles[(1009, 61, 62)] == "connector"
+    assert roles[(1006, 51, 52)] == "core" and roles[(1007, 52, 53)] == "core"
+    assert roles[(1008, 53, 54)] == "core"
+    assert roles[(1003, 2, 22)] == "link"
+    # Landesstraße (secondary) erst ab L3; Rampe an ihr ohne Kernnetz fehlt
+    assert not any(w in (1004, 1011, 1012) for w, _, _ in roles)
+
+
+OLD_CONNECTORS = frozenset({"primary", "secondary", "tertiary", "unclassified", "residential",
+                            "living_street", "secondary_link", "tertiary_link"})
+
+
+def test_connector_depth(synthetic_osm, profile):
+    # Der Mechanismus "Anschlussstraßen bis zur nächsten Kreuzung" bleibt per Profil nutzbar
+    from dataclasses import replace
+    base = replace(profile.lod("L2"), connector_classes=OLD_CONNECTORS - {"primary"})
+    ways = read_ways(str(synthetic_osm), base.all_classes, profile.exclude_access, profile.exclude_service)
+    r1 = _roles(Network(ways, profile).select(replace(base, connector_depth=1)))
+    assert r1[(1004, 31, 22)] == "connector"   # nach Süden bis zum Ende
+    assert r1[(1004, 22, 32)] == "connector"   # nach Norden bis zur Bundesstraße
+    assert r1[(1009, 51, 61)] == "connector"   # Wohnstraße bis zur Kreuzung 61
+    assert (1009, 61, 62) not in r1
+    r2 = _roles(Network(ways, profile).select(replace(base, connector_depth=2)))
+    assert r2[(1004, 33, 34)] == "connector"
+    assert r2[(1005, 33, 41)] == "connector"
+    assert r2[(1009, 61, 62)] == "connector"
 
 
 def test_chains_break_at_junctions_and_follow_oneway(synthetic_osm, profile):
-    lod = profile.lod("L1")
+    from dataclasses import replace
+    lod = replace(profile.lod("L2"), connector_classes=OLD_CONNECTORS - {"primary"}, connector_depth=1)
     ways = read_ways(str(synthetic_osm), lod.all_classes, profile.exclude_access, profile.exclude_service)
     chains = build_chains(Network(ways, profile).select(lod))
     ends = {(c.start_node, c.end_node) for c in chains}
@@ -95,7 +101,7 @@ def _net(ways, profile):
 def test_reversed_oneway_is_flipped(profile):
     ways = [Way(1, array("q", [1, 2, 3]), {"highway": "primary", "oneway": "-1", "ref": "B 1"})]
     net = _net(ways, profile)
-    chains = build_chains(net.select(profile.lod("L1")))
+    chains = build_chains(net.select(profile.lod("L2")))
     assert len(chains) == 1
     assert chains[0].node_ids() == [3, 2, 1]
 
@@ -105,14 +111,14 @@ def test_head_to_head_oneways_break(profile):
         Way(1, array("q", [1, 2]), {"highway": "primary", "oneway": "yes", "ref": "B 1"}),
         Way(2, array("q", [3, 2]), {"highway": "primary", "oneway": "yes", "ref": "B 1"}),
     ]
-    chains = build_chains(_net(ways, profile).select(profile.lod("L1")))
+    chains = build_chains(_net(ways, profile).select(profile.lod("L2")))
     assert len(chains) == 2
     assert {c.end_node for c in chains} == {2}
 
 
 def test_isolated_ring_is_closed_chain(profile):
     ways = [Way(1, array("q", [1, 2, 3, 4, 1]), {"highway": "primary", "junction": "roundabout", "ref": "B 1"})]
-    chains = build_chains(_net(ways, profile).select(profile.lod("L1")))
+    chains = build_chains(_net(ways, profile).select(profile.lod("L2")))
     assert len(chains) == 1
     assert chains[0].closed
     assert chains[0].node_ids()[0] == chains[0].node_ids()[-1]
@@ -125,7 +131,7 @@ def test_mixed_oneway_through_twoway_breaks(profile):
         Way(2, array("q", [2, 3]), {"highway": "primary", "ref": "B 1"}),
         Way(3, array("q", [4, 3]), {"highway": "primary", "oneway": "yes", "ref": "B 1"}),
     ]
-    chains = build_chains(_net(ways, profile).select(profile.lod("L1")))
+    chains = build_chains(_net(ways, profile).select(profile.lod("L2")))
     for c in chains:
         dirs = {p.direction for p in c.parts if p.direction}
         assert dirs <= {1}
