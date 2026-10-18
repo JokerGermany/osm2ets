@@ -13,7 +13,7 @@ import numpy as np
 
 from . import __version__
 from .config import Profile, validate_geometry
-from .elevation import DemSampler, apply_elevation
+from .elevation import DemSampler, align_partner_points, apply_elevation
 from .geometry import NO_NODE, Projector, build_runs, chain_pieces, clip_piece, densify, finalize_piece
 from .network import Network, build_chains
 from .osmread import read_node_locations, read_ways
@@ -189,6 +189,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         p.xy = projector.forward(p.lonlat[:, 0], p.lonlat[:, 1])
         p.dense = densify(p.xy, p.node_ids, p.seg_part, profile.densify_m)
         p.dense.set_scale(profile.scale_h)
+    # Punkte nebeneinanderliegender Fahrbahnen gegenüberstellen (Höhenbindung quer, keine Treppen)
+    aligned = align_partner_points(pieces, profile.scale_h)
 
     dem = None
     if dem_path:
@@ -197,6 +199,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                   float(all_xy[:, 0].max()), float(all_xy[:, 1].max()))
         dem = DemSampler(dem_path, projector, bounds)
     elevation_stats = apply_elevation(pieces, profile, dem)
+    elevation_stats["aligned_points"] = aligned
 
     run_cache: dict[int, tuple] = {}
     kept, dropped_info = [], []

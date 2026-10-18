@@ -240,6 +240,127 @@ def _road_width(piece: Piece, seg: int) -> float:
     return 8.0
 
 
+TWIN_HIGHWAYS = ("motorway", "trunk")
+
+
+def align_partner_points(pieces: list[Piece], scale_h: float, max_gap: float = 25.0,
+                         snap: float = 2.0, margin: float = 1.0) -> int:
+    """Setzt auf nebeneinanderliegende Straßen Punkte genau gegenüber.
+
+    Die Höhenbindung zwischen Richtungsfahrbahnen (`twin_ties`) und sich überdeckenden
+    Fahrbahnen (`overlap_ties`) verbindet je Punkt den nächsten Punkt der anderen
+    Straße. Liegen die verdichteten Punkte beider Straßen versetzt (z. B. alle 19 m
+    gegen alle 16 m), wird ein Punkt an einen bis zu halben Punktabstand entfernten
+    Partner gebunden und übernimmt dessen Höhe: Bei Gefälle entsteht eine Treppe
+    (abwechselnd ebene und steile Abschnitte, bis ~0,5 m daneben). Das Spiel zieht
+    die Fahrbahn als Hermite-Kurve durch diese Treppe; in den Mulden liegen Gelände
+    und Füllgelände dann über dem Asphalt.
+
+    Hier wird für jeden Punkt der Lotfußpunkt auf der Partnerstraße eingefügt (wenn
+    dort nicht schon ein Punkt liegt), so dass die Bindung quer zur Fahrbahn wirkt.
+    Gibt die Zahl der eingefügten Punkte zurück.
+    """
+    from scipy.spatial import cKDTree
+
+    pos, owner, local = [], [], []
+    for pi, p in enumerate(pieces):
+        d = p.dense
+        if len(d.xy) < 2:
+            continue
+        for j in range(len(d.xy)):
+            pos.append(d.xy_game[j]); owner.append(pi); local.append(j)
+    if not pos:
+        return 0
+    pos = np.asarray(pos, float)
+    owner = np.asarray(owner)
+    local = np.asarray(local)
+
+    def tangent(p: Piece, j: int) -> np.ndarray:
+        g = p.dense.xy_game
+        t = g[min(j + 1, len(g) - 1)] - g[max(j - 1, 0)]
+        n = float(np.hypot(*t))
+        return t / n if n > 1e-9 else np.array([1.0, 0.0])
+
+    tree = cKDTree(pos)
+    # je (Punkt, andere Straße) der nächste Lotfußpunkt: (Abstand, Segment, t)
+    best: dict[tuple[int, int], tuple[float, int, float]] = {}
+    for i, k in tree.query_pairs(r=max_gap):
+        if owner[i] == owner[k]:
+            continue
+        for a, b in ((i, k), (k, i)):
+            pa, pb = pieces[owner[a]], pieces[owner[b]]
+            g = pb.dense.xy_game
+            m = len(g)
+            P = pos[a]
+            for s in (local[b] - 1, local[b]):
+                if s < 0 or s >= m - 1:
+                    continue
+                A, B = g[s], g[s + 1]
+                AB = B - A
+                L2 = float(AB @ AB)
+                if L2 < 1e-12:
+                    continue
+                t = min(max(float((P - A) @ AB) / L2, 0.0), 1.0)
+                dist = float(np.hypot(*(P - (A + t * AB))))
+                key = (int(a), int(owner[b]))
+                if dist < best.get(key, (1e18, 0, 0.0))[0]:
+                    best[key] = (dist, int(s), t)
+
+    inserts: dict[int, list[tuple[int, float]]] = {}
+    for (a, pb_i), (dist, s, t) in best.items():
+        pa, pb = pieces[owner[a]], pieces[pb_i]
+        ja = int(local[a])
+        na = len(pa.dense.xy)
+        g = pb.dense.xy_game
+        seg_vec = g[s + 1] - g[s]
+        seg_len = float(np.hypot(*seg_vec))
+        if seg_len < 1e-9:
+            continue
+        cos = abs(float(tangent(pa, ja) @ (seg_vec / seg_len)))
+        sa = min(ja, na - 2)
+        twin = (_highway(pa, sa) in TWIN_HIGHWAYS and _highway(pb, s) in TWIN_HIGHWAYS
+                and cos >= 0.95 and dist <= max_gap)
+        wa = max(_road_width(pa, sa), _road_width(pa, max(ja - 1, 0)))
+        overlap = cos >= 0.9 and dist < (wa + _road_width(pb, s)) / 2 + margin
+        if not (twin or overlap):
+            continue
+        if t * seg_len < snap or (1 - t) * seg_len < snap:
+            continue   # dort liegt schon ein Punkt
+        inserts.setdefault(pb_i, []).append((s, t))
+
+    added = 0
+    for pi, lst in inserts.items():
+        added += _insert_dense(pieces[pi].dense, lst, scale_h, snap)
+    return added
+
+
+def _insert_dense(d, inserts: list[tuple[int, float]], scale_h: float, snap: float) -> int:
+    """Fügt Punkte (Segment, t) in eine verdichtete Linie ein (Abstand ≥ snap Spielmeter)."""
+    by_seg: dict[int, list[float]] = {}
+    for s, t in inserts:
+        by_seg.setdefault(s, []).append(t)
+    xy, ids, parts = [d.xy[0]], [d.node_ids[0]], []
+    added = 0
+    for s in range(len(d.xy) - 1):
+        a, b = d.xy[s], d.xy[s + 1]
+        seg_len = float(np.hypot(*(d.xy_game[s + 1] - d.xy_game[s])))
+        last = 0.0
+        for t in sorted(by_seg.get(s, ())):
+            if (t - last) * seg_len < snap or (1 - t) * seg_len < snap:
+                continue
+            xy.append(a + t * (b - a)); ids.append(NO_NODE); parts.append(d.seg_part[s])
+            last = t
+            added += 1
+        xy.append(b); ids.append(d.node_ids[s + 1]); parts.append(d.seg_part[s])
+    if added:
+        d.xy = np.asarray(xy, float)
+        d.node_ids = np.asarray(ids, np.int64)
+        d.seg_part = np.asarray(parts, np.int64)
+        d.s = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(d.xy, axis=0).T))])
+        d.set_scale(scale_h)
+    return added
+
+
 def overlap_ties(pieces, offsets, canon, movable: np.ndarray, margin: float = 1.0):
     """Paare von Punkten verschiedener Straßen, deren Fahrbahnen sich überdecken.
     Ergebnis: (a, b, Gewicht) mit kleinem Gewicht – die Steigungsgrenze hält sie
