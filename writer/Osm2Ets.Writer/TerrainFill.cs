@@ -431,6 +431,43 @@ public static class TerrainFill
         return n;
     }
 
+    /// <summary>Größte Breite, bis zu der keine Quad-Zeile umklappt (Kreuzprodukt wechselt Vorzeichen).</summary>
+    internal static float FoldFreeSize(Road rd, RoadTerrain side, float zSign, float edge, Vector2? tA, Vector2? tB)
+    {
+        var q = side.QuadData;
+        if (q.Offsets.Count == 0 || side.Size <= 0) return side.Size;
+        var rowsD = RowDistances(side.Size);
+        var p0 = new Vector2(rd.Node.Position.X, rd.Node.Position.Z);
+        var v = new Dictionary<(int, int), Vector2>();
+        foreach (var o in q.Offsets) v[(o.X, o.Y)] = p0 + new Vector2(o.Data.X, o.Data.Z);
+        // Zeile 0 = Fahrbahnrand auf der Kurve
+        var a = p0; var b = new Vector2(rd.ForwardNode.Position.X, rd.ForwardNode.Position.Z);
+        float len = Vector2.Distance(a, b); if (len < 1e-3f) return side.Size;
+        var f = (b - a) / len; var ta = tA ?? f; var tb = tB ?? f;
+        for (int i = 0; i <= q.Cols; i++)
+        {
+            float t = (float)i / q.Cols, t2 = t * t, t3 = t2 * t;
+            var c = (2*t3-3*t2+1)*a + (t3-2*t2+t)*len*ta + (-2*t3+3*t2)*b + (t3-t2)*len*tb;
+            var d = (6*t2-6*t)*a + (3*t2-4*t+1)*len*ta + (-6*t2+6*t)*b + (3*t2-2*t)*len*tb;
+            d = d.LengthSquared() > 1e-8f ? Vector2.Normalize(d) : f;
+            v[(i, 0)] = c + new Vector2(-d.Y, d.X) * (zSign * edge);
+        }
+        for (int j = 0; j < rowsD.Count - 1; j++)
+            for (int i = 0; i < q.Cols; i++)
+            {
+                if (!v.TryGetValue((i, j), out var p00) || !v.TryGetValue((i + 1, j), out var p10) ||
+                    !v.TryGetValue((i, j + 1), out var p01) || !v.TryGetValue((i + 1, j + 1), out var p11)) continue;
+                var e1 = p10 - p00; var e2 = p01 - p00; var e3 = p11 - p10; var e4 = p11 - p01;
+                float c1 = e1.X * e2.Y - e1.Y * e2.X, c2 = e3.X * (p10 - p11 + e3 * 0).Y; // Platzhalter
+                float s1 = (e1.X * e2.Y - e1.Y * e2.X) * zSign;
+                float s2 = ((p11 - p10).X * (p10 - p00).Y - (p11 - p10).Y * (p10 - p00).X) * -zSign;
+                float s3 = ((p11 - p01).X * (p01 - p00).Y - (p11 - p01).Y * (p01 - p00).X) * zSign;
+                if (s1 <= 0 || s2 <= 0 || (p11 - p01).LengthSquared() < 1e-4f || Vector2.Dot(p10 - p00, p11 - p01) <= 0)
+                    return MathF.Max(0, MathF.Floor(rowsD[j]));
+            }
+        return side.Size;
+    }
+
     /// <summary>Testvariante: A lokal ab Geländebeginn, B lokal ab Straßenmitte, C Weltachsen.</summary>
     [ThreadStatic] public static char Mode;
 }

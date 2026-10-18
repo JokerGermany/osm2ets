@@ -271,39 +271,6 @@ public static class MapWriter
                 int sloped = MedianSlopes.Apply(valid, styles, firstItem, lastItem);
                 warnings.Insert(0, $"Info: Mittelstreifen-Böschungen: {sloped} Geländeseiten zur tieferen Nachbarfahrbahn geneigt");
             }
-            if (TerrainFill.WideRoadTerrain)
-            {
-                int shaped = 0, bad = 0;
-                foreach (var entry in valid)
-                {
-                    if (!firstItem.TryGetValue(entry, out var it)) continue;
-                    var hw = styles[entry][0].Width / 2;
-                    var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
-                    TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'D';
-                    TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
-                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
-                    {
-                        rd.Recalculate();
-                        float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
-                        var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
-                        Vector2 Tan(Quaternion q)
-                        {
-                            var v = Vector3.Transform(-Vector3.UnitZ, q); var t = new Vector2(v.X, v.Z);
-                            var ch = new Vector2(pb.X - pa.X, pb.Z - pa.Z);
-                            if (t.LengthSquared() < 1e-6f) t = ch;
-                            t = Vector2.Normalize(t);
-                            return Vector2.Dot(t, ch) < 0 ? -t : t;
-                        }
-                        Vector2? ta = null, tb = null;
-                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
-                        if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb) < 0) bad++;
-                        if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb) < 0) bad++;
-                        shaped++;
-                        if (rd == lastItem[entry]) break;
-                    }
-                }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}");
-            }
         }
 
         int prefabCount = 0;
@@ -373,6 +340,48 @@ public static class MapWriter
         // Füllgelände zuletzt: dann sind alle Prefabs gesetzt und ihre Fahrspuren bekannt
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg2 && Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null)
         {
+            if (TerrainFill.WideRoadTerrain)
+            {
+                int shaped = 0, bad = 0, folded = 0;
+                foreach (var entry in valid)
+                {
+                    if (!firstItem.TryGetValue(entry, out var it)) continue;
+                    var hw = styles[entry][0].Width / 2;
+                    var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
+                    TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'D';
+                    TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
+                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
+                    {
+                        rd.Recalculate();
+                        float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
+                        var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
+                        Vector2 Tan(Quaternion q)
+                        {
+                            var v = Vector3.Transform(-Vector3.UnitZ, q); var t = new Vector2(v.X, v.Z);
+                            var ch = new Vector2(pb.X - pa.X, pb.Z - pa.Z);
+                            if (t.LengthSquared() < 1e-6f) t = ch;
+                            t = Vector2.Normalize(t);
+                            return Vector2.Dot(t, ch) < 0 ? -t : t;
+                        }
+                        Vector2? ta = null, tb = null;
+                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
+                        for (int tries = 0; tries < 4; tries++)
+                        {
+                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb) < 0) bad++;
+                            // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
+                            float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, e, ta, tb);
+                            float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, e, ta, tb);
+                            if (nl >= rd.Left.Terrain.Size && nr >= rd.Right.Terrain.Size) break;
+                            rd.Left.Terrain.Size = nl; rd.Right.Terrain.Size = nr; folded++;
+                            rd.Recalculate();
+                        }
+                        shaped++;
+                        if (rd == lastItem[entry]) break;
+                    }
+                }
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}");
+            }
             var lanes = PrefabFootprint.All(map);
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted})");
