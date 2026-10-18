@@ -28,10 +28,12 @@ public static class TerrainFill
     /// <summary>Höhenpunkte quer setzen (ungeprüft im Spiel); sonst ebene Streifen wie v17.</summary>
     public static bool Shape = Environment.GetEnvironmentVariable("OSM2ETS_NOSHAPE") is null;
     /// <summary>Straßengelände breit (bis zur Nachbarstraße) und an das Höhenraster angepasst.</summary>
-    public static bool WideRoadTerrain = Environment.GetEnvironmentVariable("OSM2ETS_WIDE") is not null;
+    public static bool WideRoadTerrain = Environment.GetEnvironmentVariable("OSM2ETS_NARROW") is null;
     /// <summary>Annahme: Offsets des Straßengeländes zählen ab Straßenmitte (true) oder ab Geländebeginn (false).</summary>
     public static bool RoadEdgeInData = false;
     public static int Mismatch;
+    /// <summary>Seiten, bei denen das Raster eine Zeile mehr hat als angenommen (äußerste Zeile bleibt unverformt).</summary>
+    public static int RowShort;
     public static double Uncovered;
 
     public sealed record Result(int Items, int Rows, double AreaKm2);
@@ -68,7 +70,8 @@ public static class TerrainFill
                 var right = new Vector2(-dir.Y, dir.X);
                 float hw = st[k].Width / 2;
                 // Füllgelände darf 3 m über den Geländestreifen der Straße reichen (keine Lücke)
-                float wl = hw + MathF.Min(MathF.Max(0, st[k].TerrainLeft - 3), MaskTerrain), wr = hw + MathF.Min(MathF.Max(0, st[k].TerrainRight - 3), MaskTerrain);
+                float cap = WideRoadTerrain ? float.MaxValue : MaskTerrain;   // breit: Straßengelände nicht doppelt belegen
+                float wl = hw + MathF.Min(MathF.Max(0, st[k].TerrainLeft - 3), cap), wr = hw + MathF.Min(MathF.Max(0, st[k].TerrainRight - 3), cap);
                 for (float s = 0; s <= len; s += MaskCell / 2)
                 {
                     var c = a + dir * s;
@@ -247,9 +250,9 @@ public static class TerrainFill
             float plen = pb.X - pa.X;
             // kurze Stücke: Standard-Schrittweite und eben (ohne Höhenpunkte) – mit eigenen
             // Höhenpunkten wurden sie im Editor teils nicht gezeichnet
-            if (plen >= 16) t.StepSize = StepSize.Meters16;
+            t.StepSize = StepSize.Meters16;
             t.Recalculate();
-            if (Shape && plen >= 16)
+            if (Shape)
             {
                 if (ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1, 16) < 0) Mismatch++;
                 if (ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1, 16) < 0) Mismatch++;
@@ -294,10 +297,13 @@ public static class TerrainFill
         if (rowsD.Count != rows + 1 && rowsD.Count != rows) return -1;  // Raster passt nicht zur Annahme
         float len = pb.X - pa.X;
         int n = 0;
+        if (rowsD.Count == rows) RowShort++;
+        // QuadData.Cols/Rows zählen Quads; die Eckpunkte laufen 0..Cols bzw. 0..Rows
+        // (so auch in der SCS-Originalkarte). Früher fehlte die letzte Spalte → Wand am Stückende.
         for (int j = 1; j < rowsD.Count; j++)
-            for (int i = 0; i < cols; i++)
+            for (int i = 0; i <= cols; i++)
             {
-                float x = cols > 1 ? len * i / (cols - 1) : 0;
+                float x = len * i / cols;
                 float z = pa.Z + zSign * rowsD[j];
                 float h = grid.HeightAt(pa.X + x, z);
                 if (float.IsNaN(h)) continue;
@@ -321,36 +327,38 @@ public static class TerrainFill
         int rows = q.Rows, cols = q.Cols;
         if (rows < 1 || cols < 1) return 0;
         if (rowsD.Count != rows + 1 && rowsD.Count != rows) return -1;
-        var f = new Vector2(pb.X - pa.X, pb.Z - pa.Z);
-        float len = f.Length();
+        if (rowsD.Count == rows) RowShort++;
+        var a = new Vector2(pa.X, pa.Z); var b = new Vector2(pb.X, pb.Z);
+        float len = Vector2.Distance(a, b);
         if (len < 1e-3f) return 0;
-        f /= len;
-        var rn = new Vector2(-f.Y, f.X);
+        var f = (b - a) / len;
+        // Mittellinie wie im Spiel: Hermite-Kurve mit den Knotentangenten (Länge = Sehne)
+        var ta = tA ?? f; var tb = tB ?? f;
+        Vector2 C(float t) { float t2 = t * t, t3 = t2 * t; return (2*t3-3*t2+1)*a + (t3-2*t2+t)*len*ta + (-2*t3+3*t2)*b + (t3-t2)*len*tb; }
+        Vector2 Dn(float t)
+        {
+            float t2 = t * t;
+            var d = (6*t2-6*t)*a + (3*t2-4*t+1)*len*ta + (-6*t2+6*t)*b + (3*t2-2*t)*len*tb;
+            return d.LengthSquared() > 1e-8f ? Vector2.Normalize(d) : f;
+        }
+        bool world = Mode is 'C' or 'D';
         int n = 0;
-        // Höhe am Straßenrand (Zeile 0) folgt der Straße; nur äußere Zeilen anpassen,
-        // die ersten ~10 m weich überblenden
         for (int j = 1; j < rowsD.Count; j++)
-            for (int i = 0; i < cols; i++)
+            for (int i = 0; i <= cols; i++)
             {
-                float x = cols > 1 ? len * i / (cols - 1) : 0;
+                float u = (float)i / cols;
                 float d = edge + rowsD[j];
-                // Querrichtung zwischen den Knotentangenten überblenden, damit benachbarte
-                // Stücke an der Fuge dieselbe Kante haben (sonst Keile außen, Falten innen)
-                var nrm = rn;
-                if (tA is { } ta && tB is { } tb)
-                {
-                    float u = cols > 1 ? (float)i / (cols - 1) : 0;
-                    var tg2 = Vector2.Normalize(Vector2.Lerp(ta, tb, u));
-                    nrm = new Vector2(-tg2.Y, tg2.X);
-                }
-                var w = new Vector2(pa.X, pa.Z) + f * x + nrm * (zSign * d);
+                Vector2 c, nrm; float x;
+                if (world) { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
+                else { x = len * u; c = a + f * x; nrm = new Vector2(-f.Y, f.X); }
+                var w = c + nrm * (zSign * d);
                 float h = grid.HeightAt(w.X, w.Y);
                 if (float.IsNaN(h)) continue;
-                float roadY = pa.Y + (pb.Y - pa.Y) * (cols > 1 ? (float)i / (cols - 1) : 0);
-                float t = Math.Clamp((rowsD[j] - 3f) / 10f, 0, 1);   // erste 3 m auf Straßenhöhe
-                h = roadY + (h - roadY) * t;
-                var off = Mode is 'C' or 'D'
-                    ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen
+                float roadY = pa.Y + (pb.Y - pa.Y) * u;
+                float tt = Math.Clamp((rowsD[j] - 3f) / 10f, 0, 1);   // erste 3 m auf Straßenhöhe
+                h = roadY + (h - roadY) * tt;
+                var off = world
+                    ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen ab Anfangsknoten
                     : new Vector3(x, h - pa.Y, zSign * d);                 // lokal
                 q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = off });
                 n++;

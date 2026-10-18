@@ -48,7 +48,8 @@ Freifläche berücksichtigt die echten Fahrspuren gesetzter Prefabs (Navigations
 Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Höhenpunkte (vertex offsets) sind **absolute** Lagen (Zeilenabstände 1,1,1,2,6,6,10,10,10,20,40,50… m),
   keine Verschiebungen. Beim Straßengelände zählen sie ab **Straßenmitte** entlang der Straße.
-- Straßengelände auf 150 m zu verbreitern funktioniert nicht: Das Spiel biegt es mit der Kurve, es faltet sich.
+- `QuadData.Cols`/`Rows` zählen **Quads**; die Eckpunkte laufen 0..Cols und 0..Rows (mit der SCS-Originalkarte abgeglichen). Fehlte die letzte Spalte, entstand an jedem Stückende eine Wand.
+- Höhenpunkte des Straßengeländes stehen in **Weltachsen** ab dem Anfangsknoten, Lage entlang der Hermite-Kurve des Spiels (wie in der SCS-Karte); damit funktioniert breites Straßengelände (60 m) auch in Kurven.
 - Nach `Prefab.Attach` müssen die Knotendrehungen ohne Rollen neu gesetzt werden – sonst ist
   das erste Straßenstück verdreht und sein Rand klappt nach unten (Ursache der „kaputten" Ausfahrten).
 

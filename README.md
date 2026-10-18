@@ -48,7 +48,8 @@ strip. The fill mask uses the real lanes of placed prefabs (nav curves from the 
 Findings from editor tests that shaped this (useful if you work on it):
 - Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),
   not deltas. For road terrain they are measured from the **road centre** along the road.
-- Widening road terrain to 150 m does not work: the game bends it with the curve and it folds.
+- `QuadData.Cols`/`Rows` count **quads**; vertices run 0..Cols and 0..Rows (checked against the original SCS map). Leaving out the last column caused walls at every piece end.
+- Road terrain offsets are in **world axes** relative to the start node, positions along the game's Hermite curve (as in the SCS map); this allows wide road terrain (60 m) that follows curves.
 - After `Prefab.Attach`, node rotations must be reset without roll – otherwise the first
   road piece is twisted and its edge folds down (this caused the "broken" exits).
 
