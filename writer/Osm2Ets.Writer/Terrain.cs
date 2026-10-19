@@ -127,6 +127,10 @@ public static class TerrainClearance
             // höchstens bis kurz vor den Modellrand einer anderen Straße (auch nicht für MinSide)
             float hardL = float.MaxValue, hardR = float.MaxValue;
             bool exact = MapWriter.UseModelEdges;
+            // je Spalte begrenzt (TerrainFill.ClampColumns): Breite nach der breitesten Stelle des
+            // Abschnitts, die engeren Stellen kürzt das Straßengelände selbst je Spalte
+            bool perColumn = exact && Share && TerrainFill.ClampColumns && TerrainFill.GapRamp;
+            float maxL = 0, maxR = 0, maxHardL = 0, maxHardR = 0;
             var dir = s.B - s.A;
             if (dir.LengthSquared() == 0) continue;
             dir = Vector2.Normalize(dir);
@@ -141,6 +145,7 @@ public static class TerrainClearance
             }
             foreach (var t in new[] { 0.05f, 0.25f, 0.5f, 0.75f, 0.95f })
             {
+                if (perColumn) { left = style.TerrainLeft; right = style.TerrainRight; hardL = hardR = float.MaxValue; }
                 var p = Vector2.Lerp(s.A, s.B, t);
                 foreach (var k in cand)
                 {
@@ -211,7 +216,13 @@ public static class TerrainClearance
                         if (isRight) right = MathF.Min(right, free); else left = MathF.Min(left, free);
                     }
                 }
+                if (perColumn)
+                {
+                    maxL = MathF.Max(maxL, left); maxR = MathF.Max(maxR, right);
+                    maxHardL = MathF.Max(maxHardL, hardL); maxHardR = MathF.Max(maxHardR, hardR);
+                }
             }
+            if (perColumn) { left = maxL; right = maxR; hardL = maxHardL; hardR = maxHardR; }
             // Mindestbreite wie in der SCS-Karte (1,5–2,2 m an der Zwickel-/Mittelstreifenseite):
             // ohne Straßengelände stößt der Asphaltrand direkt an das tiefer liegende Füllgelände,
             // im Editor als schwarzer Streifen entlang der Fahrbahn

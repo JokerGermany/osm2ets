@@ -21,6 +21,7 @@ var tests = new List<(string Name, Action Body)>
     ("L5: Feldweg Geheimstraße, Fußweg und Parkplatzgasse nicht im Navi", MinorWaysHiddenFromNavigation),
     ("L5: Privatstraße behält ihren Typ, ist aber nicht im Navi", RestrictedWaysHidden),
     ("Gelände: Mittelstreifen endet vor der Gegenfahrbahn (asymmetrische Modellränder)", MedianTerrainStopsAtOtherCarriageway),
+    ("Gelände: zwischen zwei unterschiedlich hohen Fahrbahnen lückenlose Rampe, nie im fremden Modell", GapBetweenRoadsIsRamped),
 };
 
 int failed = 0;
@@ -386,4 +387,85 @@ static void MedianTerrainStopsAtOtherCarriageway()
         }
     }
     TerrainClearance.Share = false; TerrainClearance.SearchRadius = 80f;
+}
+
+static void GapBetweenRoadsIsRamped()
+{
+    // Richtungsfahrbahn A (y 0) nach Osten, Gegenfahrbahn B (y 0,6) nach Westen nördlich davon.
+    // ger13 (−4,5…+8,0 m): die linken Ränder zeigen zueinander. Fall 1 parallel (Lücke 11 m),
+    // Fall 2 zusammenlaufend (Lücke 21 m → 1 m): je Spalte gekürzt, nie im Modell der anderen.
+    var cfg = MappingConfig.Load(ShippedMapping());
+    foreach (var converge in new[] { false, true })
+    {
+        double zB0 = converge ? -30 : -20, zB1 = converge ? -10 : -20;
+        var a = MakeRoad("a", new[] { new[] { 0.0, 0, 0 }, new[] { 300.0, 0, 0 } }, MakeRun(0, 1, "motorway", oneway: true));
+        var b = MakeRoad("b", new[] { new[] { 300.0, 0.6, zB0 }, new[] { 0.0, 0.6, zB1 } }, MakeRun(0, 1, "motorway", oneway: true));
+        int nx = 51, nz = 31;
+        var input = new IntermediateFile
+        {
+            Format = IntermediateFile.ExpectedFormat, Version = 1,
+            Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 },
+            Roads = [a, b],
+            TerrainGrid = new TerrainGridEntry { Origin = [-100, -100], Cell = 10, Nx = nx, Nz = nz, Heights = new float[nx * nz] },
+        };
+        var (map, _) = MapWriter.Build(input, cfg);
+        var roads = map.MapItems.Values.OfType<Road>().ToList();
+        // Linien wie geschrieben (Spurzentrierung verschiebt sie seitlich): z(x) aus den Knoten
+        double LineZ(bool isA, double x)
+        {
+            var pts = roads.Where(r => (r.Node.Position.Y < 0.3f) == isA)
+                           .SelectMany(r => new[] { r.Node.Position, r.ForwardNode.Position })
+                           .OrderBy(p => p.X).ToList();
+            for (int k = 0; k < pts.Count - 1; k++)
+                if (x >= pts[k].X && x <= pts[k + 1].X && pts[k + 1].X > pts[k].X)
+                    return pts[k].Z + (pts[k + 1].Z - pts[k].Z) * (x - pts[k].X) / (pts[k + 1].X - pts[k].X);
+            return double.NaN;
+        }
+        // zugewandte Modellränder: A (nach Osten) links = −z, B (nach Westen) links = +z, je 4,5 m
+        double EdgeA(double x) => LineZ(true, x) - 4.5;
+        double EdgeB(double x) => LineZ(false, x) + 4.5;
+        int checkedPts = 0;
+        foreach (var r in roads)
+        {
+            bool isA = r.Node.Position.Y < 0.3f;
+            foreach (var o in r.Left.Terrain.QuadData.Offsets)
+            {
+                var p = r.Node.Position + o.Data;
+                if (p.X < 20 || p.X > 280) continue;   // Enden auslassen
+                double ea = EdgeA(p.X), eb = EdgeB(p.X);
+                if (double.IsNaN(ea) || double.IsNaN(eb)) continue;
+                // nie im Modell der anderen Fahrbahn (kleine Toleranz für Sehne/Kurve)
+                if (isA) Check(p.Z >= eb - 0.05, $"A-Gelände im Modell von B: z {p.Z:0.00} < {eb:0.00} (x {p.X:0})");
+                else Check(p.Z <= ea + 0.05, $"B-Gelände im Modell von A: z {p.Z:0.00} > {ea:0.00} (x {p.X:0})");
+                // Höhe auf der geraden Rampe zwischen beiden Rändern (0 bei A, 0,6 bei B), 5 cm tiefer
+                double gap = ea - eb;
+                double od = isA ? p.Z - eb : ea - p.Z;   // Abstand zum fremden Rand
+                // volle Rampe gilt bis TerrainFill.GoreFull (8 m) vor der anderen Fahrbahn
+                if (gap > 0.5 && od < TerrainFill.GoreFull)
+                {
+                    double f = Math.Clamp((ea - p.Z) / gap, 0, 1);
+                    double want = 0.6 * f - TerrainFill.RoadTerrainDrop;
+                    Check(Math.Abs(p.Y - want) < 0.06, $"{(isA ? "A" : "B")}: Höhe {p.Y:0.00} statt {want:0.00} bei z {p.Z:0.00} (x {p.X:0}, Lücke {gap:0.0})");
+                }
+                checkedPts++;
+            }
+        }
+        Check(checkedPts > 20, $"zu wenige Geländepunkte geprüft ({checkedPts})");
+        // Deckung: an jeder Stelle reicht das Gelände von beiden Seiten zusammen über die ganze Lücke
+        for (double x = 30; x <= 270; x += 5)
+        {
+            double reachA = EdgeA(x), reachB = EdgeB(x);
+            foreach (var r in roads)
+            {
+                bool isA = r.Node.Position.Y < 0.3f;
+                foreach (var o in r.Left.Terrain.QuadData.Offsets)
+                {
+                    var p = r.Node.Position + o.Data;
+                    if (Math.Abs(p.X - x) > 3) continue;
+                    if (isA) reachA = Math.Min(reachA, p.Z); else reachB = Math.Max(reachB, p.Z);
+                }
+            }
+            Check(reachA <= reachB + 0.2, $"Lücke ohne Straßengelände bei x {x}: A bis z {reachA:0.00}, B bis z {reachB:0.00} ({(converge ? "zusammenlaufend" : "parallel")})");
+        }
+    }
 }

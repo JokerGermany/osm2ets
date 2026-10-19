@@ -29,6 +29,15 @@ public static class TerrainFill
     /// <summary>Nur bei kleinem Höhenunterschied Raster–Fahrbahn (Zwickel auf einer Ebene);
     /// sonst (Damm, Einschnitt, Brückenrampe) entstünde eine Kante.</summary>
     public static float GoreMaxDh = 1.0f;
+    /// <summary>Zwischen zwei Straßen: Gelände als gerade Rampe von der eigenen zur fremden Fahrbahnhöhe,
+    /// wenn sich beide höchstens so viel unterscheiden (sonst Raster). Aus: OSM2ETS_RT_NOGAP.</summary>
+    public static float GapMaxDh = 3f;
+    public static bool GapRamp = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOGAP") is null;
+    public static int GapRamped;
+    /// <summary>Je Spalte kürzen: Reihen enden kurz vor dem Modell einer anderen Straße (an
+    /// zusammenlaufenden Fahrbahnen ist die Lücke je Spalte verschieden). Aus: OSM2ETS_RT_NOCLAMP.</summary>
+    public static bool ClampColumns = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOCLAMP") is null;
+    public static int ColumnsClamped;
     private static float EnvF(string n, float d) =>
         float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
     /// <summary>Füllstücke verketten (alt, OSM2ETS_FILL_CHAIN=1) – siehe Emit.</summary>
@@ -423,7 +432,7 @@ public static class TerrainFill
     /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
     /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
     /// </summary>
-    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float>? otherDist = null, Vector3? dA = null, Vector3? dB = null)
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, (float Dist, float Height, bool Bridge)>? other = null, Vector3? dA = null, Vector3? dB = null, Func<Vector2, Vector2, float, float>? rayFree = null)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
@@ -465,11 +474,33 @@ public static class TerrainFill
             return d2.LengthSquared() > 1e-8f ? Vector2.Normalize(d2) : f;
         }
         int n = 0;
+        // je Spalte: freie Breite bis zum Modell einer anderen Straße (Strahl vom eigenen Rand nach außen)
+        var free = new float[cols + 1];
+        for (int i = 0; i <= cols; i++)
+        {
+            free[i] = float.MaxValue;
+            if (rayFree is null || !world) continue;
+            float u = (float)i / cols;
+            Vector2 c, nrm;
+            if (curve3) { var c3 = C3(u); c = new Vector2(c3.X, c3.Z); var tg = D3(u); nrm = new Vector2(-tg.Y, tg.X); }
+            else { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); }
+            var dir = nrm * zSign;
+            float g = rayFree(c + dir * edge, dir, size);
+            if (g < size) { free[i] = MathF.Max(0, g - TerrainClearance.EdgeClear); ColumnsClamped++; }
+        }
         for (int j = 1; j < rowsD.Count; j++)
             for (int i = 0; i <= cols; i++)
             {
                 float u = (float)i / cols;
-                float d = edge + rowsD[j];
+                // gekürzte Reihen nicht exakt aufeinander (Fläche 0, Normale unbestimmt), sondern je 1 cm
+                // versetzt – bei höchstens 10 Reihen reicht das bis an den fremden Rand (EdgeClear 0,1 m)
+                float dd = rowsD[j];
+                if (dd > free[i])
+                {
+                    int first = j; while (first > 1 && rowsD[first - 1] > free[i]) first--;
+                    dd = free[i] + 0.01f * (j - first);
+                }
+                float d = edge + dd;
                 Vector2 c, nrm; float x;
                 float roadY = pa.Y + (pb.Y - pa.Y) * u;
                 if (curve3) { var c3 = C3(u); c = new Vector2(c3.X, c3.Z); roadY = c3.Y; var tg = D3(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
@@ -484,21 +515,39 @@ public static class TerrainFill
                 // entsteht eine Stufe (dunkler Keil). Das Raster hält die Straßenhöhe nahe der
                 // Straße ohnehin (terrain.py: core 6 m).
                 float tt = Math.Clamp((rowsD[j] - NearFlat) / NearBlend, 0, 1);
-                if (otherDist is not null && MathF.Abs(h - roadY) < GoreMaxDh)
+                if (other is not null)
                 {
-                    // Zwickel: nahe einer anderen Straße schneller ins Raster (das beide Straßen
-                    // stetig verbindet), sonst Stufe zwischen zwei Straßengeländen
-                    float od = otherDist(w.X, w.Y);
+                    var (od, oh, ob) = other(w.X, w.Y);
                     if (od < GoreDist)
                     {
-                        float tg = Math.Clamp((rowsD[j] - GoreFlat) / GoreBlend, 0, 1);
                         float k = Math.Clamp((GoreDist - od) / (GoreDist - GoreFull), 0, 1);
-                        float t2 = tt + (MathF.Max(tt, tg) - tt) * k;
-                        if (t2 > tt) RoadCap.RoadTerrainLowered++;
-                        tt = t2;
+                        if (GapRamp && !ob && !float.IsNaN(oh) && MathF.Abs(oh - roadY) < GapMaxDh)
+                        {
+                            // zwischen zwei Fahrbahnen: gerade Rampe von der eigenen zur fremden Höhe.
+                            // Das Gelände der anderen Straße liegt von ihrer Seite her auf derselben
+                            // Ebene – keine Stufe in der Mitte (Mittelstreifen, Rampe neben der
+                            // Hauptfahrbahn) und kein sichtbares Füllgelände dazwischen.
+                            float hr = roadY + (h - roadY) * tt;
+                            float rj = d - edge;
+                            float hg = roadY + (oh - roadY) * (rj / MathF.Max(rj + od, 1e-3f));
+                            h = hr + (hg - hr) * k;
+                            GapRamped++;
+                            goto shaped;
+                        }
+                        if (MathF.Abs(h - roadY) < GoreMaxDh)
+                        {
+                            // Zwickel: nahe einer anderen Straße schneller ins Raster (das beide Straßen
+                            // stetig verbindet), sonst Stufe zwischen zwei Straßengeländen
+                            float tg = Math.Clamp((rowsD[j] - GoreFlat) / GoreBlend, 0, 1);
+                            float t2 = tt + (MathF.Max(tt, tg) - tt) * k;
+                            if (t2 > tt) RoadCap.RoadTerrainLowered++;
+                            tt = t2;
+                        }
                     }
                 }
-                h = roadY + (h - roadY) * tt - RoadTerrainDrop;
+                h = roadY + (h - roadY) * tt;
+            shaped:
+                h -= RoadTerrainDrop;
                 var off = world
                     ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen ab Anfangsknoten
                     : new Vector3(x, h - pa.Y, zSign * d);                 // lokal
@@ -551,6 +600,9 @@ public static class TerrainFill
                 float s1 = (e1.X * e2.Y - e1.Y * e2.X) * zSign;
                 float s2 = ((p11 - p10).X * (p10 - p00).Y - (p11 - p10).Y * (p10 - p00).X) * -zSign;
                 float s3 = ((p11 - p01).X * (p01 - p00).Y - (p11 - p01).Y * (p01 - p00).X) * zSign;
+                // je Spalte gekürzte Reihen fallen zusammen (Fläche 0) – das ist kein Umklappen
+                bool collapsed = ClampColumns && ((p01 - p00).LengthSquared() < 4e-4f || (p11 - p10).LengthSquared() < 4e-4f);
+                if (collapsed) continue;
                 if (s1 <= 0 || s2 <= 0 || (p11 - p01).LengthSquared() < 1e-4f || Vector2.Dot(p10 - p00, p11 - p01) <= 0)
                     return MathF.Max(0, MathF.Floor(rowsD[j]));
             }

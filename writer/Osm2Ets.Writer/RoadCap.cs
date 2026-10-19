@@ -35,6 +35,11 @@ public sealed class RoadCap
     // Segment: Anfang/Ende, halbe Modellbreite, Modellmitte (rechts +), Absenkung, Brücke
     private readonly List<(Vector3 A, Vector3 B, float Hw, float Center, float Drop, bool Bridge)> segs = [];
     private readonly List<object?> owners = [];
+    /// <summary>Je Segment: Anfang bzw. Ende ist das Ende der Straße (dahinter Prefab oder andere Straße).</summary>
+    private readonly List<(bool A, bool B)> ends = [];
+    private (bool A, bool B) addingEnds = (true, true);
+    /// <summary>Unter dem Asphalt erst so weit innerhalb des Modellrands die volle Absenkung.</summary>
+    public const float UnderTaper = 1f;
     private object? adding;
     private readonly Dictionary<(int, int), List<int>> index = [];
 
@@ -52,8 +57,10 @@ public sealed class RoadCap
                 var s = st[Math.Min(k, st.Length - 1)];
                 var a = MapWriter.ToVector(r.Points[k]); var b = MapWriter.ToVector(r.Points[k + 1]);
                 c.adding = r;
+                c.addingEnds = (k == 0, k == r.Points.Count - 2);
                 c.Add(a, b, s.Width / 2, s.ModelCenter, run.Bridge ? DeckDrop : 0f, run.Bridge);
                 c.adding = null;
+                c.addingEnds = (true, true);
             }
         }
         // Prefabs: Spurpunkte (alle ~2 m) mit halber Spurbreite + Rand
@@ -73,6 +80,7 @@ public sealed class RoadCap
         int i = segs.Count;
         segs.Add((a, b, hw, center, drop, bridge));
         owners.Add(adding);
+        ends.Add(addingEnds);
         float pad = hw + MathF.Abs(center) + MathF.Max(Margin, FlatReach) + Reach;
         int x0 = (int)MathF.Floor((MathF.Min(a.X, b.X) - pad) / Cell), x1 = (int)MathF.Floor((MathF.Max(a.X, b.X) + pad) / Cell);
         int z0 = (int)MathF.Floor((MathF.Min(a.Z, b.Z) - pad) / Cell), z1 = (int)MathF.Floor((MathF.Max(a.Z, b.Z) + pad) / Cell);
@@ -104,30 +112,34 @@ public sealed class RoadCap
             float uc = Math.Clamp(u, 0, 1);
             var dir = ab / MathF.Sqrt(l2);
             var right = new Vector2(-dir.Y, dir.X);
-            // seitlicher Abstand vom Modellrand (0 = auf der Fahrbahn), längs: über das Segmentende hinaus
+            // seitlicher Abstand vom Modellrand (< 0 = auf der Fahrbahn), längs: über das Segmentende hinaus
             float lat = MathF.Abs(Vector2.Dot(p - a2, right) - center) - hw;
             float lon = (u < 0 ? -u : u > 1 ? u - 1 : 0) * MathF.Sqrt(l2);
-            float outside = MathF.Max(0, MathF.Max(lat, lon));
+            float sd = lon > 0 ? MathF.Max(lat, lon) : lat;
+            float outside = MathF.Max(0, sd);
+            // hinter dem Ende der Straße (Prefab, andere Straße) kein breiter flacher Bereich –
+            // dort gilt deren eigene Grenze; an inneren Knoten schon (sonst Kerbe in Kurven)
+            bool pastEnd = (u < 0 && ends[i].A) || (u > 1 && ends[i].B);
             float y = a.Y + (b.Y - a.Y) * uc - drop;
             if (bridge)
             {
                 // knapp unter dem Überbau, daneben sanft zurück aufs Raster (keine Stufe unter der Kante);
                 // flach so weit wie bei Straßen – Brücken auf Geländehöhe (Bachdurchlass, OSM-Brücke
                 // ohne Tal im Raster) bekämen sonst über die groben Füllquads Erde aufs Deck
-                float beyondB = outside - MathF.Max(BridgeMargin, FlatReach);
+                float beyondB = outside - (pastEnd ? BridgeMargin : MathF.Max(BridgeMargin, FlatReach));
                 if (beyondB > Reach) continue;
                 y += MathF.Max(0, beyondB) * BridgeSlope;
             }
             else
             {
-                float flat = owners[i] is null ? Margin : MathF.Max(Margin, FlatReach);
+                float flat = owners[i] is null || pastEnd ? Margin : MathF.Max(Margin, FlatReach);
                 float beyond = outside - flat;
                 if (beyond > Reach) continue;
                 y += MathF.Max(0, beyond) * Slope;
-                // unter dem Asphalt tiefer: das Spiel zieht die Fahrbahn zwischen den Knoten als
-                // Hermite-Kurve (bei Gefällewechseln einige cm unter der Sehne), und grobe Füllquads
-                // interpolieren über den Fahrbahnrand – sonst schimmert Erde durch den Asphalt
-                if (outside < Margin) y -= UnderDrop * (1 - outside / Margin);
+                // nur UNTER dem Asphalt tiefer (Hermite-Mulden, grobe Füllquads); am Rand und daneben
+                // nicht – dort wäre das Füllgelände sonst bis 0,55 m unter der Fahrbahn sichtbar
+                // (Wand/Bankett-Seite der Straße zwischen zwei Fahrbahnen, v78)
+                if (sd < 0) y -= UnderDrop * MathF.Min(1, -sd / UnderTaper);
             }
             if (Probe is { } pr && Vector2.Distance(pr, p) < 4f && y < 1e6f)
                 Console.Error.WriteLine($"CAP at ({x:0.0},{z:0.0}): seg {a} -> {b} hw {hw:0.0} c {center:0.0} bridge {bridge} outside {outside:0.0} cap {y:0.00}");
@@ -164,6 +176,97 @@ public sealed class RoadCap
             cap = MathF.Min(cap, a.Y + (b.Y - a.Y) * u - drop - 0.1f);
         }
         return cap;
+    }
+
+    /// <summary>
+    /// Nächste ANDERE Straße (bzw. Prefab-Spur): Abstand von ihrem Modellrand (höchstens maxD),
+    /// ihre Fahrbahnhöhe an der nächsten Stelle und ob sie eine Brücke ist.
+    /// </summary>
+    public (float Dist, float Height, bool Bridge) NearestOther(float x, float z, object owner, float maxD)
+    {
+        if (!index.TryGetValue(((int)MathF.Floor(x / Cell), (int)MathF.Floor(z / Cell)), out var l)) return (maxD, float.NaN, false);
+        float best = maxD, bh = float.NaN; bool bb = false;
+        var p = new Vector2(x, z);
+        foreach (var i in l)
+        {
+            if (ReferenceEquals(owners[i], owner)) continue;
+            var (a, b, hw, center, _, bridge) = segs[i];
+            var a2 = new Vector2(a.X, a.Z); var ab = new Vector2(b.X, b.Z) - a2;
+            float l2 = ab.LengthSquared();
+            if (l2 < 1e-8f) continue;
+            float u = Vector2.Dot(p - a2, ab) / l2;
+            var dir = ab / MathF.Sqrt(l2);
+            var right = new Vector2(-dir.Y, dir.X);
+            float lat = MathF.Abs(Vector2.Dot(p - a2, right) - center) - hw;
+            float lon = (u < 0 ? -u : u > 1 ? u - 1 : 0) * MathF.Sqrt(l2);
+            float d = MathF.Max(0, MathF.Max(lat, lon));
+            if (d < best) { best = d; bh = a.Y + (b.Y - a.Y) * Math.Clamp(u, 0, 1); bb = bridge; }
+        }
+        return (best, bh, bb);
+    }
+
+    /// <summary>
+    /// Freie Strecke entlang eines Strahls (vom eigenen Modellrand nach außen) bis in das Modell
+    /// einer ANDEREN Straße oder an eine Prefab-Spur, höchstens maxD. Brücken zählen nicht (Gelände
+    /// läuft darunter durch). Stücke, die an [segA, segB] gerade
+    /// anschließen (Fortsetzung über einen gemeinsamen Knoten), werden übergangen.
+    /// </summary>
+    public float RayFree(Vector2 o, Vector2 dir, float maxD, object owner, Vector2 segA, Vector2 segB)
+    {
+        float best = maxD;
+        var seen = new HashSet<int>();
+        var sdir = segB - segA;
+        var sd = sdir.LengthSquared() > 1e-8f ? Vector2.Normalize(sdir) : Vector2.UnitX;
+        for (float s = 0; ; s += Cell / 2)
+        {
+            var p = o + dir * MathF.Min(s, maxD);
+            if (index.TryGetValue(((int)MathF.Floor(p.X / Cell), (int)MathF.Floor(p.Y / Cell)), out var l))
+                foreach (var i in l)
+                {
+                    if (!seen.Add(i) || ReferenceEquals(owners[i], owner)) continue;
+                    var (a, b, hw, center, _, bridge) = segs[i];
+                    if (bridge) continue;
+                    if (owners[i] is null)
+                    {
+                        // Prefab-Spurpunkt: Kreis mit Radius hw (halbe Spur + Rand)
+                        var c = new Vector2(a.X, a.Z) - o;
+                        float tc = Vector2.Dot(c, dir);
+                        float d2 = c.LengthSquared() - tc * tc;
+                        if (d2 > hw * hw) continue;
+                        float th = MathF.Sqrt(hw * hw - d2);
+                        float te = tc - th, tx = tc + th;
+                        if (tx < 0) continue;
+                        best = MathF.Min(best, MathF.Max(0, te));
+                        continue;
+                    }
+                    var a2 = new Vector2(a.X, a.Z); var ab = new Vector2(b.X, b.Z) - a2;
+                    float len = ab.Length();
+                    if (len < 1e-4f) continue;
+                    var u = ab / len; var r = new Vector2(-u.Y, u.X);
+                    var b2 = a2 + ab;
+                    if ((Vector2.Distance(a2, segB) < 0.5f || Vector2.Distance(b2, segA) < 0.5f || Vector2.Distance(a2, segA) < 0.5f || Vector2.Distance(b2, segB) < 0.5f)
+                        && MathF.Abs(Vector2.Dot(u, sd)) > 0.95f) continue;
+                    // Strahl gegen das Rechteck u ∈ [0, len], v ∈ [center − hw, center + hw]
+                    var w = o - a2;
+                    float u0 = Vector2.Dot(w, u), du = Vector2.Dot(dir, u);
+                    float v0 = Vector2.Dot(w, r), dv = Vector2.Dot(dir, r);
+                    float t0 = 0, t1 = maxD;
+                    if (!Slab(u0, du, 0, len, ref t0, ref t1)) continue;
+                    if (!Slab(v0, dv, center - hw, center + hw, ref t0, ref t1)) continue;
+                    if (t0 < best) best = t0;
+                }
+            if (s >= maxD) break;
+        }
+        return best;
+    }
+
+    private static bool Slab(float p0, float dp, float lo, float hi, ref float t0, ref float t1)
+    {
+        if (MathF.Abs(dp) < 1e-8f) return p0 >= lo && p0 <= hi;
+        float ta = (lo - p0) / dp, tb = (hi - p0) / dp;
+        if (ta > tb) (ta, tb) = (tb, ta);
+        t0 = MathF.Max(t0, ta); t1 = MathF.Min(t1, tb);
+        return t0 <= t1;
     }
 
     /// <summary>Abstand vom Modellrand der nächsten ANDEREN Straße (bzw. eines Prefabs), höchstens maxD.</summary>

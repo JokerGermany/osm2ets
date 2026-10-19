@@ -203,6 +203,7 @@ public static class MapWriter
         if (TerrainClearance.HardLimited > 0) warnings.Add($"Info: Straßengelände an {TerrainClearance.HardLimited} Seiten schmaler als 2 m (fremder Fahrbahnrand näher)");
         if (TerrainClearance.Share) terrainClamped += TerrainClearance.ClampCurves(valid, styles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
+        Overlaps.ExactRoads = TerrainClearance.Share && UseModelEdges && TerrainFill.GapRamp;
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("enforce"));
         if (Environment.GetEnvironmentVariable("OSM2ETS_PROBE") is { } probe)
@@ -366,7 +367,7 @@ public static class MapWriter
                 int shaped = 0, bad = 0, folded = 0;
                 // Zwickel an Gabelungen: nahe anderer Straßen/Prefabs kürzerer Übergang ins Raster
                 RoadCap.PrefabLanes = PrefabFootprint.All3(map);
-                RoadCap.RoadTerrainLowered = 0;
+                RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0;
                 var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null
                     ? RoadCap.Build(valid, styles, null) : null;
                 foreach (var entry in valid)
@@ -407,9 +408,12 @@ public static class MapWriter
                         if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); da = Dir3(rd.Node.Rotation); db = Dir3(rd.ForwardNode.Rotation); }
                         for (int tries = 0; tries < 4; tries++)
                         {
-                            Func<float, float, float>? cap = others is null ? null : (x, z) => others.OtherDistance(x, z, entry, TerrainFill.GoreDist);
-                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, eL, ta, tb, cap, da, db) < 0) bad++;
-                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, eR, ta, tb, cap, da, db) < 0) bad++;
+                            Func<float, float, (float, float, bool)>? cap = others is null ? null : (x, z) => others.NearestOther(x, z, entry, TerrainFill.GoreDist);
+                            var sa2 = new Vector2(pa.X, pa.Z); var sb2 = new Vector2(pb.X, pb.Z);
+                            Func<Vector2, Vector2, float, float>? ray = others is null || !TerrainFill.ClampColumns || !Overlaps.ExactRoads ? null
+                                : (o, dir, maxD) => others.RayFree(o, dir, maxD, entry, sa2, sb2);
+                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, eL, ta, tb, cap, da, db, ray) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, eR, ta, tb, cap, da, db, ray) < 0) bad++;
                             // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
                             float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, eL, ta, tb, da, db);
                             float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, eR, ta, tb, da, db);
@@ -421,7 +425,7 @@ public static class MapWriter
                         if (rd == lastItem[entry]) break;
                     }
                 }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte");
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}");
             }
             var lanes = PrefabFootprint.All(map);
             RoadCap.PrefabLanes = PrefabFootprint.All3(map);
