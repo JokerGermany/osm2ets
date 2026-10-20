@@ -44,7 +44,7 @@ public sealed class RoadCap
     private readonly Dictionary<(int, int), List<int>> index = [];
 
     public static RoadCap Build(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles,
-                                List<(Vector3[] Nodes, float HalfWidth)>? prefabs)
+                                List<(Vector3[] Nodes, float HalfWidth)>? prefabs, bool roadsToo = true)
     {
         var c = new RoadCap();
         foreach (var r in roads)
@@ -54,6 +54,7 @@ public sealed class RoadCap
             {
                 var run = r.Runs.FirstOrDefault(x => x.From <= k && k < x.To);
                 if (run is null || run.Tunnel) continue;
+                if (!roadsToo && !run.Bridge) continue;   // Fahrbahnen regelt dann CoverCap
                 var s = st[Math.Min(k, st.Length - 1)];
                 var a = MapWriter.ToVector(r.Points[k]); var b = MapWriter.ToVector(r.Points[k + 1]);
                 c.adding = r;
@@ -179,10 +180,20 @@ public sealed class RoadCap
     }
 
     /// <summary>
-    /// Nächste ANDERE Straße (bzw. Prefab-Spur): Abstand von ihrem Modellrand (höchstens maxD),
-    /// ihre Fahrbahnhöhe an der nächsten Stelle und ob sie eine Brücke ist.
+    /// Höhenunterschied, ab dem eine andere Straße für das Straßengelände kein Nachbar ist (Brücke
+    /// darüber, Straße darunter). Sonst verdeckte an der BT 46 über der A 9 die Brücke im Grundriss
+    /// die eigentliche Nachbarfahrbahn: im Zwickel Rampe/Hauptfahrbahn wechselten Spalten mit und
+    /// ohne Rampe zur Nachbarfahrbahn – Zickzack-Falten im Gelände neben der Brücke.
     /// </summary>
-    public (float Dist, float Height, bool Bridge) NearestOther(float x, float z, object owner, float maxD)
+    public const float NeighbourMaxDh = 5f;
+
+    /// <summary>
+    /// Nächste ANDERE Straße (bzw. Prefab-Spur): Abstand von ihrem Modellrand (höchstens maxD),
+    /// ihre Fahrbahnhöhe an der nächsten Stelle und ob sie eine Brücke ist. Mit
+    /// <paramref name="refY"/> zählen nur Straßen höchstens <see cref="NeighbourMaxDh"/> darüber
+    /// oder darunter.
+    /// </summary>
+    public (float Dist, float Height, bool Bridge) NearestOther(float x, float z, object owner, float maxD, float refY = float.NaN)
     {
         if (!index.TryGetValue(((int)MathF.Floor(x / Cell), (int)MathF.Floor(z / Cell)), out var l)) return (maxD, float.NaN, false);
         float best = maxD, bh = float.NaN; bool bb = false;
@@ -195,6 +206,7 @@ public sealed class RoadCap
             if (owners[i] is null)
             {
                 // Prefab-Spurpunkt: Kreis wie in RayFree
+                if (!float.IsNaN(refY) && MathF.Abs(a.Y - refY) > NeighbourMaxDh) continue;
                 float dc = MathF.Max(0, Vector2.Distance(p, a2) - hw);
                 if (dc < best) { best = dc; bh = a.Y; bb = false; }
                 continue;
@@ -202,12 +214,14 @@ public sealed class RoadCap
             float l2 = ab.LengthSquared();
             if (l2 < 1e-8f) continue;
             float u = Vector2.Dot(p - a2, ab) / l2;
+            float hy = a.Y + (b.Y - a.Y) * Math.Clamp(u, 0, 1);
+            if (!float.IsNaN(refY) && MathF.Abs(hy - refY) > NeighbourMaxDh) continue;
             var dir = ab / MathF.Sqrt(l2);
             var right = new Vector2(-dir.Y, dir.X);
             float lat = MathF.Abs(Vector2.Dot(p - a2, right) - center) - hw;
             float lon = (u < 0 ? -u : u > 1 ? u - 1 : 0) * MathF.Sqrt(l2);
             float d = MathF.Max(0, MathF.Max(lat, lon));
-            if (d < best) { best = d; bh = a.Y + (b.Y - a.Y) * Math.Clamp(u, 0, 1); bb = bridge; }
+            if (d < best) { best = d; bh = hy; bb = bridge; }
         }
         return (best, bh, bb);
     }
@@ -311,6 +325,24 @@ public sealed class RoadCap
             float fl = Floor(x, z);
             if (fl > h) { Interlocked.Increment(ref Raised); h = fl; }
         }
+        float c = At(x, z);
+        if (c < h) { Interlocked.Increment(ref Lowered); return c; }
+        return h;
+    }
+
+    /// <summary>Raster mit Prefab-Boden (erster Teil von <see cref="Height"/>).</summary>
+    public float Base(TerrainGridEntry grid, float x, float z)
+    {
+        float h = grid.HeightAt(x, z);
+        if (float.IsNaN(h)) return h;
+        float fl = Floor(x, z);
+        if (fl > h) { Interlocked.Increment(ref Raised); h = fl; }
+        return h;
+    }
+
+    /// <summary>Decke (zweiter Teil von <see cref="Height"/>).</summary>
+    public float Ceil(float x, float z, float h)
+    {
         float c = At(x, z);
         if (c < h) { Interlocked.Increment(ref Lowered); return c; }
         return h;

@@ -22,6 +22,10 @@ var tests = new List<(string Name, Action Body)>
     ("L5: Privatstraße behält ihren Typ, ist aber nicht im Navi", RestrictedWaysHidden),
     ("Gelände: Mittelstreifen endet vor der Gegenfahrbahn (asymmetrische Modellränder)", MedianTerrainStopsAtOtherCarriageway),
     ("Gelände: zwischen zwei unterschiedlich hohen Fahrbahnen lückenlose Rampe, nie im fremden Modell", GapBetweenRoadsIsRamped),
+    ("Gelände: schmale Seite erreicht am Rand die Rasterhöhe (höchstens 45°)", NarrowRoadTerrainReachesGrid),
+    ("Prefab-Anschluss: Einlauf übernimmt die Attribute des ersetzten Abschnitts", PrefabLeadKeepsRunAttributes),
+    ("Gelände: Brücke darüber verdeckt die Nachbarfahrbahn nicht", BridgeAboveIsNoNeighbour),
+    ("Füllgelände: nie über Asphalt oder Straßengelände (Hang neben der Straße)", FillStaysBelowRoadTerrain),
 };
 
 int failed = 0;
@@ -468,4 +472,165 @@ static void GapBetweenRoadsIsRamped()
             Check(reachA <= reachB + 0.2, $"Lücke ohne Straßengelände bei x {x}: A bis z {reachA:0.00}, B bis z {reachB:0.00} ({(converge ? "zusammenlaufend" : "parallel")})");
         }
     }
+}
+
+static void NarrowRoadTerrainReachesGrid()
+{
+    // Straße (ger1, ±4 m) auf Höhe 0 nach Osten, rechts (+z) Einschnitt: Raster 0 bis z = 5, dann
+    // Steigung k. Schmale rechte Seite: der Außenrand muss die Rasterhöhe erreichen (früher lag er
+    // fast auf Fahrbahnhöhe und das Füllgelände dahinter höher – Kante), bei steilem Raster
+    // höchstens TerrainFill.MaxSlope ab dem flachen Streifen.
+    foreach (var (size, k) in new[] { (6f, 0.3f), (4f, 1.5f) })
+    {
+        int nx = 41, nz = 41;
+        var grid = new TerrainGridEntry { Origin = [-100, -100], Cell = 5, Nx = nx, Nz = nz, Heights = new float[nx * nz] };
+        for (int j = 0; j < nz; j++)
+            for (int i = 0; i < nx; i++)
+                grid.Heights[j * nx + i] = MathF.Max(0, (-100 + j * 5 - 5) * k);
+        var map = new Map();
+        var rd = Road.Add(map, new Vector3(0, 0, 0), new Vector3(30, 0, 0), "ger1", size, size);
+        TerrainFill.Mode = 'D';
+        var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
+        int n = TerrainFill.ShapeRoadSide(rd.Right.Terrain, grid, pa, pb, size, +1, 4f, Vector2.UnitX, Vector2.UnitX, null, Vector3.UnitX, Vector3.UnitX, null);
+        Check(n > 0, "keine Höhenpunkte");
+        var outer = rd.Right.Terrain.QuadData.Offsets.GroupBy(o => o.X).Select(g => g.OrderBy(o => o.Y).Last()).ToList();
+        float rows = TerrainFill.NearFlat + TerrainFill.NearBlend;
+        float flat = TerrainFill.NearFlat * size / rows;
+        foreach (var o in outer)
+        {
+            var p = pa + o.Data;
+            float g = grid.HeightAt(p.X, p.Z);
+            float want = MathF.Min(g, TerrainFill.MaxSlope * (size - flat)) - TerrainFill.RoadTerrainDrop;
+            Check(MathF.Abs(p.Y - want) < 0.05f, $"Seite {size} m, Steigung {k}: Außenrand {p.Y:0.00} statt {want:0.00} (Raster {g:0.00}) bei x {p.X:0.0}");
+        }
+    }
+}
+
+static void PrefabLeadKeepsRunAttributes()
+{
+    // Straße 0…90 m, Abschnitte 3–5 Brücke. Ende an einem Prefab-Knoten bei x 95: die Punkte ab
+    // x 70 fallen weg, der Einlauf ersetzt die Abschnitte ab Punkt 6 – die waren keine Brücke.
+    // Früher erbte der Lauf, der bei Punkt 6 endete (die Brücke), den Einlauf: BT 46 an der A 9
+    // ohne Straßengelände bis zum Prefab.
+    double[][] Pts() => Enumerable.Range(0, 10).Select(i => new[] { i * 10.0, 0, 0 }).ToArray();
+    var r = MakeRoad("t", Pts(), MakeRun(0, 3, "tertiary"), MakeRun(3, 6, "tertiary", bridge: true), MakeRun(6, 9, "tertiary"));
+    Interchanges.SetTail(r, new Vector3(95, 0, 5), Vector3.UnitX, 20f);
+    int segs = r.Points.Count - 1;
+    Check(segs >= 7, $"unerwartete Punktzahl {r.Points.Count}");
+    bool Bridge(RoadEntry e, int seg) => e.Runs.First(x => x.From <= seg && seg < x.To).Bridge;
+    Check(e2(r), "Läufe decken nicht alle Abschnitte");
+    Check(!Bridge(r, segs - 1) && !Bridge(r, segs - 2), "Einlauf am Ende als Brücke markiert");
+    Check(Bridge(r, 3) && Bridge(r, 5) && !Bridge(r, 2), "Brücke davor verändert");
+    // gespiegelt: Anfang an einem Prefab-Knoten bei x −5, Brücke auf den Abschnitten 3–5
+    var h = MakeRoad("h", Pts(), MakeRun(0, 3, "tertiary"), MakeRun(3, 6, "tertiary", bridge: true), MakeRun(6, 9, "tertiary"));
+    Interchanges.SetHead(h, new Vector3(-5, 0, 5), Vector3.UnitX, 20f);
+    Check(e2(h), "Läufe (Anfang) decken nicht alle Abschnitte");
+    Check(!Bridge(h, 0) && !Bridge(h, 1), "Einlauf am Anfang als Brücke markiert");
+    int firstBridge = Enumerable.Range(0, h.Points.Count - 1).First(sg => Bridge(h, sg));
+    Check(Math.Abs(h.Points[firstBridge][0] - 30) < 1e-6, $"Brücke beginnt bei x {h.Points[firstBridge][0]} statt 30");
+
+    static bool e2(RoadEntry e)
+    {
+        int n = e.Points.Count - 1;
+        for (int sg = 0; sg < n; sg++) if (e.Runs.Count(x => x.From <= sg && sg < x.To) != 1) return false;
+        return e.Runs[0].From == 0 && e.Runs[^1].To == n;
+    }
+}
+
+static void BridgeAboveIsNoNeighbour()
+{
+    // Fahrbahn A (y 0) und B (y 0,5) parallel 20 m auseinander, dazwischen quer darüber eine
+    // Brücke C (y 10). Für das Straßengelände von A ist B der Nachbar, nicht die Brücke darüber.
+    var st = new ResolvedStyle("ger1", 60, 60, RoadResolution.HighPoly, null, null, Width: 8);
+    var a = MakeRoad("a", new[] { new[] { 0.0, 0, 0 }, new[] { 200.0, 0, 0 } }, MakeRun(0, 1, "primary"));
+    var b = MakeRoad("b", new[] { new[] { 0.0, 0.5, 20 }, new[] { 200.0, 0.5, 20 } }, MakeRun(0, 1, "primary"));
+    var c = MakeRoad("c", new[] { new[] { 100.0, 10, -50 }, new[] { 100.0, 10, 70 } }, MakeRun(0, 1, "primary", bridge: true));
+    var styles = new Dictionary<RoadEntry, ResolvedStyle[]> { [a] = [st], [b] = [st], [c] = [st] };
+    var cap = RoadCap.Build([a, b, c], styles, null);
+    // Punkt im Zwickel neben A, 1 m neben der Brücke (im Grundriss)
+    var (d, hgt, br) = cap.NearestOther(95, 8, a, TerrainFill.GoreDist, 0f);
+    Check(!br && MathF.Abs(hgt - 0.5f) < 1e-3f, $"Nachbar ist die Brücke (Höhe {hgt:0.00}, Brücke {br})");
+    Check(MathF.Abs(d - 8f) < 0.05f, $"Abstand zu B {d:0.00} statt 8");
+    // ohne Bezugshöhe (alte Abfrage) wäre es die Brücke
+    var (_, h0, b0) = cap.NearestOther(95, 8, a, TerrainFill.GoreDist);
+    Check(b0 && h0 > 5, "Prüfaufbau: ohne Bezugshöhe sollte die Brücke am nächsten sein");
+}
+
+static void FillStaysBelowRoadTerrain()
+{
+    // Straße auf Höhe 0 nach Osten; nördlich (−z) ein Hang (Raster steigt ab 6 m mit 25 %), südlich
+    // eben. Kein Füllgelände-Eckpunkt über Asphalt (mind. 0,25 m darunter) oder über dem
+    // Straßengelände (mind. TerrainMargin − SettleTol darunter).
+    int nx = 61, nz = 41;
+    var heights = new float[nx * nz];
+    for (int j = 0; j < nz; j++)
+        for (int i = 0; i < nx; i++)
+        {
+            float z = -200 + j * 10, x = -100 + i * 10;
+            heights[j * nx + i] = MathF.Max(0, (-z - 6) * 0.25f) + 0.002f * x;
+        }
+    var road = MakeRoad("r", new[] { new[] { 0.0, 0, 0 }, new[] { 200.0, 0.4, 0 } }, MakeRun(0, 1, "primary"));
+    var input = new IntermediateFile
+    {
+        Format = IntermediateFile.ExpectedFormat, Version = 1,
+        Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 },
+        Roads = [road],
+        TerrainGrid = new TerrainGridEntry { Origin = [-100, -200], Cell = 10, Nx = nx, Nz = nz, Heights = heights },
+    };
+    var (map, _) = MapWriter.Build(input, MappingConfig.Load(ShippedMapping()));
+    var rd = map.MapItems.Values.OfType<Road>().ToList();
+    var fill = map.MapItems.Values.OfType<Terrain>().ToList();
+    Check(rd.Count > 0 && fill.Count > 0, "keine Straße oder kein Füllgelände");
+    // Straßengelände-Höhe an (x, z) über die Quads der Straßenseiten (je Spalte linear in z)
+    float RoadSurface(float x, float z, out bool covered)
+    {
+        covered = false;
+        foreach (var r in rd)
+        {
+            var pa = r.Node.Position; var pb = r.ForwardNode.Position;
+            if (x < pa.X || x > pb.X) continue;
+            float t = (x - pa.X) / (pb.X - pa.X), y = pa.Y + (pb.Y - pa.Y) * t;
+            if (MathF.Abs(z) <= 4f) { covered = true; return y; }
+            foreach (var (side, sign) in new[] { (r.Left.Terrain, -1f), (r.Right.Terrain, 1f) })
+            {
+                if (side.Size <= 0 || MathF.Sign(z) != MathF.Sign(sign)) continue;
+                var cols = side.QuadData.Offsets.GroupBy(o => o.X).OrderBy(g => g.Key).ToList();
+                if (cols.Count < 2) continue;
+                int ci = Math.Clamp((int)MathF.Floor(t * side.QuadData.Cols), 0, side.QuadData.Cols - 1);
+                var prof = side.QuadData.Offsets.Where(o => o.X == ci).Select(o => pa + o.Data).OrderBy(p => MathF.Abs(p.Z)).ToList();
+                var prof2 = side.QuadData.Offsets.Where(o => o.X == ci + 1).Select(o => pa + o.Data).OrderBy(p => MathF.Abs(p.Z)).ToList();
+                if (prof.Count < 2 || prof2.Count < 2) continue;
+                float Lin(List<Vector3> pr)
+                {
+                    var all = new List<Vector3> { new(pr[0].X, y, sign * 4f) }; all.AddRange(pr);
+                    for (int k = 0; k < all.Count - 1; k++)
+                        if (MathF.Abs(z) >= MathF.Abs(all[k].Z) && MathF.Abs(z) <= MathF.Abs(all[k + 1].Z))
+                        {
+                            float u = (MathF.Abs(z) - MathF.Abs(all[k].Z)) / MathF.Max(1e-4f, MathF.Abs(all[k + 1].Z) - MathF.Abs(all[k].Z));
+                            return all[k].Y + (all[k + 1].Y - all[k].Y) * u;
+                        }
+                    return float.NaN;
+                }
+                float h1 = Lin(prof), h2 = Lin(prof2);
+                if (float.IsNaN(h1) || float.IsNaN(h2)) continue;
+                float u2 = Math.Clamp((x - prof[0].X) / MathF.Max(1e-3f, prof2[0].X - prof[0].X), 0, 1);
+                covered = true;
+                return h1 + (h2 - h1) * u2;
+            }
+        }
+        return float.NaN;
+    }
+    int under = 0, beside = 0;
+    foreach (var t in fill)
+        foreach (var side in new[] { t.Left.Terrain, t.Right.Terrain })
+            foreach (var o in side.QuadData.Offsets)
+            {
+                var p = t.Node.Position + o.Data;
+                if (p.X < 15 || p.X > 185) continue;
+                float s = RoadSurface(p.X, p.Z, out bool cov);
+                if (!cov || float.IsNaN(s)) continue;
+                if (MathF.Abs(p.Z) <= 4f) { Check(p.Y <= s - 0.25f, $"Füllgelände unter Asphalt zu hoch: {p.Y:0.00} bei Fahrbahn {s:0.00} (x {p.X:0.0}, z {p.Z:0.0})"); under++; }
+                else { Check(p.Y <= s - CoverCap.TerrainMargin + CoverCap.SettleTol + 0.02f, $"Füllgelände über dem Straßengelände: {p.Y:0.00} bei {s:0.00} (x {p.X:0.0}, z {p.Z:0.0})"); beside++; }
+            }
+    Check(under > 5 && beside > 5, $"zu wenige Punkte geprüft ({under}/{beside})");
 }

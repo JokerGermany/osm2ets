@@ -45,6 +45,17 @@ den Raum zwischen den Straßen mit Terrain-Items in West-Ost-Reihen (40 m, dazu 
 bis 1 m für Reste an Straßen). Höhenpunkte folgen dem Raster quer über jeden Streifen. Die
 Freifläche berücksichtigt die echten Fahrspuren gesetzter Prefabs (Navigationskurven aus der `.ppd`).
 
+Wie Füll- und Straßengelände zusammenpassen:
+- Das Straßengelände (bis 60 m je Seite) ist neben der Straße die sichtbare Fläche: 3 m flach,
+  dann weich ins Raster. Schmale Seiten bekommen einen gestauchten Verlauf, damit ihr Außenrand
+  die Rasterhöhe erreicht (höchstens 45° ab dem flachen Streifen).
+- Das Füllgelände liegt darunter: unter Asphalt mindestens 0,3 m, unter Straßengelände 0,1 m
+  unter der tatsächlich geschriebenen Oberfläche (beide Quad-Diagonalen geprüft). Hinter dem
+  Rand des Straßengeländes setzt es diesen mit höchstens 0,7 Steigung nach oben oder unten fort,
+  so dass der Rand auf das Füllgelände trifft.
+- Die Füllquads sind grob (bis 16 m); nach dem Setzen wird jedes Quad gegen die Fläche darüber
+  geprüft und dort abgesenkt, wo es durchstoßen würde.
+
 Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Höhenpunkte (vertex offsets) sind **absolute** Lagen (Zeilenabstände 1,1,1,2,6,6,10,10,10,20,40,50… m),
   keine Verschiebungen. Beim Straßengelände zählen sie ab **Straßenmitte** entlang der Straße.
@@ -58,6 +69,10 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Lücken (schwarz im Editor) bleiben in schmalen Zwickeln zwischen Rampe und Hauptfahrbahn
   und an manchen Prefabs; die Füllreihen laufen West-Ost und folgen schrägen Lücken nicht genau.
 - Wo eine untergeordnete Straße unter einer Autobahn abgesenkt wird, fehlt noch die Einschnittsböschung.
+- Brücken haben keine Modelle und Widerlager: beginnt an einem Brückenende Straßengelände,
+  zeigt sich sein Ende unter der Brücke als Geländekante (bis einige Meter).
+- Wo Straßengelände zweier deutlich verschieden hoher Straßen aneinanderstößt (dichte
+  Anschlussstellen), bleiben an wenigen Stellen Stufen von 1–3 m.
 - Kreuzungen ohne Prefab: Straßenstück zwischen zwei Kreuzungen zu kurz oder Winkel mehr als
   40° von T/X entfernt. Dort überlagern sich die Straßen weiterhin.
 - Knotenhäufungen an Autobahndreiecken werden noch nicht als Ganzes behandelt.

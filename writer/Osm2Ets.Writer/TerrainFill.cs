@@ -24,6 +24,11 @@ public static class TerrainFill
     /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
     public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
     public static float NearFlat = EnvF("OSM2ETS_RT_FLAT", 3f), NearBlend = EnvF("OSM2ETS_RT_BLEND", 10f);
+    /// <summary>Schmale Seiten mit gestauchtem Verlauf (aus: OSM2ETS_RT_NOCOMPRESS).</summary>
+    public static bool CompressNarrow = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOCOMPRESS") is null;
+    /// <summary>Größte mittlere Neigung des Straßengeländes ab dem flachen Streifen (0 = aus).</summary>
+    public static float MaxSlope = EnvF("OSM2ETS_RT_MAXSLOPE", 1.0f);
+    public static int SlopeLimited;
     /// <summary>In Zwickeln (andere Straße näher als GoreDist): kurzer Übergang.</summary>
     public static float GoreFlat = 1.5f, GoreBlend = 2.5f, GoreDist = 14f, GoreFull = 8f;
     /// <summary>Nur bei kleinem Höhenunterschied Raster–Fahrbahn (Zwickel auf einer Ebene);
@@ -44,7 +49,20 @@ public static class TerrainFill
     /// <summary>Füllgelände nahe Fahrbahnen nicht höher als die Fahrbahn (aus: OSM2ETS_FILL_NOCAP).</summary>
     public static bool UseCap = Environment.GetEnvironmentVariable("OSM2ETS_FILL_NOCAP") is null;
     private static RoadCap? Cap;
-    private static float FH(TerrainGridEntry grid, float x, float z) => Cap is null ? grid.HeightAt(x, z) : Cap.Height(grid, x, z);
+    /// <summary>Obergrenze aus den geschriebenen Fahrbahnen und dem Straßengelände (siehe <see cref="CoverCap"/>).</summary>
+    private static CoverCap? CoverLimit;
+    private static float FH(TerrainGridEntry grid, float x, float z)
+    {
+        if (CoverLimit is null) return Cap is null ? grid.HeightAt(x, z) : Cap.Height(grid, x, z);
+        // Raster (Prefab-Boden), dann Fahrbahnen/Straßengelände (CoverCap), zuletzt Brücken- und
+        // Prefab-Decke – die darf eine Böschung nach unten nicht überstimmen
+        float h = Cap is null ? grid.HeightAt(x, z) : Cap.Base(grid, x, z);
+        if (float.IsNaN(h)) return h;
+        h = CoverLimit.Limit(x, z, h - FillDrop) + FillDrop;
+        return Cap is null ? h : Cap.Ceil(x, z, h);
+    }
+    /// <summary>Alle gesetzten Füllstücke (für <see cref="CoverCap.Settle"/>).</summary>
+    private static readonly List<Terrain> placedFill = [];
     public static bool Chain = Environment.GetEnvironmentVariable("OSM2ETS_FILL_CHAIN") is not null;
     /// <summary>Mittellinie (Zeile 0) mit eigenen Höhenpunkten belegen, wie in der SCS-Karte
     /// (dort ~7,5 % aller Offsets in Zeile 0). Aus: OSM2ETS_FILL_NOROW0.</summary>
@@ -72,9 +90,14 @@ public static class TerrainFill
     public static Result Build(Map map, TerrainGridEntry grid, List<RoadEntry> roads,
                                Dictionary<RoadEntry, ResolvedStyle[]> styles,
                                List<(Vector3[] Nodes, float HalfWidth)> prefabs,
-                               List<Vector2>? prefabLanes = null)
+                               List<Vector2>? prefabLanes = null, CoverCap? cover = null)
     {
-        Cap = UseCap ? RoadCap.Build(roads, styles, prefabs) : null;
+        CoverLimit = cover;
+        placedFill.Clear();
+        CoverCap.ConeLowered = 0; CoverCap.ConeRaised = 0; CoverCap.CoverLowered = 0;
+        // mit CoverCap begrenzen Fahrbahnen das Füllgelände über ihre tatsächliche Oberfläche;
+        // RoadCap nur noch für Brücken (Überbau) und Prefabs
+        Cap = UseCap ? RoadCap.Build(roads, styles, prefabs, roadsToo: cover is null) : null;
         RoadCap.Lowered = 0; RoadCap.Raised = 0;
         float x0 = (float)grid.Origin[0], z0 = (float)grid.Origin[1];
         float x1 = x0 + (float)grid.Cell * (grid.Nx - 1), z1 = z0 + (float)grid.Cell * (grid.Nz - 1);
@@ -301,6 +324,7 @@ public static class TerrainFill
                 w.Write("\n");
             }
         }
+        cover?.Settle(placedFill);
         int free = 0, open = 0;
         for (int k = 0; k < mask.Length; k++) if (!mask[k]) { free++; if (!full[k]) open++; }
         Uncovered = free > 0 ? open / (double)free : 0;
@@ -312,7 +336,9 @@ public static class TerrainFill
     {
         // Knoten gierig so weit wie möglich setzen: Höhe linear (±0,4 m), Breiten fast gleich,
         // höchstens MaxPiece m – spart viele Items auf flachem, freiem Feld
-        float H(int i) => FH(grid, run[i].X, z);
+        var hs = new float[run.Count];
+        for (int i = 0; i < run.Count; i++) hs[i] = FH(grid, run[i].X, z);
+        float H(int i) => hs[i];
         var idx = new List<int> { 0 };
         int start = 0;
         while (start < run.Count - 1)
@@ -345,8 +371,8 @@ public static class TerrainFill
             float l = float.MaxValue, r = float.MaxValue;
             for (int i = a; i <= b; i++) { l = MathF.Min(l, run[i].L); r = MathF.Min(r, run[i].R); }
             placed(run[a].X, run[b].X, l, r);
-            var pa = new Vector3(run[a].X, FH(grid, run[a].X, z) - FillDrop, z);
-            var pb = new Vector3(run[b].X, FH(grid, run[b].X, z) - FillDrop, z);
+            var pa = new Vector3(run[a].X, H(a) - FillDrop, z);
+            var pb = new Vector3(run[b].X, H(b) - FillDrop, z);
             // Jedes Stück eigenständig (nicht per Append verkettet): TruckLib mittelt an einem
             // gemeinsamen Knoten die Richtung beider Nachbarstücke. Wechselt die Steigung dort
             // stark (Böschung neben Straße), wölbt sich die Mittellinie des Stücks als Hermite-
@@ -359,6 +385,7 @@ public static class TerrainFill
             t.ViewDistance = 1000;
             t.Left.Terrain.Noise = TerrainNoise.Percent0;
             t.Right.Terrain.Noise = TerrainNoise.Percent0;
+            placedFill.Add(t);
             // gröberes Raster (16 m statt 4 m): flaches Feld braucht keine feinen Quads
             // kurze Stücke brauchen feinere Schritte, sonst nur eine Rasterspalte (= unsichtbar)
             float plen = pb.X - pa.X;
@@ -432,7 +459,7 @@ public static class TerrainFill
     /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
     /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
     /// </summary>
-    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, (float Dist, float Height, bool Bridge)>? other = null, Vector3? dA = null, Vector3? dB = null, Func<Vector2, Vector2, float, float>? rayFree = null)
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float, (float Dist, float Height, bool Bridge)>? other = null, Vector3? dA = null, Vector3? dB = null, Func<Vector2, Vector2, float, float>? rayFree = null)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
@@ -488,6 +515,15 @@ public static class TerrainFill
             float g = rayFree(c + dir * edge, dir, size);
             if (g < size) { free[i] = MathF.Max(0, g - TerrainClearance.EdgeClear); ColumnsClamped++; }
         }
+        // Schmale Seiten (unter NearFlat + NearBlend): Verlauf gestaucht, damit der Außenrand die
+        // Rasterhöhe erreicht. Sonst endete das Straßengelände auf Fahrbahnhöhe – bei einem Damm
+        // über, im Einschnitt unter dem anschließenden Füllgelände (Kante bis einige Meter).
+        float flat = NearFlat, blend = NearBlend;
+        if (CompressNarrow && size < NearFlat + NearBlend)
+        {
+            float sc = size / (NearFlat + NearBlend);
+            flat *= sc; blend *= sc;
+        }
         // Höhe der ersten gekürzten Reihe je Spalte: alle weiteren gekürzten Reihen bekommen dieselbe
         // (sie liegen nur 1 cm auseinander – verschiedene Höhen wären eine senkrechte Wand)
         var clampH = new float[cols + 1];
@@ -522,10 +558,10 @@ public static class TerrainFill
                 // Abstand vom eigenen Rand nach dem Kürzen (dd): gekürzte Reihen liegen 1 cm auseinander
                 // und müssen gleich hoch sein – mit der ungekürzten Reihenlage bekamen die äußeren
                 // Reihen die Rasterhöhe, die inneren die Fahrbahnhöhe: senkrechte Wand (v79)
-                float tt = Math.Clamp((dd - NearFlat) / NearBlend, 0, 1);
+                float tt = Math.Clamp((dd - flat) / blend, 0, 1);
                 if (other is not null)
                 {
-                    var (od, oh, ob) = other(w.X, w.Y);
+                    var (od, oh, ob) = other(w.X, w.Y, roadY);
                     if (od < GoreDist)
                     {
                         float k = Math.Clamp((GoreDist - od) / (GoreDist - GoreFull), 0, 1);
@@ -554,6 +590,14 @@ public static class TerrainFill
                     }
                 }
                 h = roadY + (h - roadY) * tt;
+                // nie steiler als MaxSlope ab dem flachen Streifen (Rest übernimmt das Füllgelände)
+                if (MaxSlope > 0)
+                {
+                    float lim = MaxSlope * MathF.Max(0, dd - flat);
+                    float dh0 = Math.Clamp(h - roadY, -lim, lim);
+                    if (dh0 != h - roadY) SlopeLimited++;
+                    h = roadY + dh0;
+                }
             shaped:
                 if (clamped)
                 {

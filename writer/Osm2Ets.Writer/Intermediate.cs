@@ -91,6 +91,14 @@ public sealed class RunEntry
     /// <summary>Kfz-Zugang gesperrt: "private" oder "no" (nur in L5 enthalten), sonst null.</summary>
     public string? Access { get; set; }
     public List<long> OsmWays { get; set; } = [];
+
+    /// <summary>Kopie mit anderen Grenzen (gleiche Attribute).</summary>
+    public RunEntry Span(int from, int to)
+    {
+        var c = (RunEntry)MemberwiseClone();
+        c.From = from; c.To = to;
+        return c;
+    }
 }
 
 public sealed class JunctionEntry

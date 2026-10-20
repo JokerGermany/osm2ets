@@ -370,7 +370,7 @@ public static class MapWriter
                 int shaped = 0, bad = 0, folded = 0;
                 // Zwickel an Gabelungen: nahe anderer Straßen/Prefabs kürzerer Übergang ins Raster
                 RoadCap.PrefabLanes = PrefabFootprint.All3(map);
-                RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0;
+                RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0; TerrainFill.SlopeLimited = 0;
                 var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null
                     ? RoadCap.Build(valid, styles, null) : null;
                 foreach (var entry in valid)
@@ -389,6 +389,13 @@ public static class MapWriter
                         // links INNERHALB des Modells – das Spiel setzt Reihe 0 an den Modellrand,
                         // die Quads dazwischen klappten um (schwarzer Streifen entlang der Fahrbahn).
                         var st = styles[entry][Math.Min(seg, styles[entry].Length - 1)];
+                        if (RtProbe is { } rp && Vector2.Distance(new Vector2(rd.Node.Position.X, rd.Node.Position.Z), rp) < 40)
+                        {
+                            var rr = entry.Runs.FirstOrDefault(x => x.From <= seg && seg < x.To);
+                            Console.Error.WriteLine($"RT {entry.Id}[{seg}] {rd.Uid:X} {rd.RoadType} L {rd.Left.Terrain.Size} R {rd.Right.Terrain.Size} style L {st.TerrainLeft} R {st.TerrainRight} bridge {rr?.Bridge} tunnel {rr?.Tunnel} hw {rr?.Highway} pts {entry.Points.Count}");
+                            if (seg == 0 || Environment.GetEnvironmentVariable("OSM2ETS_RTPROBE_ALL") is not null)
+                                Console.Error.WriteLine("   pts " + string.Join(" ", entry.Points.Select(p => $"({p[0]:0.0},{p[2]:0.0})")) + " runs " + string.Join(" ", entry.Runs.Select(x => $"{x.From}-{x.To}{(x.Bridge ? "B" : "")}")));
+                        }
                         var (edL, edR) = TerrainClearance.Edges(st);
                         float eL = TerrainFill.RoadEdgeInData ? edL : 0;
                         float eR = TerrainFill.RoadEdgeInData ? edR : 0;
@@ -411,7 +418,7 @@ public static class MapWriter
                         if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); da = Dir3(rd.Node.Rotation); db = Dir3(rd.ForwardNode.Rotation); }
                         for (int tries = 0; tries < 4; tries++)
                         {
-                            Func<float, float, (float, float, bool)>? cap = others is null ? null : (x, z) => others.NearestOther(x, z, entry, TerrainFill.GoreDist);
+                            Func<float, float, float, (float, float, bool)>? cap = others is null ? null : (x, z, y) => others.NearestOther(x, z, entry, TerrainFill.GoreDist, y);
                             var sa2 = new Vector2(pa.X, pa.Z); var sb2 = new Vector2(pb.X, pb.Z);
                             Func<Vector2, Vector2, float, float>? ray = others is null || !TerrainFill.ClampColumns || !Overlaps.ExactRoads ? null
                                 : (o, dir, maxD) => others.RayFree(o, dir, maxD, entry, sa2, sb2);
@@ -428,11 +435,14 @@ public static class MapWriter
                         if (rd == lastItem[entry]) break;
                     }
                 }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}");
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}, Neigung begrenzt: {TerrainFill.SlopeLimited} Punkte");
             }
             var lanes = PrefabFootprint.All(map);
             RoadCap.PrefabLanes = PrefabFootprint.All3(map);
-            var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
+            var cover = TerrainFill.WideRoadTerrain && CoverCap.Enabled ? CoverCap.Build(valid, firstItem, lastItem, styles) : null;
+            var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes, cover);
+            if (cover is not null)
+                warnings.Insert(0, $"Info: Füllgelände unter Fahrbahn/Straßengelände begrenzt: {CoverCap.CoverLowered} Punkte, am Rand per Böschung ({CoverCap.Slope:0.0}) gesenkt: {CoverCap.ConeLowered}, angehoben: {CoverCap.ConeRaised} Punkte, Durchstoßungen nachträglich abgesenkt: {CoverCap.SettledQuads} Quads ({CoverCap.Settled} Höhenpunkte, höchstens {CoverCap.SettledMax:0.00} m)");
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered}, angehoben: {RoadCap.Raised} Punkte");
         }
         if (Environment.GetEnvironmentVariable("OSM2ETS_ONLYBOX") is { } ob)
@@ -517,6 +527,8 @@ public static class MapWriter
 
     /// <summary>Geländebeginn am asymmetrischen Modellrand (aus: OSM2ETS_RT_SYMMETRIC).</summary>
     public static bool UseModelEdges = Environment.GetEnvironmentVariable("OSM2ETS_RT_SYMMETRIC") is null;
+    private static readonly Vector2? RtProbe = Environment.GetEnvironmentVariable("OSM2ETS_RTPROBE") is { } e
+        ? new Vector2(float.Parse(e.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(e.Split(',')[1], System.Globalization.CultureInfo.InvariantCulture)) : null;
 
     /// <summary>Navi-/Karten-Schalter aus der Zuordnung (nur gesetzte Werte).</summary>
     private static void ApplyFlags(Road road, ResolvedStyle style)

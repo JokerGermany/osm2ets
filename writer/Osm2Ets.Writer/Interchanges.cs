@@ -611,9 +611,14 @@ public static class Interchanges
         if (Vector2.Distance(P(pts[^1]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
         pts.Add(V(node));
         int segs = pts.Count - 1;
-        var runs = r.Runs.Where(x => x.From < k || r.Runs.Count == 1).Select(x => { x.To = Math.Min(x.To, k); return x; }).ToList();
-        if (runs.Count == 0) runs = [r.Runs[^1]];
-        runs[^1].To = segs;
+        // Die neuen Abschnitte ab Punkt k (Einlauf ins Prefab) ersetzen die alten ab k – sie bekommen
+        // deren Attribute. Früher erbte sie der Lauf, der bei k ENDETE: endete dort eine Brücke,
+        // galt der Einlauf samt Dammstrecke als Brücke (BT 46 an der A 9: kein Straßengelände,
+        // Fahrbahn 2,5 m über dem Gelände).
+        var tail = r.Runs.FirstOrDefault(x => x.From <= k && k < x.To) ?? r.Runs[^1];
+        var runs = r.Runs.Where(x => x.From < k).Select(x => { x.To = Math.Min(x.To, k); return x; }).ToList();
+        if (runs.Count > 0 && ReferenceEquals(runs[^1], tail)) runs[^1].To = segs;
+        else runs.Add(tail.Span(k, segs));
         if (runs[0].From > 0) runs[0].From = 0;
         r.Points = pts;
         r.Runs = runs.Where(x => x.From < x.To).ToList();
@@ -647,8 +652,12 @@ public static class Interchanges
         int added = pts.Count;
         pts.AddRange(rest);
         int shift = added - k;
-        var runs = r.Runs.Where(x => x.To > k).Select(x => { x.From = Math.Max(0, x.From + shift); x.To += shift; return x; }).ToList();
-        if (runs.Count == 0) runs = [r.Runs[0]];
+        // neue Abschnitte vor dem alten Punkt k ersetzen die alten bis k – Attribute des Laufs,
+        // der den letzten weggefallenen Abschnitt (k − 1) enthielt (siehe SetTail)
+        var head = k > 0 ? r.Runs.FirstOrDefault(x => x.From <= k - 1 && k - 1 < x.To) ?? r.Runs[0] : r.Runs[0];
+        var runs = r.Runs.Where(x => x.To > k).Select(x => { x.From = Math.Max(x.From, k) + shift; x.To += shift; return x; }).ToList();
+        if (runs.Count > 0 && ReferenceEquals(runs[0], head)) runs[0].From = 0;
+        else runs.Insert(0, head.Span(0, added));
         runs[0].From = 0;
         runs[^1].To = pts.Count - 1;
         r.Points = pts;

@@ -45,6 +45,16 @@ fills the space between roads with ETS2 terrain items in west–east rows (40 m,
 rows down to 1 m for leftovers next to roads). Vertex offsets follow the grid across each
 strip. The fill mask uses the real lanes of placed prefabs (nav curves from the `.ppd`).
 
+How fill and road terrain fit together:
+- Road terrain (up to 60 m per side) is the visible surface next to a road: flat for the first
+  3 m, then blending into the grid. Narrow sides use a compressed profile so that their outer
+  edge reaches the grid height (at most 45° from the flat strip).
+- The fill runs underneath. Under asphalt it stays at least 0.3 m, under road terrain 0.1 m
+  below the surface actually written (both quad diagonals checked). Beyond the edge of road
+  terrain it continues the edge with at most 0.7 slope up or down, so the edge meets the fill.
+- The fill quads are coarse (up to 16 m); after placing them every quad is checked against the
+  surface above and lowered where it would poke through.
+
 Findings from editor tests that shaped this (useful if you work on it):
 - Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),
   not deltas. For road terrain they are measured from the **road centre** along the road.
@@ -58,6 +68,10 @@ Findings from editor tests that shaped this (useful if you work on it):
 - Gaps (black areas in the editor) remain in narrow gores between ramp and main road and
   close to some prefabs; fill rows run west–east and cannot follow diagonal gaps exactly.
 - Where a minor road is lowered under a motorway, the terrain beside it has no cut slope yet.
+- Bridges have no models or abutments: where road terrain starts at a bridge end, its end
+  shows as a terrain face (up to a few metres) under the bridge.
+- Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
+  of 1–3 m remain in a few places.
 - Junctions without a prefab: road piece between two junctions too short, or angle more
   than 40° off T/X. There the roads still overlap.
 - Node clusters at motorway triangles are not yet handled as a whole.
