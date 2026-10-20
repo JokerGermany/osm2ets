@@ -488,6 +488,10 @@ public static class TerrainFill
             float g = rayFree(c + dir * edge, dir, size);
             if (g < size) { free[i] = MathF.Max(0, g - TerrainClearance.EdgeClear); ColumnsClamped++; }
         }
+        // Höhe der ersten gekürzten Reihe je Spalte: alle weiteren gekürzten Reihen bekommen dieselbe
+        // (sie liegen nur 1 cm auseinander – verschiedene Höhen wären eine senkrechte Wand)
+        var clampH = new float[cols + 1];
+        Array.Fill(clampH, float.NaN);
         for (int j = 1; j < rowsD.Count; j++)
             for (int i = 0; i <= cols; i++)
             {
@@ -495,7 +499,8 @@ public static class TerrainFill
                 // gekürzte Reihen nicht exakt aufeinander (Fläche 0, Normale unbestimmt), sondern je 1 cm
                 // versetzt – bei höchstens 10 Reihen reicht das bis an den fremden Rand (EdgeClear 0,1 m)
                 float dd = rowsD[j];
-                if (dd > free[i])
+                bool clamped = dd > free[i];
+                if (clamped)
                 {
                     int first = j; while (first > 1 && rowsD[first - 1] > free[i]) first--;
                     dd = free[i] + 0.01f * (j - first);
@@ -514,7 +519,10 @@ public static class TerrainFill
                 // Straßengelände zur eigenen Fahrbahnhöhe – dort, wo sich beide überlappen,
                 // entsteht eine Stufe (dunkler Keil). Das Raster hält die Straßenhöhe nahe der
                 // Straße ohnehin (terrain.py: core 6 m).
-                float tt = Math.Clamp((rowsD[j] - NearFlat) / NearBlend, 0, 1);
+                // Abstand vom eigenen Rand nach dem Kürzen (dd): gekürzte Reihen liegen 1 cm auseinander
+                // und müssen gleich hoch sein – mit der ungekürzten Reihenlage bekamen die äußeren
+                // Reihen die Rasterhöhe, die inneren die Fahrbahnhöhe: senkrechte Wand (v79)
+                float tt = Math.Clamp((dd - NearFlat) / NearBlend, 0, 1);
                 if (other is not null)
                 {
                     var (od, oh, ob) = other(w.X, w.Y);
@@ -538,7 +546,7 @@ public static class TerrainFill
                         {
                             // Zwickel: nahe einer anderen Straße schneller ins Raster (das beide Straßen
                             // stetig verbindet), sonst Stufe zwischen zwei Straßengeländen
-                            float tg = Math.Clamp((rowsD[j] - GoreFlat) / GoreBlend, 0, 1);
+                            float tg = Math.Clamp((dd - GoreFlat) / GoreBlend, 0, 1);
                             float t2 = tt + (MathF.Max(tt, tg) - tt) * k;
                             if (t2 > tt) RoadCap.RoadTerrainLowered++;
                             tt = t2;
@@ -547,6 +555,10 @@ public static class TerrainFill
                 }
                 h = roadY + (h - roadY) * tt;
             shaped:
+                if (clamped)
+                {
+                    if (float.IsNaN(clampH[i])) clampH[i] = h; else h = clampH[i];
+                }
                 h -= RoadTerrainDrop;
                 var off = world
                     ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen ab Anfangsknoten

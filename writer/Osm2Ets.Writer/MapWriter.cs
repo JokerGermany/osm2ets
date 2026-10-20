@@ -354,6 +354,9 @@ public static class MapWriter
                 warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
             }
         }
+        // Neigung aller Prefab-Knoten aus der Prefab-Ebene (das Spiel setzt Prefabs nach dem Ursprungsknoten)
+        PrefabFootprint.FixPitch(map);
+        if (PrefabFootprint.PitchFixed > 0) warnings.Add($"Info: Neigung von {PrefabFootprint.PitchFixed} Prefab-Knoten an die Prefab-Lage angepasst");
         if (prefabs is not null)
             warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt");
         if (prefabs is not null)

@@ -192,6 +192,13 @@ public sealed class RoadCap
             if (ReferenceEquals(owners[i], owner)) continue;
             var (a, b, hw, center, _, bridge) = segs[i];
             var a2 = new Vector2(a.X, a.Z); var ab = new Vector2(b.X, b.Z) - a2;
+            if (owners[i] is null)
+            {
+                // Prefab-Spurpunkt: Kreis wie in RayFree
+                float dc = MathF.Max(0, Vector2.Distance(p, a2) - hw);
+                if (dc < best) { best = dc; bh = a.Y; bb = false; }
+                continue;
+            }
             float l2 = ab.LengthSquared();
             if (l2 < 1e-8f) continue;
             float u = Vector2.Dot(p - a2, ab) / l2;
