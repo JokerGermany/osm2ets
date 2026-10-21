@@ -165,6 +165,42 @@ def test_dem(synthetic_osm, tmp_path, profile):
     assert min(c["clearance_m"] for c in crossing_clearances(model["roads"])) >= 5.95
 
 
+def test_bridge_over_road_only_as_high_as_needed(synthetic_osm, tmp_path, profile):
+    """Die Bundesstraße überquert die Autobahn, die in einem 6 m tiefen Einschnitt liegt.
+    Ihre Widerlager liegen auf Geländehöhe; pauschal um den Lichtraum angehoben lag die
+    Brücke 12 m über der Autobahn (samt Dammrampen). Nötig sind nur 6 m."""
+    rasterio = pytest.importorskip("rasterio")
+    from rasterio.transform import from_origin
+    from osm2ets.geometry import Projector
+
+    pr = Projector(profile.crs, profile.origin_lonlat)
+    xy = pr.forward(np.array([11.49, 11.53]), np.array([49.99, 50.04])) + np.array(pr.origin)
+    mw = pr.forward(np.array([11.50015]), np.array([50.01]))[0] + np.array(pr.origin)
+    x0, y1 = xy[0, 0] - 500, xy[1, 1] + 500
+    w, h = int((xy[1, 0] - xy[0, 0] + 1000) / 10), int((xy[1, 1] - xy[0, 1] + 1000) / 10)
+    xs = x0 + (np.arange(w) + 0.5) * 10.0
+    ys = y1 - (np.arange(h) + 0.5) * 10.0
+    # Einschnitt ±25 m um die Mitte zwischen beiden Fahrbahnen (Länge 11,50015°) – je Zeile
+    # projiziert, die Längenlinie läuft in UTM schräg
+    lat = np.linspace(49.98, 50.05, 200)
+    cx = pr.forward(np.full_like(lat, 11.50015), lat)[:, 0] + pr.origin[0]
+    cy = pr.forward(np.full_like(lat, 11.50015), lat)[:, 1] + pr.origin[1]
+    center = np.interp(ys, cy, cx)
+    data = np.where(np.abs(xs[None, :] - center[:, None]) <= 25.0, 294.0, 300.0).astype("float32")
+    dem_path = tmp_path / "trench.tif"
+    with rasterio.open(dem_path, "w", driver="GTiff", width=w, height=h, count=1, dtype="float32",
+                       crs=profile.crs, transform=from_origin(x0, y1, 10.0, 10.0)) as ds:
+        ds.write(data, 1)
+
+    model = build(str(synthetic_osm), profile, "L3", dem_path=str(dem_path))
+    check_invariants(model, profile)
+    clear = [c["clearance_m"] for c in crossing_clearances(model["roads"])]
+    assert clear, "keine höhenfreie Kreuzung gefunden"
+    assert min(clear) >= 5.95
+    assert max(clear) <= 7.5, f"Brücke zu hoch über der Autobahn: {max(clear):.2f} m"
+    assert model["stats"]["elevation"]["bridges_over_network"] >= 1
+
+
 @pytest.mark.skipif(not REAL_EXTRACT, reason="OSM2ETS_REAL_EXTRACT nicht gesetzt")
 def test_real_extract(profile):
     model = build(REAL_EXTRACT, profile, "L1")

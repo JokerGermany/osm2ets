@@ -112,7 +112,7 @@ osmium extract -b 11.48,50.02,11.62,50.06 bayern-latest.osm.pbf -o test.osm.pbf
 
 ```sh
 osm2ets build -i test.osm.pbf -o build/test --lod L1 \
-    [--bbox minLon,minLat,maxLon,maxLat] [--dem gelaende.tif] [--scale 1]
+    [--bbox minLon,minLat,maxLon,maxLat] [--dem gelaende.tif] [--scale 1] [--origin lon,lat]
 ```
 
 Ergebnis: `roads.ets.json`, `roads.geojson` und `roads.report.txt`. Die GeoJSON-Datei
@@ -120,6 +120,12 @@ zeigt genau die Geometrie, die ins Spiel geht, aufgeteilt in Abschnitte gleicher
 Attribute – in QGIS nach `role` einfärben (`core` = Kernnetz, `link` = Rampe,
 `connector` = Anschlussstraße) oder nach `bridge`/`tunnel`. Der Bericht nennt u. a.
 die größte Lageabweichung von OSM und alle höhenfreien Kreuzungen mit zu wenig Abstand.
+
+Geländemodell: z. B. die freien Kacheln des Copernicus DEM GLO-30 (1° × 1°, GeoTIFF). Für
+weitergegebene Karten ist die Namensnennung Pflicht (siehe Copernicus-Lizenz). GLO-30 ist ein
+Oberflächenmodell (DSM): Wald und Gebäude heben es um mehrere Meter an, die Pipeline gleicht
+das nur teilweise aus (unteres Perzentil, Glättung). Besser geeignet ist ein Geländemodell
+(DGM), z. B. das bayerische DGM1 (seit 2023 frei verfügbar; Lizenz vor Verwendung prüfen).
 
 ### 3. Straßentypen festlegen
 
@@ -241,14 +247,18 @@ Berechnet auf einem gemeinsamen Graphen aller Straßen; an einem OSM-Knoten habe
    auf `terrain_max_grade` (6 %) begrenzt. Ohne Modell liegt alles auf Höhe 0.
 2. Parallele Richtungsfahrbahnen von Autobahnen/Kraftfahrstraßen bis 25 m Abstand liegen gleich
    hoch (keine Stufe im Mittelstreifen).
-3. Brücken ab `min_bridge_length_m` (8 m) werden um `bridge_clearance_m × layer` (6,0 m) angehoben
-   – außer Brücken von Autobahnen/Kraftfahrstraßen. Die Anhebung fällt mit höchstens
-   `max_ramp_grade` (5 %) ab.
+3. Brücken ab `min_bridge_length_m` (8 m), die keine Straße des Netzes kreuzen, werden um
+   `bridge_clearance_m × layer` (6,0 m) angehoben – außer Brücken von Autobahnen/Kraftfahrstraßen.
+   Die Anhebung fällt mit höchstens `max_ramp_grade` (5 %) ab. Brücken über eine Straße des
+   Netzes werden nur so weit angehoben, wie Schritt 5 es verlangt.
 4. Jedes Bauwerk wird als Ganzes zwischen Widerlagern bzw. Portalen interpoliert.
 5. Höhenfreie Kreuzungen brauchen `maxheight` (aus OSM, zuerst untere Straße, dann Brücke)
-   + 1,2 m Bauwerk, sonst 6,0 m. Ein Tunnel unten wird abgesenkt; eine untergeordnete Straße
+   + 1,2 m Bauwerk, sonst 6,0 m (mit Geländemodell 0,2 m Reserve für die danach angewandten
+   Steigungsgrenzen). Ein Tunnel unten wird abgesenkt; eine untergeordnete Straße
    unter einer Autobahn/Kraftfahrstraße wird **abgesenkt** (die Autobahn bleibt auf Geländehöhe,
-   wie in Wirklichkeit, z. B. B 85 unter A 70); sonst wird die obere Straße angehoben.
+   wie in Wirklichkeit, z. B. B 85 unter A 70); sonst wird die obere Straße angehoben. Nach den
+   Steigungsgrenzen wird der Lichtraum noch einmal geprüft und an der Kreuzung nachgebessert;
+   Kreuzungspunkte bewegen sich dabei nur vom anderen Weg weg.
 
 Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 

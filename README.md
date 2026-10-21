@@ -122,7 +122,10 @@ largest positional deviation from OSM and all grade-separated crossings with too
 clearance.
 
 Terrain model: e.g. the free Copernicus DEM GLO-30 tiles (1° × 1°, GeoTIFF). Attribution
-is required for distributed maps (see the Copernicus licence).
+is required for distributed maps (see the Copernicus licence). GLO-30 is a surface model
+(DSM): forest and buildings raise it by several metres, which the pipeline only partly
+compensates (low percentile, smoothing). A bare-earth model (DTM) such as the Bavarian DGM1
+(free since 2023; check the licence before use) is better suited.
 
 ### 3. Choose road types
 
@@ -244,14 +247,18 @@ Computed on a shared graph of all roads; at an OSM node all roads have the same 
    network-wide to `terrain_max_grade` (6 %). Without a model everything is at height 0.
 2. Parallel carriageways of motorways/trunk roads within 25 m are tied to the same height
    (no step in the median).
-3. Bridges of at least `min_bridge_length_m` (8 m) are raised by `bridge_clearance_m × layer`
-   (6.0 m) – except motorway/trunk bridges. The lift falls off at no more than
-   `max_ramp_grade` (5 %).
+3. Bridges of at least `min_bridge_length_m` (8 m) that do not cross a road of the network
+   are raised by `bridge_clearance_m × layer` (6.0 m) – except motorway/trunk bridges. The
+   lift falls off at no more than `max_ramp_grade` (5 %). Bridges over a road of the network
+   are only raised as far as step 5 requires.
 4. Each structure is interpolated as a whole between its abutments or portals.
 5. Grade-separated crossings need `maxheight` (from OSM, lower road first, then the bridge)
-   + 1.2 m deck, otherwise 6.0 m. A tunnel below is lowered; a minor road under a
+   + 1.2 m deck, otherwise 6.0 m (with a terrain model 0.2 m reserve for the grade limits
+   applied afterwards). A tunnel below is lowered; a minor road under a
    motorway/trunk road is **lowered** (the motorway stays on the terrain, as in reality,
-   e.g. B 85 under A 70); otherwise the upper road is raised.
+   e.g. B 85 under A 70); otherwise the upper road is raised. After the grade limits the
+   clearance is checked again and any shortfall corrected at the crossing; crossing points then
+   only move away from the other road.
 
 This is an approximation from OSM tags, not a survey.
 

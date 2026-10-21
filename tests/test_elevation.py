@@ -114,6 +114,30 @@ def test_parse_maxheight():
         assert parse_maxheight(v) is None
 
 
+def test_clamp_grade_one_way_points():
+    """Kreuzungspunkte dürfen beim Begrenzen der Steigung nur vom anderen Weg weg: zwei
+    abgesenkte Punkte (nur nach unten) mit zu steiler Kante zwischen sich – der höhere sinkt,
+    der tiefere bleibt; ganz festgehalten bliebe die Kante zu steil."""
+    from osm2ets.elevation import clamp_grade
+    ea, eb, elen = [0, 1, 2], [1, 2, 3], [10.0, 10.0, 10.0]
+    z = np.array([0.0, 0.0, 2.0, 2.0])
+    only = np.array([0, -1, -1, 0], np.int8)
+    clamp_grade(z, ea, eb, elen, 0.06, iterations=500, only=only)
+    g = np.abs(np.diff(z)) / 10.0
+    assert g.max() <= 0.0601
+    assert z[1] <= 1e-9, "Punkt 1 darf nur sinken"
+    assert z[2] < 2.0
+    # ganz festgehalten: Kante 1–2 bleibt bei 20 %
+    z2 = np.array([0.0, 0.0, 2.0, 2.0])
+    clamp_grade(z2, ea, eb, elen, 0.06, iterations=500, fixed=np.array([False, True, True, False]))
+    assert abs(z2[2] - z2[1]) == pytest.approx(2.0)
+    # nur nach oben: der tiefere steigt, der höhere bleibt
+    z3 = np.array([0.0, 0.0, 2.0, 2.0])
+    clamp_grade(z3, ea, eb, elen, 0.06, iterations=500, only=np.array([0, 1, 1, 0], np.int8))
+    assert np.abs(np.diff(z3)).max() / 10.0 <= 0.0601
+    assert z3[2] >= 2.0 - 1e-9 and z3[1] > 0.0
+
+
 def test_terrain_grid_no_cliff_between_roads():
     """Zwei parallele Straßen 50 m auseinander, 12 m Höhenunterschied: kein Sprung im Raster."""
     import numpy as np
