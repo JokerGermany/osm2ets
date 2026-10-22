@@ -89,6 +89,9 @@ Findings from editor tests that shaped this (useful if you work on it):
 - Twin decks at different heights (A 70 over the B 85: 1.1 m): the upper carriageway runs above
   the body of the lower one.
 - Railing offset (1 m outside the model edge) and the model width of `ger17` are estimates.
+- Railways and waterways are in no level: a motorway bridge only over a railway or a stream
+  becomes an ordinary road section as long as the terrain model shows no valley below it (under
+  the short bridges of the test area GLO-30 lay at most 0.8 m lower).
 - Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
   of 1–3 m remain in a few places.
 - Junctions without a prefab: road piece between two junctions too short, or angle more
@@ -270,6 +273,12 @@ Computed on a shared graph of all roads; at an OSM node all roads have the same 
    are raised by `bridge_clearance_m × layer` (6.0 m) – except motorway/trunk bridges. The
    lift falls off at no more than `max_ramp_grade` (5 %). Bridges over a road of the network
    are only raised as far as step 5 requires.
+   Motorway/trunk bridges that cross no road of the level and under which the terrain model lies
+   at most 3 m below the line between the bridge ends (e.g. over a farm track, a district road or
+   a railway that are missing in L1) become ordinary road sections first (`bridge=no`, `layer`
+   removed; originals in `osm2ets:bridge`/`osm2ets:layer`): terrain height, carriageways tied in
+   height, in the game road terrain instead of a railing on flat ground. In a level that contains
+   the road below they stay bridges (underpass). Statistic: `major_bridges_without_road_below`.
 4. Each structure is interpolated as a whole between its abutments or portals.
 5. Grade-separated crossings need `maxheight` (from OSM, lower road first, then the bridge)
    + 1.2 m deck, otherwise 6.0 m (with a terrain model 0.2 m reserve for the grade limits

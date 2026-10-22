@@ -13,7 +13,7 @@ import numpy as np
 
 from . import __version__
 from .config import Profile, validate_geometry
-from .elevation import DemSampler, align_partner_points, apply_elevation
+from .elevation import DemSampler, align_partner_points, apply_elevation, hide_empty_major_bridges
 from .geometry import NO_NODE, Projector, build_runs, chain_pieces, clip_piece, densify, finalize_piece
 from .network import Network, build_chains
 from .osmread import read_node_locations, read_ways
@@ -198,8 +198,11 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         bounds = (float(all_xy[:, 0].min()), float(all_xy[:, 1].min()),
                   float(all_xy[:, 0].max()), float(all_xy[:, 1].max()))
         dem = DemSampler(dem_path, projector, bounds)
+    # Autobahnbrücken ohne Straße und ohne Tal darunter (in dieser Stufe) sind normale Abschnitte
+    hidden_bridges = hide_empty_major_bridges(pieces, dem)
     elevation_stats = apply_elevation(pieces, profile, dem)
     elevation_stats["aligned_points"] = aligned
+    elevation_stats["major_bridges_without_road_below"] = hidden_bridges
 
     run_cache: dict[int, tuple] = {}
     kept, dropped_info = [], []

@@ -91,7 +91,8 @@ def report_text(model: dict) -> str:
         f"Kreuzungen ohne gemeinsamen Knoten: {s['grade_separated_crossings']}, davon mit "
         f"weniger als {model['qa']['min_clearance_m']} m Höhenabstand: {s['crossings_low_clearance']}",
         f"Höhen:         Quelle {model['elevation']['source']}, Brücken {ele.get('bridges', 0)} "
-        f"(kurze ignoriert: {ele.get('bridges_ignored_short', 0)}), Tunnel {ele.get('tunnels', 0)}, "
+        f"(kurze ignoriert: {ele.get('bridges_ignored_short', 0)}; Autobahnbrücken ohne Straße/Tal darunter "
+        f"als Straße: {ele.get('major_bridges_without_road_below', 0)}), Tunnel {ele.get('tunnels', 0)}, "
         f"max. Anhebung {ele.get('max_lift_m', 0):.1f} m, max. Absenkung {ele.get('max_sink_m', 0):.1f} m, "
         f"max. Steigung {100 * s['max_grade']:.1f} %"
         + (f", DEM-Lücken {ele['dem_missing_samples']}" if ele.get("dem_missing_samples") else ""),

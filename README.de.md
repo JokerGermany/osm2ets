@@ -90,6 +90,9 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Unterschiedlich hohe Brückenpaare (A 70 über der B 85: 1,1 m): die höhere Fahrbahn liegt über dem
   Körper der tieferen.
 - Geländerabstand (1 m außerhalb des Modellrands) und Modellbreite von `ger17` sind geschätzt.
+- Bahnstrecken und Gewässer gibt es in keiner Stufe: Eine Autobahnbrücke nur über eine Bahn oder
+  einen Bach wird zum normalen Straßenabschnitt, solange das Geländemodell darunter kein Tal zeigt
+  (unter den kurzen Brücken des Testgebiets lag GLO-30 höchstens 0,8 m tiefer).
 - Wo Straßengelände zweier deutlich verschieden hoher Straßen aneinanderstößt (dichte
   Anschlussstellen), bleiben an wenigen Stellen Stufen von 1–3 m.
 - Kreuzungen ohne Prefab: Straßenstück zwischen zwei Kreuzungen zu kurz oder Winkel mehr als
@@ -270,6 +273,13 @@ Berechnet auf einem gemeinsamen Graphen aller Straßen; an einem OSM-Knoten habe
    `bridge_clearance_m × layer` (6,0 m) angehoben – außer Brücken von Autobahnen/Kraftfahrstraßen.
    Die Anhebung fällt mit höchstens `max_ramp_grade` (5 %) ab. Brücken über eine Straße des
    Netzes werden nur so weit angehoben, wie Schritt 5 es verlangt.
+   Autobahn-/Kraftfahrstraßenbrücken, die in der Stufe keine Straße kreuzen und unter denen das
+   Geländemodell höchstens 3 m unter der Linie zwischen den Brückenenden liegt (z. B. über einen
+   Wirtschaftsweg, eine Kreisstraße oder eine Bahn, die in L1 fehlen), werden vorher zu normalen
+   Straßenabschnitten (`bridge=no`, `layer` entfernt; Originale in `osm2ets:bridge`/`osm2ets:layer`):
+   Geländehöhe, Höhenbindung der Richtungsfahrbahnen, im Spiel Straßengelände statt eines Geländers
+   auf ebenem Boden. In einer Stufe mit der Straße darunter bleiben sie Brücken (Unterführung).
+   Statistik: `major_bridges_without_road_below`.
 4. Jedes Bauwerk wird als Ganzes zwischen Widerlagern bzw. Portalen interpoliert.
 5. Höhenfreie Kreuzungen brauchen `maxheight` (aus OSM, zuerst untere Straße, dann Brücke)
    + 1,2 m Bauwerk, sonst 6,0 m (mit Geländemodell 0,2 m Reserve für die danach angewandten
