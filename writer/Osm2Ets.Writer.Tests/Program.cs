@@ -26,6 +26,7 @@ var tests = new List<(string Name, Action Body)>
     ("Prefab-Anschluss: Einlauf übernimmt die Attribute des ersetzten Abschnitts", PrefabLeadKeepsRunAttributes),
     ("Gelände: Brücke darüber verdeckt die Nachbarfahrbahn nicht", BridgeAboveIsNoNeighbour),
     ("Füllgelände: nie über Asphalt oder Straßengelände (Hang neben der Straße)", FillStaysBelowRoadTerrain),
+    ("Unterführung: unter der Brücke Höhe der unteren Straße, Böschung zu den Enden, Damm daneben bleibt", UnderpassLowersTerrainUnderBridge),
 };
 
 int failed = 0;
@@ -633,4 +634,55 @@ static void FillStaysBelowRoadTerrain()
                 else { Check(p.Y <= s - CoverCap.TerrainMargin + CoverCap.SettleTol + 0.02f, $"Füllgelände über dem Straßengelände: {p.Y:0.00} bei {s:0.00} (x {p.X:0.0}, z {p.Z:0.0})"); beside++; }
             }
     Check(under > 5 && beside > 5, $"zu wenige Punkte geprüft ({under}/{beside})");
+}
+
+static void UnderpassLowersTerrainUnderBridge()
+{
+    // Untere Straße (y 0) nach Osten bei z 0; darüber quer eine 40 m lange Brücke (y 6, x 100,
+    // z −20…20) mit ebenerdigen Zufahrten. Daneben (x 114) eine ebenerdige Straße auf y 6, die vor
+    // der unteren Straße endet (wie eine Richtungsfahrbahn ohne eigene Brücke).
+    var st = new ResolvedStyle("ger1", 60, 60, RoadResolution.HighPoly, null, null, Width: 8);
+    var low = MakeRoad("low", new[] { new[] { 0.0, 0, 0 }, new[] { 200.0, 0, 0 } }, MakeRun(0, 1, "primary"));
+    var up = MakeRoad("up", new[] { new[] { 100.0, 6, -150 }, new[] { 100.0, 6, -20 }, new[] { 100.0, 6, 20 }, new[] { 100.0, 6, 150 } },
+        MakeRun(0, 1, "primary"), MakeRun(1, 2, "primary", bridge: true), MakeRun(2, 3, "primary"));
+    var side = MakeRoad("side", new[] { new[] { 114.0, 6, -150 }, new[] { 114.0, 6, -14 } }, MakeRun(0, 1, "primary"));
+    var styles = new Dictionary<RoadEntry, ResolvedStyle[]> { [low] = [st], [up] = [st, st, st], [side] = [st] };
+    var u = Underpasses.Build([low, up, side], styles, []);
+    Check(u.Count == 1, $"{u.Count} Unterführungen statt 1");
+    float floor = -Underpasses.FloorDrop;
+    // unter der Brückenmitte (über der unteren Straße): Sohle
+    Check(MathF.Abs(u.Cap(102, 0, 6) - floor) < 0.01f, $"Sohle {u.Cap(102, 0, 6):0.00} statt {floor:0.00}");
+    // 10 m vom Ende in die Brücke hinein: Böschung (Neigung mindestens Slope)
+    float expect = floor + Underpasses.Slope * (10 - 4 - Underpasses.Shoulder);
+    Check(MathF.Abs(u.Cap(98, 10, 6) - expect) < 0.05f, $"Böschung {u.Cap(98, 10, 6):0.00} statt {expect:0.00}");
+    // neben der Brücke: Kegel
+    float cone = floor + Underpasses.Slope * 3;
+    Check(MathF.Abs(u.Cap(100 - 4 - Underpasses.SideMargin - 3, 0, 6) - cone) < 0.05f, $"Kegel {u.Cap(91, 0, 6):0.00} statt {cone:0.00}");
+    // vor dem Brückenende und weit seitlich: unverändert
+    Check(u.Cap(100, -40, 6) == 6 && u.Cap(160, 0, 6) == 6, "außerhalb der Unterführung verändert");
+    // Damm der ebenerdigen Straße daneben bleibt (höchstens FloorDrop darunter)
+    Check(u.Cap(114, -16, 6) >= 6 - Underpasses.FloorDrop - 1e-3f, $"Damm daneben angeschnitten: {u.Cap(114, -16, 6):0.00}");
+    // Brücke über nichts (Tal): keine Unterführung
+    var u2 = Underpasses.Build([up], new Dictionary<RoadEntry, ResolvedStyle[]> { [up] = [st, st, st] }, []);
+    Check(u2.Count == 0, "Brücke ohne Straße darunter als Unterführung erkannt");
+    // ganze Karte: Raster auf Brückenhöhe – unter der Brücke liegt das Füllgelände trotzdem unten
+    int nx = 41, nz = 41;
+    var heights = Enumerable.Repeat(6f, nx * nz).ToArray();
+    var input = new IntermediateFile
+    {
+        Format = IntermediateFile.ExpectedFormat, Version = 1,
+        Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 },
+        Roads = [low, up],
+        TerrainGrid = new TerrainGridEntry { Origin = [-100, -200], Cell = 10, Nx = nx, Nz = nz, Heights = heights },
+    };
+    var (map, _) = MapWriter.Build(input, MappingConfig.Load(ShippedMapping()));
+    var near = map.MapItems.Values.OfType<Terrain>()
+        .SelectMany(t => new[] { t.Left.Terrain, t.Right.Terrain }.SelectMany(sd => sd.QuadData.Offsets.Select(o => t.Node.Position + o.Data)))
+        .Where(p => MathF.Abs(p.X - 100) < 6 && MathF.Abs(p.Z) < 8).ToList();
+    Check(near.Count > 0, "kein Füllgelände unter der Brücke");
+    Check(near.All(p => p.Y < 1f), $"Füllgelände unter der Brücke bis {near.Max(p => p.Y):0.00} m (Brücke 6 m)");
+    // Geländer an beiden Brückenrändern
+    var bridgeItems = map.MapItems.Values.OfType<Road>().Where(r => r.Left.Terrain.Size == 0 && r.Right.Terrain.Size == 0).ToList();
+    Check(bridgeItems.Count > 0 && bridgeItems.All(r => r.Left.Railings.Models[0].Model.ToString() == "mod_ger_3" && r.Right.Railings.Models[0].Model.ToString() == "mod_ger_3"),
+        "Brücke ohne Geländer");
 }

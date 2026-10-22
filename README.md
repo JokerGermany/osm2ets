@@ -34,7 +34,8 @@ v1–v46 (see commits).
 | Heights from a terrain model, bridges, tunnels, `maxheight` | implemented, checked against Street View at one crossing |
 | Area-wide terrain between roads from the terrain model | implemented, gaps remain (see below) |
 | 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
-| Bridge models, vegetation/land use, cities, companies | not yet |
+| Underpasses: open terrain under bridges over roads, stone slopes, bridge railings | implemented, not yet checked in game |
+| Bridge models (deck body, abutment walls), vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
 
 ### Area-wide terrain
@@ -54,6 +55,13 @@ How fill and road terrain fit together:
   terrain it continues the edge with at most 0.7 slope up or down, so the edge meets the fill.
 - The fill quads are coarse (up to 16 m); after placing them every quad is checked against the
   surface above and lowered where it would poke through.
+- Underpasses (as in the SCS map): under a bridge that crosses a road of the network (or a
+  prefab) at least 3 m higher, the terrain lies at the level of the lower road; from both
+  bridge ends it falls as a slope (1 : 1.5, steeper if the span is short), beyond the deck edges
+  as a cone. This is an upper limit applied to every grid query, so road terrain and fill follow
+  it; embankments of at-grade roads next to it stay. The slope quads of the road terrain get the
+  stone material of the SCS map (token `175`). Bridges carry the railing `railing_01_ger`
+  (token `mod_ger_3`) at both model edges.
 
 Findings from editor tests that shaped this (useful if you work on it):
 - Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),
@@ -68,8 +76,12 @@ Findings from editor tests that shaped this (useful if you work on it):
 - Gaps (black areas in the editor) remain in narrow gores between ramp and main road and
   close to some prefabs; fill rows run west–east and cannot follow diagonal gaps exactly.
 - Where a minor road is lowered under a motorway, the terrain beside it has no cut slope yet.
-- Bridges have no models or abutments: where road terrain starts at a bridge end, its end
-  shows as a terrain face (up to a few metres) under the bridge.
+- Bridges have no deck body or abutment walls: seen from below, the deck is see-through (ETS2
+  roads have no underside), and where road terrain starts at a bridge end over a valley its end
+  shows as a terrain face. The SCS map uses the railing `dlc_it_8`
+  (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, Italia DLC) for this; its
+  geometry has not been checked yet.
+- Railing offset (1 m outside the model edge) and the model width of `ger17` are estimates.
 - Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
   of 1–3 m remain in a few places.
 - Junctions without a prefab: road piece between two junctions too short, or angle more
@@ -294,6 +306,11 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 
 - Exit: widening 2→3 + split 3→2+1; entry mirrored. The second prefab takes its direction
   from the joint of the first. Opposite exit/entry pairs are moved apart to ≥ 19 m.
+- If a bridge or tunnel lies under the outer prefab (widening or lane end), that prefab moves
+  beyond the structure and a road of type `ger17` ("ger hw2 ext one lane tmpl", 2 lanes plus the
+  extra lane) runs over the structure between the two prefabs – as in the SCS map. A prefab is
+  solid ground: on a bridge over a road the terrain underneath rose to the deck. A structure
+  under the inner prefab (split/join) is still covered by it.
   Ramp points closer to the main road than the prefab's ramp node are dropped (otherwise
   the ramp swings back across the main road). Road terrain is cleared only on the gore side.
 - Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits. Arms

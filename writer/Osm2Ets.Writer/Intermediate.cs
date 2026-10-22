@@ -118,6 +118,11 @@ public sealed class TerrainGridEntry
     public int Nz { get; set; }
     public float[] Heights { get; set; } = [];        // zeilenweise: z, dann x
 
+    /// <summary>Nachbearbeitung jeder abgefragten Höhe (x, z, h) → h, z. B. Obergrenze unter
+    /// Brücken (<see cref="Underpasses"/>); nicht Teil des Zwischenformats.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Func<float, float, float, float>? Post { get; set; }
+
     /// <summary>Bilineare Höhe; außerhalb des Rasters NaN.</summary>
     public float HeightAt(float x, float z)
     {
@@ -127,6 +132,7 @@ public sealed class TerrainGridEntry
         float tx = (float)(fx - i), tz = (float)(fz - j);
         float h00 = Heights[j * Nx + i], h10 = Heights[j * Nx + i + 1];
         float h01 = Heights[(j + 1) * Nx + i], h11 = Heights[(j + 1) * Nx + i + 1];
-        return (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+        float h = (h00 * (1 - tx) + h10 * tx) * (1 - tz) + (h01 * (1 - tx) + h11 * tx) * tz;
+        return Post is null || float.IsNaN(h) ? h : Post(x, z, h);
     }
 }

@@ -34,7 +34,8 @@ v1–v46 (siehe Commits).
 | Höhen aus Geländemodell, Brücken, Tunnel, `maxheight` | umgesetzt, an einer Kreuzung mit Street View abgeglichen |
 | Flächiges Gelände zwischen den Straßen aus dem Geländemodell | umgesetzt, Lücken bleiben (siehe unten) |
 | 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
-| Brückenmodelle, Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
+| Unterführungen: offenes Gelände unter Brücken über Straßen, Steinböschungen, Brückengeländer | umgesetzt, im Spiel noch nicht geprüft |
+| Brückenmodelle (Überbau, Widerlagerwände), Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
 
 ### Flächiges Gelände
@@ -55,6 +56,13 @@ Wie Füll- und Straßengelände zusammenpassen:
   so dass der Rand auf das Füllgelände trifft.
 - Die Füllquads sind grob (bis 16 m); nach dem Setzen wird jedes Quad gegen die Fläche darüber
   geprüft und dort abgesenkt, wo es durchstoßen würde.
+- Unterführungen (wie in der SCS-Karte): Unter einer Brücke, die eine Straße des Netzes (oder ein
+  Prefab) mindestens 3 m höher überquert, liegt das Gelände auf Höhe der unteren Straße; von beiden
+  Brückenenden fällt es als Böschung ab (1 : 1,5, steiler bei kurzer Brücke), seitlich über die
+  Brückenränder hinaus als Kegel. Das ist eine Obergrenze für jede Rasterabfrage, Straßen- und
+  Füllgelände folgen ihr; Dämme ebenerdiger Straßen daneben bleiben stehen. Die Böschungsquads des
+  Straßengeländes bekommen das Steinmaterial der SCS-Karte (Token `175`). Brücken tragen an beiden
+  Modellrändern das Geländer `railing_01_ger` (Token `mod_ger_3`).
 
 Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Höhenpunkte (vertex offsets) sind **absolute** Lagen (Zeilenabstände 1,1,1,2,6,6,10,10,10,20,40,50… m),
@@ -69,8 +77,12 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Lücken (schwarz im Editor) bleiben in schmalen Zwickeln zwischen Rampe und Hauptfahrbahn
   und an manchen Prefabs; die Füllreihen laufen West-Ost und folgen schrägen Lücken nicht genau.
 - Wo eine untergeordnete Straße unter einer Autobahn abgesenkt wird, fehlt noch die Einschnittsböschung.
-- Brücken haben keine Modelle und Widerlager: beginnt an einem Brückenende Straßengelände,
-  zeigt sich sein Ende unter der Brücke als Geländekante (bis einige Meter).
+- Brücken haben keinen Überbau und keine Widerlagerwände: von unten ist die Fahrbahn durchsichtig
+  (ETS2-Straßen haben keine Unterseite), und wo an einem Brückenende über einem Tal Straßengelände
+  beginnt, zeigt sich sein Ende als Geländekante. Die SCS-Karte nimmt dafür das Railing `dlc_it_8`
+  (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, Italia-DLC); dessen Form ist noch
+  nicht geprüft.
+- Geländerabstand (1 m außerhalb des Modellrands) und Modellbreite von `ger17` sind geschätzt.
 - Wo Straßengelände zweier deutlich verschieden hoher Straßen aneinanderstößt (dichte
   Anschlussstellen), bleiben an wenigen Stellen Stufen von 1–3 m.
 - Kreuzungen ohne Prefab: Straßenstück zwischen zwei Kreuzungen zu kurz oder Winkel mehr als
@@ -298,6 +310,11 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   auseinandergerückt. Rampenpunkte, die näher an der Hauptfahrbahn liegen als der Rampenknoten
   des Prefabs, entfallen (sonst schwenkt die Rampe über die Hauptfahrbahn zurück).
   Straßengelände wird nur zur Zwickelseite entfernt.
+- Liegt unter dem äußeren Prefab (Aufweitung bzw. Spurende) eine Brücke oder ein Tunnel, rückt es
+  hinter das Bauwerk; dazwischen läuft eine Straße `ger17` ("ger hw2 ext one lane tmpl", zwei Spuren
+  plus Zusatzspur) über das Bauwerk – wie in der SCS-Karte. Ein Prefab ist massiver Boden: auf einer
+  Brücke über eine Straße stieg das Gelände darunter bis an die Fahrbahn. Ein Bauwerk unter dem
+  inneren Prefab (Teilung/Einmündung) bleibt weiterhin überdeckt.
 - Kreuzungen: T/X (`ger_r1_x_r1_*_narrow_tmpl`), vierstreifige Varianten, Gabelungen.
   Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
   verbunden; Einbahn-Arme über `ChangeOrigin`.

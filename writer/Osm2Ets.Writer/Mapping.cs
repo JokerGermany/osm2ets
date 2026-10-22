@@ -120,10 +120,16 @@ public class StyleSpec
     public string? Resolution { get; set; }
     public SideSpec? Left { get; set; }
     public SideSpec? Right { get; set; }
+    /// <summary>Geländer an beiden Modellrändern (Railing-Token, z. B. für Brücken), "" = keins.</summary>
+    public string? Railing { get; set; }
+    /// <summary>Abstand des Geländers vom Modellrand nach außen (m).</summary>
+    public float? RailingOffset { get; set; }
 
     internal void Validate(string name, List<string> errors)
     {
         CheckToken(RoadType, $"{name}.road_type", errors);
+        if (Railing is { Length: > 0 }) CheckToken(Railing, $"{name}.railing", errors);
+        if (RailingOffset is < -5 or > 10) errors.Add($"{name}.railing_offset: −5–10 erwartet");
         if (TerrainLeft is < 0 or > 1000) errors.Add($"{name}.terrain_left: 0–1000 erwartet");
         if (TerrainRight is < 0 or > 1000) errors.Add($"{name}.terrain_right: 0–1000 erwartet");
         if (Width is <= 0 or > 60) errors.Add($"{name}.width: 0–60 erwartet");
@@ -159,7 +165,9 @@ public class StyleSpec
             ShowInUiMap ?? baseStyle?.ShowInUiMap,
             GpsAvoid ?? baseStyle?.GpsAvoid,
             Secret ?? baseStyle?.Secret,
-            AiVehicles ?? baseStyle?.AiVehicles);
+            AiVehicles ?? baseStyle?.AiVehicles,
+            Railing is not null ? (Railing.Length > 0 ? Railing : null) : baseStyle?.Railing,
+            RailingOffset ?? baseStyle?.RailingOffset ?? 1f);
     }
 }
 
@@ -269,7 +277,9 @@ public sealed record ResolvedStyle(
     bool? ShowInUiMap = null,
     bool? GpsAvoid = null,
     bool? Secret = null,
-    bool? AiVehicles = null)
+    bool? AiVehicles = null,
+    string? Railing = null,
+    float RailingOffset = 1f)
 {
     /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
     public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;

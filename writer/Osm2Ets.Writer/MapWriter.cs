@@ -80,6 +80,15 @@ public static class MapWriter
                 plan.MainOut.Start = new EndInfo { Kind = "prefab" };
                 if (plan.Kind == "exit") plan.Ramp.Start = new EndInfo { Kind = "prefab" };
                 else plan.Ramp.End = new EndInfo { Kind = "prefab" };
+                // Bauwerk unter dem äußeren Prefab: Straße mit Zusatzspur dazwischen
+                if (plan.ExtRoad is not null)
+                {
+                    valid.Add(plan.ExtRoad);
+                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): Bauwerk im Prefab-Bereich – {plan.Ext:0} m Zusatzspur-Straße zwischen den Prefabs");
+                    if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                        Console.Error.WriteLine($"EXT {plan.ExtRoad.Id} pts " + string.Join(" ", plan.ExtRoad.Points.Select(q => $"({q[0]:0.0},{q[1]:0.0},{q[2]:0.0})")) +
+                            " runs " + string.Join(" ", plan.ExtRoad.Runs.Select(x => $"{x.From}-{x.To}{(x.Bridge ? "B" : "")}{(x.Tunnel ? "T" : "")} {x.Role}")));
+                }
                 interchangePlans.Add(plan);
             }
         }
@@ -304,6 +313,11 @@ public static class MapWriter
                 pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
                 if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
                 else pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
+                if (plan.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
+                {
+                    pl.ExtFrom.Attach(pl.ExtFromNode, firstItem[plan.ExtRoad].Node);
+                    pl.ExtTo.Attach(pl.ExtToNode, lastItem[plan.ExtRoad].ForwardNode);
+                }
                 Interchanges.FixRotations(pl);   // Attach übernimmt sonst die gekippte Prefab-Knotendrehung
                 foreach (var pf in new[] { pl.First, pl.Last })
                     RegisterSector(map, pf.Nodes[0].Position);
@@ -365,6 +379,12 @@ public static class MapWriter
         // Füllgelände zuletzt: dann sind alle Prefabs gesetzt und ihre Fahrspuren bekannt
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg2 && Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null)
         {
+            // Unterführungen: unter Brücken über Straßen Gelände auf Höhe der unteren Straße,
+            // Böschungen von den Brückenenden (wie in der SCS-Karte) – als Obergrenze des Rasters
+            var underpasses = Underpasses.Enabled ? Underpasses.Build(valid, styles, PrefabFootprint.All3(map)) : null;
+            tg2.Post = underpasses is { Count: > 0 } ? underpasses.Cap : null;
+            if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null && underpasses is not null)
+                Console.Error.WriteLine("UNDERPASS " + string.Join(" ", underpasses.Ids));
             if (TerrainFill.WideRoadTerrain)
             {
                 int shaped = 0, bad = 0, folded = 0;
@@ -436,6 +456,11 @@ public static class MapWriter
                     }
                 }
                 warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}, Neigung begrenzt: {TerrainFill.SlopeLimited} Punkte");
+                if (underpasses is { Count: > 0 })
+                {
+                    int paved = underpasses.Pave(valid, firstItem, lastItem);
+                    warnings.Insert(0, $"Info: Unterführungen: {underpasses.Count} Brücken über Straßen – Gelände darunter auf Höhe der unteren Straße, Böschungen von den Brückenenden, {paved} Böschungsquads mit Steinmaterial");
+                }
             }
             var lanes = PrefabFootprint.All(map);
             RoadCap.PrefabLanes = PrefabFootprint.All3(map);
@@ -520,6 +545,18 @@ public static class MapWriter
         style.Right?.ApplyTo(road.Right);
         road.Boundary = style.Boundary;
         ApplyFlags(road, style);
+        // Geländer an beiden Modellrändern (Brücken); sonst leeren – Append übernimmt die Einstellungen
+        // des vorigen Stücks
+        if (style.Railing is { } rail)
+        {
+            road.Left.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 - style.ModelCenter + style.RailingOffset };
+            road.Right.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 + style.ModelCenter + style.RailingOffset };
+        }
+        else
+        {
+            road.Left.Railings.Models[0] = default;
+            road.Right.Railings.Models[0] = default;
+        }
         // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar

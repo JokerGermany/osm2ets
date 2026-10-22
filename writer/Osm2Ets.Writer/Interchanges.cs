@@ -35,6 +35,15 @@ public static class Interchanges
 
     public const float RampTrim = 25f;     // Rampe so weit vom Knoten kürzen (m)
     public const float Slack = 5f;
+    /// <summary>Abstand zwischen Bauwerksende und äußerem Prefab (m), wenn eine Zusatzspur-Straße
+    /// das Bauwerk überbrückt.</summary>
+    public const float ExtMargin = 4f;
+    /// <summary>Längste Zusatzspur-Straße zwischen den beiden Prefabs einer Anschlussstelle (m).</summary>
+    public const float MaxExt = 160f;
+    /// <summary>Zusatzspur-Straße über Bauwerke (aus: OSM2ETS_PREFAB_NOEXT).</summary>
+    public static bool UseExt = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOEXT") is null;
+    /// <summary>Rolle der Abschnitte einer Zusatzspur-Straße (Zuordnung: Straßentyp "hw2 ext one lane").</summary>
+    public const string ExtRole = "ext";
 
     public sealed class Plan
     {
@@ -43,8 +52,15 @@ public static class Interchanges
         public required RoadEntry MainIn, MainOut, Ramp;
         public required Vector3 Anchor;     // Lage des OSM-Knotens
         public required Vector3 Direction;  // Fahrtrichtung der Hauptfahrbahn (x/z)
-        public float Grade;
-        public bool Blocked;                 // Brücke/Tunnel im Prefab-Bereich                  // Steigung der Hauptfahrbahn über die Prefab-Länge (m/m)
+        public float Grade;                  // Steigung der Hauptfahrbahn über die Prefab-Länge (m/m)
+        public bool Blocked;                 // Brücke/Tunnel im Prefab-Bereich
+        /// <summary>Liegt ein Bauwerk (Brücke/Tunnel) unter dem äußeren Prefab (Aufweitung bzw.
+        /// Spurende), rückt dieses über das Bauwerk hinaus; dazwischen läuft eine Straße mit
+        /// Zusatzspur (wie in der SCS-Karte). Länge dieser Straße (m), 0 = Prefabs direkt verbunden.</summary>
+        public float Ext;
+        public RoadEntry? ExtRoad;
+        public Vector3 FarAnchor, FarDirection;   // äußeres Prefab: Lage des Außenknotens (Achse), Richtung
+        public float FarGrade;
     }
 
     /// <summary>Lädt .ppd-Dateien aus einem entpackten Ordner oder den .scs-Archiven des Spiels.</summary>
@@ -514,7 +530,12 @@ public static class Interchanges
         return Vector3.Dot(v, fallback) < 0 ? -v : v;
     }
 
-    public sealed record Placed(Plan Plan, Prefab First, ushort FirstIn, Prefab Last, ushort LastOut, Prefab RampPrefab, ushort RampNode);
+    public sealed record Placed(Plan Plan, Prefab First, ushort FirstIn, Prefab Last, ushort LastOut, Prefab RampPrefab, ushort RampNode)
+    {
+        /// <summary>Bei Zusatzspur-Straße: deren Anfangs- und Endknoten an den beiden Prefabs.</summary>
+        public Prefab? ExtFrom; public ushort ExtFromNode;
+        public Prefab? ExtTo; public ushort ExtToNode;
+    }
 
     /// <summary>Kürzt die Straßen für einen Plan; false = Plan nicht umsetzbar (Straßen zu kurz).</summary>
     public static bool Prepare(Plan p, PpdSource src)
@@ -522,22 +543,200 @@ public static class Interchanges
         // erst prüfen, dann kürzen – sonst bliebe bei Abbruch eine Lücke
         if (p.Kind == "exit")
         {
-            float len = Length(src, Widen, WidenIn, WidenOut) + Length(src, Split, SplitIn, SplitMain);
+            float lenNear = Length(src, Split, SplitIn, SplitMain), lenFar = Length(src, Widen, WidenIn, WidenOut);
+            float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack)) { p.Blocked = true; return false; }
-            if (ArcLength(p.MainIn) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
-            p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
-            if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, len), p.Anchor, p.Direction);
-            return TrimEnd(p.MainIn, len + Slack) && TrimStart(p.Ramp, RampTrim);
+            var spans = StructureSpans(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack + MaxExt);
+            p.Ext = ExtFor(spans, lenNear, lenFar);
+            float total = len + p.Ext;
+            if (ArcLength(p.MainIn) < total + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
+            if (p.Ext > 0)
+            {
+                p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, lenNear)) / lenNear;
+                if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, lenNear), p.Anchor, p.Direction);
+                // äußeres Prefab mit seinem Außenknoten (zweispurig) auf der Achse – der dreispurige
+                // Innenknoten liegt wie bei direkt verbundenen Prefabs seitlich versetzt
+                p.FarAnchor = AxisAt(p.MainIn, false, total);
+                p.FarDirection = Chord(p.FarAnchor, AxisAt(p.MainIn, false, lenNear + p.Ext), p.Direction);
+                p.FarGrade = (HeightFromEnd(p.MainIn, lenNear + p.Ext) - p.FarAnchor.Y) / lenFar;
+                p.ExtRoad = ExtRoad(p, p.MainIn, false, lenNear + p.Ext, lenNear, spans);
+            }
+            else
+            {
+                p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
+                if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, len), p.Anchor, p.Direction);
+            }
+            return TrimEnd(p.MainIn, total + Slack) && TrimStart(p.Ramp, RampTrim);
         }
         else
         {
-            float len = Length(src, Join, JoinMain, JoinOut) + Length(src, Narrow, NarrowIn, NarrowOut);
+            float lenNear = Length(src, Join, JoinMain, JoinOut), lenFar = Length(src, Narrow, NarrowIn, NarrowOut);
+            float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(p.MainOut.Points, p.MainOut.Runs, false, len + Slack)) { p.Blocked = true; return false; }
-            if (ArcLength(p.MainOut) < len + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
-            p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
-            if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, len), p.Direction);
-            return TrimStart(p.MainOut, len + Slack) && TrimEnd(p.Ramp, RampTrim);
+            var spans = StructureSpans(p.MainOut.Points, p.MainOut.Runs, false, len + Slack + MaxExt);
+            p.Ext = ExtFor(spans, lenNear, lenFar);
+            float total = len + p.Ext;
+            if (ArcLength(p.MainOut) < total + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
+            if (p.Ext > 0)
+            {
+                p.Grade = (HeightFromStart(p.MainOut, lenNear) - p.Anchor.Y) / lenNear;
+                if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, lenNear), p.Direction);
+                p.FarAnchor = AxisAt(p.MainOut, true, total);
+                p.FarDirection = Chord(AxisAt(p.MainOut, true, lenNear + p.Ext), p.FarAnchor, p.Direction);
+                p.FarGrade = (p.FarAnchor.Y - HeightFromStart(p.MainOut, lenNear + p.Ext)) / lenFar;
+                p.ExtRoad = ExtRoad(p, p.MainOut, true, lenNear, lenNear + p.Ext, spans);
+            }
+            else
+            {
+                p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
+                if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, len), p.Direction);
+            }
+            return TrimStart(p.MainOut, total + Slack) && TrimEnd(p.Ramp, RampTrim);
         }
+    }
+
+    /// <summary>
+    /// Länge der Zusatzspur-Straße: 0, wenn kein Bauwerk unter dem äußeren Prefab läge (oder eines
+    /// schon unter dem inneren – das bleibt wie bisher). Sonst so lang, dass das äußere Prefab
+    /// <see cref="ExtMargin"/> hinter dem letzten betroffenen Bauwerk beginnt.
+    /// </summary>
+    private static float ExtFor(List<(float A, float B)> spans, float lenNear, float lenFar)
+    {
+        if (!UseExt || spans.Count == 0) return 0;
+        if (spans.Any(s => s.A < lenNear + ExtMargin)) return 0;
+        float ext = 0;
+        for (int it = 0; it < 10; it++)
+        {
+            float z0 = lenNear + ext - ExtMargin, z1 = lenNear + ext + lenFar + Slack + ExtMargin;
+            var hit = spans.Where(s => s.B > z0 && s.A < z1).ToList();
+            if (hit.Count == 0) break;
+            ext = hit.Max(s => s.B) + ExtMargin - lenNear;
+        }
+        return ext > MaxExt ? 0 : ext;
+    }
+
+    /// <summary>Bauwerke (Brücken/Tunnel) als Abstände [A, B] vom Knoten aus (pts beginnt am Knoten).</summary>
+    private static List<(float A, float B)> StructureSpans(List<double[]> pts, List<RunEntry> runs, bool reversed, float reach)
+    {
+        var res = new List<(float A, float B)>();
+        int n = pts.Count;
+        double acc = 0;
+        for (int i = 0; i < n - 1 && acc < reach; i++)
+        {
+            int seg = reversed ? n - 2 - i : i;
+            var run = runs.FirstOrDefault(x => x.From <= seg && seg < x.To);
+            double s = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+            if (run is not null && (run.Bridge || run.Tunnel))
+            {
+                if (res.Count > 0 && MathF.Abs(res[^1].B - (float)acc) < 0.01f) res[^1] = (res[^1].A, (float)(acc + s));
+                else res.Add(((float)acc, (float)(acc + s)));
+            }
+            acc += s;
+        }
+        return res;
+    }
+
+    /// <summary>Lauf der Straße im Abstand dist (Draufsicht) vom Anfang bzw. Ende – auf der aktuellen
+    /// Lage wie <see cref="StructureSpans"/> (die gespeicherte Originallage teilt sich die Lauf-Objekte
+    /// mit der aktuellen; deren Grenzen hat ein anderer Plan dann womöglich schon verschoben).</summary>
+    private static RunEntry RunAt(RoadEntry r, bool fromStart, float dist)
+    {
+        var pts = r.Points; var runs = r.Runs;
+        int n = pts.Count;
+        double acc = 0;
+        for (int i = 0; i < n - 1; i++)
+        {
+            int a = fromStart ? i : n - 1 - i, b = fromStart ? i + 1 : n - 2 - i;
+            double s = Math.Sqrt(Math.Pow(pts[b][0] - pts[a][0], 2) + Math.Pow(pts[b][2] - pts[a][2], 2));
+            if (acc + s >= dist || i == n - 2)
+            {
+                int seg = fromStart ? i : n - 2 - i;
+                return runs.FirstOrDefault(x => x.From <= seg && seg < x.To) ?? runs[^1];
+            }
+            acc += s;
+        }
+        return runs[^1];
+    }
+
+    /// <summary>
+    /// Zusatzspur-Straße aus der Lage der Hauptfahrbahn zwischen den Abständen d0 und d1 vom Knoten
+    /// (Reihenfolge = Fahrtrichtung). Punkte an jedem Bauwerksende, dazwischen höchstens 20 m.
+    /// Die Enden werden nach dem Setzen der Prefabs genau auf deren Knoten gelegt (<see cref="SnapExt"/>).
+    /// </summary>
+    private static RoadEntry ExtRoad(Plan p, RoadEntry main, bool fromStart, float d0, float d1, List<(float A, float B)> spans)
+    {
+        float lo = MathF.Min(d0, d1), hi = MathF.Max(d0, d1);
+        var ds = new List<float> { lo, hi };
+        foreach (var (a, b) in spans) { if (a > lo + 2 && a < hi - 2) ds.Add(a); if (b > lo + 2 && b < hi - 2) ds.Add(b); }
+        ds.Sort();
+        var dense = new List<float> { ds[0] };
+        for (int k = 1; k < ds.Count; k++)
+        {
+            float a = dense[^1], b = ds[k];
+            int steps = (int)MathF.Ceiling((b - a) / 20f);
+            for (int s = 1; s <= steps; s++) dense.Add(a + (b - a) * s / steps);
+        }
+        dense = dense.Distinct().ToList();
+        if (d0 > d1) dense.Reverse();   // Ausfahrt: vom fernen Prefab zum Knoten hin
+        var pts = dense.Select(d => { var q = AxisAt(main, fromStart, d); return new double[] { q.X, q.Y, q.Z }; }).ToList();
+        var runs = new List<RunEntry>();
+        for (int k = 0; k < dense.Count - 1; k++)
+        {
+            float mid = (dense[k] + dense[k + 1]) / 2;
+            var src = RunAt(main, fromStart, mid);
+            bool structure = spans.Any(s => mid > s.A && mid < s.B);
+            var run = src.Span(k, k + 1);
+            run.Role = ExtRole;
+            run.Bridge = structure && src.Bridge;
+            run.Tunnel = structure && src.Tunnel;
+            if (runs.Count > 0 && runs[^1].Bridge == run.Bridge && runs[^1].Tunnel == run.Tunnel && runs[^1].Layer == run.Layer)
+                runs[^1].To = k + 1;
+            else runs.Add(run);
+        }
+        return new RoadEntry
+        {
+            Id = $"{main.Id}x{p.OsmNode}",
+            Chain = main.Chain, Piece = main.Piece, Role = main.Role,
+            Start = new EndInfo { Kind = "prefab" }, End = new EndInfo { Kind = "prefab" },
+            Points = pts, Runs = runs,
+        };
+    }
+
+    /// <summary>
+    /// Legt die Enden der Zusatzspur-Straße genau auf die Prefab-Knoten. Die dreispurigen
+    /// Innenknoten liegen seitlich neben der Achse, aus der die Punkte stammen: den Versatz
+    /// beider Enden entlang der Straße linear auf alle Punkte verteilen (Lage quer, Höhe bleibt).
+    /// </summary>
+    private static void SnapExt(RoadEntry r, Vector3 from, Vector3 to)
+    {
+        var d0 = new Vector2(from.X - (float)r.Points[0][0], from.Z - (float)r.Points[0][2]);
+        var d1 = new Vector2(to.X - (float)r.Points[^1][0], to.Z - (float)r.Points[^1][2]);
+        var cum = new float[r.Points.Count];
+        for (int i = 1; i < cum.Length; i++) cum[i] = cum[i - 1] + Vector2.Distance(P(r.Points[i - 1]), P(r.Points[i]));
+        for (int i = 1; i < cum.Length - 1; i++)
+        {
+            var d = Vector2.Lerp(d0, d1, cum[^1] > 0 ? cum[i] / cum[^1] : 0);
+            r.Points[i] = [r.Points[i][0] + d.X, r.Points[i][1], r.Points[i][2] + d.Y];
+        }
+        r.Points[0] = V(from);
+        r.Points[^1] = V(to);
+        // Punkte unmittelbar an den Enden (unter 3 m) entfallen – Läufe dabei mitführen
+        while (r.Points.Count > 2 && Vector2.Distance(P(r.Points[0]), P(r.Points[1])) < 3f) RemovePoint(r, 1);
+        while (r.Points.Count > 2 && Vector2.Distance(P(r.Points[^1]), P(r.Points[^2])) < 3f) RemovePoint(r, r.Points.Count - 2);
+    }
+
+    private static void RemovePoint(RoadEntry r, int k)
+    {
+        // Abschnitt k−1..k entfällt (Punkt k fällt weg); Läufe ab k rücken um eins
+        r.Points.RemoveAt(k);
+        foreach (var x in r.Runs)
+        {
+            if (x.From >= k) x.From--;
+            if (x.To >= k) x.To--;
+        }
+        r.Runs = r.Runs.Where(x => x.To > x.From).ToList();
+        r.Runs[0].From = 0;
+        r.Runs[^1].To = r.Points.Count - 1;
     }
 
     /// <summary>Liegt innerhalb von reach Metern ab dem Knoten (pts beginnt am Knoten) eine Brücke/ein Tunnel?
@@ -563,6 +762,12 @@ public static class Interchanges
         {
             // Teilung so, dass ihr Hauptausgang auf dem OSM-Knoten liegt; Aufweitung davor
             var split = Place(map, src, Split, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor, p.Grade);
+            if (p.ExtRoad is not null)
+            {
+                // Aufweitung jenseits des Bauwerks; die Zusatzspur-Straße verbindet beide
+                var w = Place(map, src, Widen, WidenIn, WidenOut, p.FarDirection, WidenIn, p.FarAnchor, p.FarGrade);
+                return new Placed(p, w, WidenIn, split, SplitMain, split, SplitRamp) { ExtFrom = w, ExtFromNode = WidenOut, ExtTo = split, ExtToNode = SplitIn };
+            }
             // Richtung an der Fuge aus dem gesetzten Nachbar-Prefab übernehmen (sonst Keil in der Fuge)
             var dSplit = Flat(InwardDirections[split][SplitIn], p.Direction);
             var widen = Place(map, src, Widen, WidenIn, WidenOut, dSplit, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
@@ -572,6 +777,11 @@ public static class Interchanges
         else
         {
             var join = Place(map, src, Join, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
+            if (p.ExtRoad is not null)
+            {
+                var nw = Place(map, src, Narrow, NarrowIn, NarrowOut, p.FarDirection, NarrowOut, p.FarAnchor, p.FarGrade);
+                return new Placed(p, join, JoinMain, nw, NarrowOut, join, JoinRamp) { ExtFrom = join, ExtFromNode = JoinOut, ExtTo = nw, ExtToNode = NarrowIn };
+            }
             var dJoin = Flat(-InwardDirections[join][JoinOut], p.Direction);
             var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, dJoin, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
             join.Attach(JoinOut, narrow, NarrowIn);
@@ -702,13 +912,30 @@ public static class Interchanges
 
     /// <summary>Passt die Straßen an die gesetzten Prefabs an (vor dem Bau der Straßen).</summary>
     /// <summary>Knotendrehungen ohne Rollen: nur Gier und Längsneigung.</summary>
+    /// <summary>Steigung des Prefabs pf im Plan (mit Zusatzspur-Straße haben beide eigene).</summary>
+    private static float GradeOf(Placed pl, Prefab pf)
+    {
+        var p = pl.Plan;
+        if (p.ExtRoad is null) return p.Grade;
+        bool far = p.Kind == "exit" ? ReferenceEquals(pf, pl.First) : ReferenceEquals(pf, pl.Last);
+        return far ? p.FarGrade : p.Grade;
+    }
+
+    private static void FixExtRotations(Placed pl)
+    {
+        if (pl.ExtFrom is null || pl.ExtTo is null) return;
+        pl.ExtFrom.Nodes[pl.ExtFromNode].Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.ExtFrom][pl.ExtFromNode], GradeOf(pl, pl.ExtFrom)));
+        pl.ExtTo.Nodes[pl.ExtToNode].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.ExtTo][pl.ExtToNode], GradeOf(pl, pl.ExtTo)));
+    }
+
     public static void FixRotations(Placed pl)
     {
         var p = pl.Plan;
         var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];
-        pl.First.Nodes[pl.FirstIn].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], p.Grade));
-        pl.Last.Nodes[pl.LastOut].Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], p.Grade));
+        pl.First.Nodes[pl.FirstIn].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], GradeOf(pl, pl.First)));
+        pl.Last.Nodes[pl.LastOut].Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], GradeOf(pl, pl.Last)));
         pl.RampPrefab.Nodes[pl.RampNode].Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
+        FixExtRotations(pl);
         if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
             foreach (var n in new[] { pl.First.Nodes[pl.FirstIn], pl.Last.Nodes[pl.LastOut], pl.RampPrefab.Nodes[pl.RampNode] })
                 Console.Error.WriteLine($"   rot {n.Position} right {Vector3.Transform(Vector3.UnitX, n.Rotation)} up {Vector3.Transform(Vector3.UnitY, n.Rotation)}");
@@ -730,12 +957,15 @@ public static class Interchanges
         DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
         if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn);
         else SetTail(p.Ramp, rampNode.Position, rampIn);
+        if (p.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
+            SnapExt(p.ExtRoad, pl.ExtFrom.Nodes[pl.ExtFromNode].Position, pl.ExtTo.Nodes[pl.ExtToNode].Position);
 
         // Knotendrehungen auf die Fahrtrichtung setzen (aus der ppd-Geometrie). TruckLib
         // liefert für schräge Knoten nach dem Drehen eines Prefabs eine gespiegelte
         // Richtung; die Straßenkurve würde sonst am Knoten abknicken.
-        inNode.Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], p.Grade));
-        outNode.Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], p.Grade));
+        inNode.Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], GradeOf(pl, pl.First)));
+        outNode.Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], GradeOf(pl, pl.Last)));
         rampNode.Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
+        FixExtRotations(pl);
     }
 }
