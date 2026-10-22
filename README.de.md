@@ -62,8 +62,9 @@ Wie Füll- und Straßengelände zusammenpassen:
   Brückenenden fällt es als Böschung ab (1 : 1,5, steiler bei kurzer Brücke), seitlich über die
   Brückenränder hinaus als Kegel. Das ist eine Obergrenze für jede Rasterabfrage, Straßen- und
   Füllgelände folgen ihr; Dämme ebenerdiger Straßen daneben bleiben stehen. Die Böschungsquads des
-  Straßengeländes bekommen das Steinmaterial der SCS-Karte (Token `175`). Brücken tragen an beiden
-  Modellrändern das Geländer `railing_01_ger` (Token `mod_ger_3`).
+  Straßengeländes bekommen das Steinmaterial der SCS-Karte (Token `175`). Brücken tragen am Modellrand das
+  Geländer `railing_01_ger` (Token `mod_ger_3`) – Richtungsfahrbahnen von Autobahnen nur außen
+  (rechts) wie in der SCS-Karte, andere Straßen auf beiden Seiten.
 
 Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Höhenpunkte (vertex offsets) sind **absolute** Lagen (Zeilenabstände 1,1,1,2,6,6,10,10,10,20,40,50… m),

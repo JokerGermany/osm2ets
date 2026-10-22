@@ -567,11 +567,12 @@ public static class MapWriter
         for (int k = 0; k < road.Right.Railings.Models.Length; k++) road.Right.Railings.Models[k] = default;
         if (style.Railing is { } rail)
         {
-            road.Left.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 - style.ModelCenter + style.RailingOffset };
+            if (style.RailingLeft)
+                road.Left.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 - style.ModelCenter + style.RailingOffset };
             road.Right.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 + style.ModelCenter + style.RailingOffset };
         }
-        if (style.Body is { } body)
-            road.Left.Railings.Models[1] = new Railing { Model = new Token(body), Offset = style.BodyOffset };
+        if (style.Body is { } body)   // erster freier Platz links (wie in der SCS-Karte Platz 1 ohne Geländer)
+            road.Left.Railings.Models[style.Railing is not null && style.RailingLeft ? 1 : 0] = new Railing { Model = new Token(body), Offset = style.BodyOffset };
         // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar

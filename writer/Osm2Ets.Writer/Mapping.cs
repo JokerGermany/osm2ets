@@ -150,6 +150,9 @@ public class StyleSpec
     public string? Railing { get; set; }
     /// <summary>Abstand des Geländers vom Modellrand nach außen (m).</summary>
     public float? RailingOffset { get; set; }
+    /// <summary>Geländer auch am linken Rand (false für Richtungsfahrbahnen: links liegt der
+    /// Mittelstreifen bzw. der Brückenkörper – in der SCS-Karte nur außen).</summary>
+    public bool? RailingLeft { get; set; }
 
     internal void Validate(string name, List<string> errors)
     {
@@ -193,7 +196,8 @@ public class StyleSpec
             Secret ?? baseStyle?.Secret,
             AiVehicles ?? baseStyle?.AiVehicles,
             Railing is not null ? (Railing.Length > 0 ? Railing : null) : baseStyle?.Railing,
-            RailingOffset ?? baseStyle?.RailingOffset ?? 1f);
+            RailingOffset ?? baseStyle?.RailingOffset ?? 1f,
+            RailingLeft: RailingLeft ?? baseStyle?.RailingLeft ?? true);
     }
 }
 
@@ -307,7 +311,8 @@ public sealed record ResolvedStyle(
     string? Railing = null,
     float RailingOffset = 1f,
     string? Body = null,
-    float BodyOffset = 0f)
+    float BodyOffset = 0f,
+    bool RailingLeft = true)
 {
     /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
     public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;

@@ -62,7 +62,8 @@ How fill and road terrain fit together:
   as a cone. This is an upper limit applied to every grid query, so road terrain and fill follow
   it; embankments of at-grade roads next to it stay. The slope quads of the road terrain get the
   stone material of the SCS map (token `175`). Bridges carry the railing `railing_01_ger`
-  (token `mod_ger_3`) at both model edges.
+  (token `mod_ger_3`) at the model edges – motorway carriageways only on the outer (right) side,
+  as in the SCS map; other roads on both sides.
 
 Findings from editor tests that shaped this (useful if you work on it):
 - Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),

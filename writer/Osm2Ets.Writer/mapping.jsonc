@@ -52,12 +52,15 @@
     // 4,5 m rechts der zweispurigen; Modell angenommen wie ger16 (nicht vermessen).
     { "name": "Autobahn mit Zusatzspur zwischen Anschluss-Prefabs", "match": { "role": ["ext"] },
       "road_type": "ger17", "width": 17, "model_center": -0.5, "offset": 0, "edge_left": 9, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
       "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahn 3+ Spuren", "match": { "highway": ["motorway", "trunk"], "oneway": true, "lanes_min": 3 },
       "road_type": "ger16", "width": 17, "model_center": -0.5, "offset": 2.17, "edge_left": 6.83, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
       "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahn / Kraftfahrstraße, Richtungsfahrbahn", "match": { "highway": ["motorway", "trunk"], "oneway": true },
       "road_type": "ger13", "width": 12.5, "model_center": 1.75, "offset": 0, "edge_left": 4.5, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
       "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahnrampe", "match": { "highway": ["motorway_link", "trunk_link"], "oneway": true },
       "road_type": "ger2", "width": 8, "model_center": -1.5, "offset": 2.2, "edge_left": 3.3, "terrain_left": 10, "terrain_right": 10,
@@ -74,6 +77,7 @@
   // (flächiges Gelände auf Bodenhöhe). Dämme entstehen nur an den Zufahrten.
   // Geländer an den Brückenrändern: railing_01_ger (Token mod_ger_3) wie an Autobahnbrücken der
   // SCS-Karte (dort 9 m neben der Linie von ger17 – angenommen 1 m außerhalb des Modellrands).
+  // Richtungsfahrbahnen (railing_left: false in ihren Regeln) nur außen, wie in der SCS-Karte.
   "bridge": { "terrain_left": 0, "terrain_right": 0, "railing": "mod_ger_3", "railing_offset": 1 },
   "tunnel": { "terrain_left": 0, "terrain_right": 0 },
   // Brückenkörper (Überbau mit Widerlagern) für Paare paralleler Autobahnbrücken über eine Straße,
