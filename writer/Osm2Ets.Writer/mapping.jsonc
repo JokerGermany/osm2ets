@@ -76,6 +76,12 @@
   // SCS-Karte (dort 9 m neben der Linie von ger17 – angenommen 1 m außerhalb des Modellrands).
   "bridge": { "terrain_left": 0, "terrain_right": 0, "railing": "mod_ger_3", "railing_offset": 1 },
   "tunnel": { "terrain_left": 0, "terrain_right": 0 },
+  // Brückenkörper (Überbau mit Widerlagern) für Paare paralleler Autobahnbrücken über eine Straße,
+  // wie in der SCS-Karte: Railing dlc_it_8 = /model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd
+  // aus dem ITALIA-DLC, an einer Richtungsfahrbahn, zur Gegenfahrbahn hin um den halben Abstand
+  // der Linien + 2 m versetzt (SCS: 11 + 2 = 13 m). Eintrag entfernen, wenn die Karte ohne
+  // Italia laufen soll. Einzelne Brücken (z. B. Landstraße über Autobahn) bleiben ohne Körper.
+  "bridge_body": { "railing": "dlc_it_8", "extra_offset": 2 },
   // Wege ohne Kfz-Zugang (access=private|no, nur in L5): Straßentyp wie sonst, aber nicht
   // auf Karte/Navi, Navi meidet, kein KI-Verkehr (z. B. Firmengelände, Privatstraßen).
   "restricted": { "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },

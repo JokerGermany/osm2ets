@@ -35,7 +35,8 @@ v1–v46 (see commits).
 | Area-wide terrain between roads from the terrain model | implemented, gaps remain (see below) |
 | 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
 | Underpasses: open terrain under bridges over roads, stone slopes, bridge railings | implemented, not yet checked in game |
-| Bridge models (deck body, abutment walls), vegetation/land use, cities, companies | not yet |
+| Bridge body (deck, abutment walls) for twin motorway bridges over a road (Italia DLC) | implemented, not yet checked in game |
+| Bridge bodies for other bridges, vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
 
 ### Area-wide terrain
@@ -76,11 +77,16 @@ Findings from editor tests that shaped this (useful if you work on it):
 - Gaps (black areas in the editor) remain in narrow gores between ramp and main road and
   close to some prefabs; fill rows run west–east and cannot follow diagonal gaps exactly.
 - Where a minor road is lowered under a motorway, the terrain beside it has no cut slope yet.
-- Bridges have no deck body or abutment walls: seen from below, the deck is see-through (ETS2
-  roads have no underside), and where road terrain starts at a bridge end over a valley its end
-  shows as a terrain face. The SCS map uses the railing `dlc_it_8`
-  (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, Italia DLC) for this; its
-  geometry has not been checked yet.
+- Bridge body: pairs of parallel motorway bridges over a road (starting and ending within 8 m of
+  each other, lines 12–30 m apart) get the railing `dlc_it_8`
+  (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia DLC**) on the lower
+  carriageway, offset towards the other by half the distance + 2 m, as in the SCS map (11 + 2 m).
+  It brings the deck and the abutment walls; the carrier's bridge becomes a single road item so
+  the walls sit at its ends. Remove `bridge_body` from `mapping.jsonc` for maps without Italia.
+  All other bridges still have no body: seen from below the deck is see-through (ETS2 roads have
+  no underside), and over valleys the end of the road terrain shows as a face.
+- Twin decks at different heights (A 70 over the B 85: 1.1 m): the upper carriageway runs above
+  the body of the lower one.
 - Railing offset (1 m outside the model edge) and the model width of `ger17` are estimates.
 - Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
   of 1–3 m remain in a few places.

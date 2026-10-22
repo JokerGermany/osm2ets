@@ -20,6 +20,8 @@ public sealed class MappingConfig
     public StyleSpec? Tunnel { get; set; }
     /// <summary>Überschreibt Werte auf Wegen ohne Kfz-Zugang (access=private|no), zusätzlich zur Regel.</summary>
     public StyleSpec? Restricted { get; set; }
+    /// <summary>Brückenkörper für Paare paralleler Autobahnbrücken über Straßen (siehe BridgeBodies).</summary>
+    public BridgeBodySpec? BridgeBody { get; set; }
     public MapSpec Map { get; set; } = new();
 
     // Strenger als beim Zwischenformat: unbekannte Felder (Tippfehler) sind Fehler.
@@ -59,6 +61,7 @@ public sealed class MappingConfig
         Bridge?.Validate("bridge", errors);
         Tunnel?.Validate("tunnel", errors);
         Restricted?.Validate("restricted", errors);
+        BridgeBody?.Validate("bridge_body", errors);
         if (errors.Count > 0)
             throw new InvalidDataException($"{source}:\n  " + string.Join("\n  ", errors));
     }
@@ -82,6 +85,29 @@ public sealed class MappingConfig
         if (run.Access is not null && Restricted is not null)
             style = Restricted.ToResolved(style);
         return style;
+    }
+}
+
+public sealed class BridgeBodySpec
+{
+    /// <summary>Railing-Token des Brückenkörpers (SCS-Karte: dlc_it_8, Italia-DLC).</summary>
+    public string Railing { get; set; } = "";
+    /// <summary>Versatz über den halben Abstand der Fahrbahnlinien hinaus zur Gegenfahrbahn (m).</summary>
+    public float ExtraOffset { get; set; } = 2f;
+    /// <summary>Abstand der Fahrbahnlinien (m), in dem zwei Brücken als Paar gelten.</summary>
+    public float MinGap { get; set; } = 12f;
+    public float MaxGap { get; set; } = 30f;
+    /// <summary>Längere Brücken bekommen keinen Körper (m).</summary>
+    public float MaxLength { get; set; } = 200f;
+    /// <summary>So weit dürfen Anfang und Ende der beiden Brücken längs auseinanderliegen (m).</summary>
+    public float MaxEndOffset { get; set; } = 8f;
+
+    internal void Validate(string name, List<string> errors)
+    {
+        if (Railing.Length == 0) errors.Add($"{name}.railing fehlt");
+        StyleSpec.CheckToken(Railing, $"{name}.railing", errors);
+        if (MinGap < 0 || MaxGap < MinGap) errors.Add($"{name}: min_gap ≤ max_gap erwartet");
+        if (ExtraOffset is < -20 or > 20) errors.Add($"{name}.extra_offset: −20–20 erwartet");
     }
 }
 
@@ -279,7 +305,9 @@ public sealed record ResolvedStyle(
     bool? Secret = null,
     bool? AiVehicles = null,
     string? Railing = null,
-    float RailingOffset = 1f)
+    float RailingOffset = 1f,
+    string? Body = null,
+    float BodyOffset = 0f)
 {
     /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
     public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;

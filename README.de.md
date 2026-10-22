@@ -35,7 +35,8 @@ v1–v46 (siehe Commits).
 | Flächiges Gelände zwischen den Straßen aus dem Geländemodell | umgesetzt, Lücken bleiben (siehe unten) |
 | 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
 | Unterführungen: offenes Gelände unter Brücken über Straßen, Steinböschungen, Brückengeländer | umgesetzt, im Spiel noch nicht geprüft |
-| Brückenmodelle (Überbau, Widerlagerwände), Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
+| Brückenkörper (Überbau, Widerlagerwände) für Autobahn-Brückenpaare über Straßen (Italia-DLC) | umgesetzt, im Spiel noch nicht geprüft |
+| Brückenkörper für andere Brücken, Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
 
 ### Flächiges Gelände
@@ -77,11 +78,16 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Lücken (schwarz im Editor) bleiben in schmalen Zwickeln zwischen Rampe und Hauptfahrbahn
   und an manchen Prefabs; die Füllreihen laufen West-Ost und folgen schrägen Lücken nicht genau.
 - Wo eine untergeordnete Straße unter einer Autobahn abgesenkt wird, fehlt noch die Einschnittsböschung.
-- Brücken haben keinen Überbau und keine Widerlagerwände: von unten ist die Fahrbahn durchsichtig
-  (ETS2-Straßen haben keine Unterseite), und wo an einem Brückenende über einem Tal Straßengelände
-  beginnt, zeigt sich sein Ende als Geländekante. Die SCS-Karte nimmt dafür das Railing `dlc_it_8`
-  (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, Italia-DLC); dessen Form ist noch
-  nicht geprüft.
+- Brückenkörper: Paare paralleler Autobahnbrücken über eine Straße (Anfang und Ende höchstens 8 m
+  versetzt, Linien 12–30 m auseinander) bekommen an der tieferen Richtungsfahrbahn das Railing
+  `dlc_it_8` (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia-DLC**), zur
+  Gegenfahrbahn hin um den halben Abstand + 2 m versetzt wie in der SCS-Karte (11 + 2 m). Es bringt
+  Überbau und Widerlagerwände; die Brücke des Trägers wird ein einziges Straßenstück, damit die
+  Wände an ihren Enden sitzen. Für Karten ohne Italia `bridge_body` aus `mapping.jsonc` entfernen.
+  Alle anderen Brücken haben weiterhin keinen Körper: von unten ist die Fahrbahn durchsichtig
+  (ETS2-Straßen haben keine Unterseite), über Tälern zeigt sich das Ende des Straßengeländes als Kante.
+- Unterschiedlich hohe Brückenpaare (A 70 über der B 85: 1,1 m): die höhere Fahrbahn liegt über dem
+  Körper der tieferen.
 - Geländerabstand (1 m außerhalb des Modellrands) und Modellbreite von `ger17` sind geschätzt.
 - Wo Straßengelände zweier deutlich verschieden hoher Straßen aneinanderstößt (dichte
   Anschlussstellen), bleiben an wenigen Stellen Stufen von 1–3 m.

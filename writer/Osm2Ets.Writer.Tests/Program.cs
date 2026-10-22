@@ -27,6 +27,7 @@ var tests = new List<(string Name, Action Body)>
     ("Gelände: Brücke darüber verdeckt die Nachbarfahrbahn nicht", BridgeAboveIsNoNeighbour),
     ("Füllgelände: nie über Asphalt oder Straßengelände (Hang neben der Straße)", FillStaysBelowRoadTerrain),
     ("Unterführung: unter der Brücke Höhe der unteren Straße, Böschung zu den Enden, Damm daneben bleibt", UnderpassLowersTerrainUnderBridge),
+    ("Brückenkörper: an der tieferen von zwei Autobahnbrücken über eine Straße, Brücke als ein Stück", BridgeBodyOnTwinBridges),
 };
 
 int failed = 0;
@@ -685,4 +686,29 @@ static void UnderpassLowersTerrainUnderBridge()
     var bridgeItems = map.MapItems.Values.OfType<Road>().Where(r => r.Left.Terrain.Size == 0 && r.Right.Terrain.Size == 0).ToList();
     Check(bridgeItems.Count > 0 && bridgeItems.All(r => r.Left.Railings.Models[0].Model.ToString() == "mod_ger_3" && r.Right.Railings.Models[0].Model.ToString() == "mod_ger_3"),
         "Brücke ohne Geländer");
+}
+
+static void BridgeBodyOnTwinBridges()
+{
+    // Zwei Richtungsfahrbahnen (z −10 nach Osten, z +10 nach Westen – Gegenfahrbahn links), je mit
+    // 40 m Brücke über eine Straße bei x 100 (y 0); die westliche Fahrbahn liegt 0,5 m höher.
+    var low = MakeRoad("low", new[] { new[] { 100.0, 0, -200 }, new[] { 100.0, 0, 200 } }, MakeRun(0, 1, "primary"));
+    var east = MakeRoad("east", new[] { new[] { 0.0, 7, 10 }, new[] { 80.0, 7, 10 }, new[] { 100.0, 7, 10 }, new[] { 120.0, 7, 10 }, new[] { 200.0, 7, 10 } },
+        MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 3, "motorway", oneway: true, bridge: true), MakeRun(3, 4, "motorway", oneway: true));
+    var west = MakeRoad("west", new[] { new[] { 200.0, 7.5, -10 }, new[] { 121.0, 7.5, -10 }, new[] { 79.0, 7.5, -10 }, new[] { 0.0, 7.5, -10 } },
+        MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 2, "motorway", oneway: true, bridge: true), MakeRun(2, 3, "motorway", oneway: true));
+    var warnings = new List<string>();
+    var bodies = BridgeBodies.Plan([low, east, west], new BridgeBodySpec { Railing = "dlc_it_8" }, warnings);
+    Check(bodies.Count == 1, $"{bodies.Count} Brückenkörper statt 1");
+    var b = bodies[0];
+    Check(b.Road == east && b.Partner == "west", $"Träger {b.Road.Id} statt der tieferen Fahrbahn east");
+    Check(MathF.Abs(b.Offset - 12f) < 0.01f, $"Versatz {b.Offset:0.00} statt 12 (halber Abstand 10 + 2)");
+    Check(east.Points.Count == 4 && east.Runs[1].From == 1 && east.Runs[1].To == 2 && east.Runs[2].From == 2 && east.Runs[2].To == 3,
+        "Brücke des Trägers nicht zu einem Stück zusammengelegt");
+    // ohne Straße darunter kein Körper
+    var e2 = MakeRoad("e2", new[] { new[] { 0.0, 7, 10 }, new[] { 80.0, 7, 10 }, new[] { 120.0, 7, 10 }, new[] { 200.0, 7, 10 } },
+        MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 2, "motorway", oneway: true, bridge: true), MakeRun(2, 3, "motorway", oneway: true));
+    var w2 = MakeRoad("w2", new[] { new[] { 200.0, 7, -10 }, new[] { 120.0, 7, -10 }, new[] { 80.0, 7, -10 }, new[] { 0.0, 7, -10 } },
+        MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 2, "motorway", oneway: true, bridge: true), MakeRun(2, 3, "motorway", oneway: true));
+    Check(BridgeBodies.Plan([e2, w2], new BridgeBodySpec { Railing = "dlc_it_8" }, warnings).Count == 0, "Talbrücke bekam einen Körper");
 }

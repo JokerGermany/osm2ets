@@ -176,6 +176,22 @@ public static class MapWriter
             styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
         }
         int separated = CarriagewaySeparation.Apply(valid, styles);
+        // Brückenkörper (Railing mit Widerlagern) für Paare paralleler Autobahnbrücken über Straßen:
+        // nach dem Auseinanderrücken (Abstand der Linien), Brücke des Trägers als ein Stück
+        if (mapping.BridgeBody is { } bb)
+        {
+            var bodies = BridgeBodies.Plan(valid, bb, warnings);
+            foreach (var r in bodies.Select(x => x.Road).Distinct())
+            {
+                Validate(r, out var pts2, out var ros2);
+                styles[r] = Enumerable.Range(0, pts2.Count - 1).Select(i => mapping.Resolve(r.Runs[ros2[i]])).ToArray();
+            }
+            foreach (var b in bodies)
+                styles[b.Road][b.Segment] = styles[b.Road][b.Segment] with { Body = bb.Railing, BodyOffset = b.Offset };
+            if (bodies.Count > 0)
+                warnings.Add($"Info: Brückenkörper ({bb.Railing}) an {bodies.Count} Brückenpaaren über Straßen: " +
+                             string.Join(", ", bodies.Select(b => $"{b.Road.Id}/{b.Partner} {b.Offset:0.0} m")));
+        }
         // An Anschluss-Prefabs kein Straßengelände auf den ersten 30 m: die Geländestreifen von
         // Rampe und Hauptfahrbahn kreuzen sich dort im spitzen Winkel und falten sich ins Prefab
         foreach (var pl in TerrainFill.WideRoadTerrain ? [] : interchangePlans)
@@ -545,18 +561,17 @@ public static class MapWriter
         style.Right?.ApplyTo(road.Right);
         road.Boundary = style.Boundary;
         ApplyFlags(road, style);
-        // Geländer an beiden Modellrändern (Brücken); sonst leeren – Append übernimmt die Einstellungen
-        // des vorigen Stücks
+        // Geländer an beiden Modellrändern (Brücken), Brückenkörper links (zur Gegenfahrbahn); alle
+        // Plätze immer setzen – Append übernimmt die Einstellungen des vorigen Stücks
+        for (int k = 0; k < road.Left.Railings.Models.Length; k++) road.Left.Railings.Models[k] = default;
+        for (int k = 0; k < road.Right.Railings.Models.Length; k++) road.Right.Railings.Models[k] = default;
         if (style.Railing is { } rail)
         {
             road.Left.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 - style.ModelCenter + style.RailingOffset };
             road.Right.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 + style.ModelCenter + style.RailingOffset };
         }
-        else
-        {
-            road.Left.Railings.Models[0] = default;
-            road.Right.Railings.Models[0] = default;
-        }
+        if (style.Body is { } body)
+            road.Left.Railings.Models[1] = new Railing { Model = new Token(body), Offset = style.BodyOffset };
         // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
