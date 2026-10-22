@@ -215,35 +215,3 @@ def test_twin_carriageways_have_no_height_steps(tmp_path, profile, monkeypatch):
     mid = np.abs(ya) < 700
     assert np.max(np.abs(za[mid] - np.interp(ya[mid], yb[order], zb[order]))) < 0.1
     assert model["stats"]["elevation"]["aligned_points"] > 0
-
-
-def _bridge_over_service(tmp_path):
-    """Autobahn (beide Richtungsfahrbahnen) mit 20-m-Brücke über einen Wirtschaftsweg."""
-    nodes = {1: _pt(-400, 0), 2: _pt(-10, 0), 3: _pt(10, 0), 4: _pt(400, 0),
-             11: _pt(400, 30), 12: _pt(10, 30), 13: _pt(-10, 30), 14: _pt(-400, 30),
-             21: _pt(0, -200), 22: _pt(0, 200)}
-    mw = {"highway": "motorway", "ref": "A 1", "oneway": "yes", "lanes": "2"}
-    br = dict(mw, bridge="yes", layer="1")
-    ways = [(1, [1, 2], mw), (2, [2, 3], br), (3, [3, 4], mw),
-            (11, [11, 12], mw), (12, [12, 13], br), (13, [13, 14], mw),
-            (21, [21, 22], {"highway": "service"})]
-    return write_osm(tmp_path / "e.osm", nodes, ways)
-
-
-def _motorway_bridge_runs(model):
-    return [run for r in model["roads"] for run in r["runs"] if run["highway"] == "motorway" and run["bridge"]]
-
-
-def test_motorway_bridge_over_missing_road_is_a_normal_road(tmp_path, profile):
-    """In L1 fehlt der Wirtschaftsweg. Die Autobahnbrücke läge auf Geländehöhe (Autobahnbrücken
-    werden nicht pauschal angehoben) – im Spiel stand nur ein Geländer auf ebenem Boden. Sie wird
-    zum normalen Abschnitt. In L5 liegt der Weg darunter: Dort bleibt sie eine Brücke."""
-    osm = _bridge_over_service(tmp_path)
-    l1 = build(str(osm), profile, "L1")
-    assert _motorway_bridge_runs(l1) == []
-    assert l1["stats"]["elevation"]["major_bridges_without_road_below"] == 2
-    assert all(run["layer"] == 0 for r in l1["roads"] for run in r["runs"])
-    l5 = build(str(osm), profile, "L5")
-    assert len(_motorway_bridge_runs(l5)) == 2
-    assert l5["stats"]["elevation"]["major_bridges_without_road_below"] == 0
-    assert min(c["clearance_m"] for c in crossing_clearances(l5["roads"])) >= profile.bridge_clearance_m - 0.3

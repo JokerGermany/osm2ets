@@ -5,9 +5,6 @@ Alle Rechnungen laufen auf einem gemeinsamen Graphen aus den verdichteten
 Punkten aller Stücke; Punkte an gemeinsamen OSM-Knoten sind ein Knoten. Damit
 haben alle Straßen an einer Kreuzung dieselbe Höhe.
 
-Vorab (pipeline.build, hide_empty_major_bridges): Autobahn-/Kraftfahrstraßenbrücken ohne
-Straße der Stufe und ohne Tal darunter gelten als normale Straßenabschnitte.
-
 Ablauf:
   1. Gelände entlang jedes Stücks abtasten und glätten (ohne Geländemodell: 0).
      Stückenden werden auf den ungeglätteten Wert am OSM-Knoten festgehalten.
@@ -949,67 +946,6 @@ def _layer_eff(flags: tuple[bool, bool, int]) -> int:
 def _is_link(piece: Piece, seg: int) -> bool:
     part = piece.chain.parts[piece.dense.seg_part[seg]]
     return part.edge.highway.endswith("_link")
-
-
-EMPTY_BRIDGE_MAX_GAP_M = 3.0
-
-
-def hide_empty_major_bridges(pieces: list[Piece], dem: Optional["DemSampler"] = None) -> int:
-    """Autobahn-/Kraftfahrstraßenbrücken, die in dieser Detailstufe keine Straße kreuzen
-    (darunter z. B. ein Wirtschaftsweg, eine Kreisstraße oder eine Bahn, die in L1 fehlen) und
-    unter denen das Gelände nicht tiefer liegt (höchstens EMPTY_BRIDGE_MAX_GAP_M unter der Linie
-    zwischen den Brückenenden – sonst ist es eine Talbrücke), werden zu normalen
-    Straßenabschnitten: Höhe aus dem Gelände wie davor und danach, Höhenbindung der
-    Richtungsfahrbahnen, im Spiel Straßengelände statt eines Geländers auf ebenem Boden.
-    Autobahnbrücken werden nicht pauschal angehoben (siehe Schritt 2) – ohne Straße darunter
-    blieb dort keine Lücke. In einer Stufe mit der Straße darunter bleibt es eine Brücke.
-    Gibt die Zahl der betroffenen OSM-Wege zurück; die Tags bridge und layer werden dafür auf
-    "no" bzw. entfernt (Originale in osm2ets:bridge und osm2ets:layer)."""
-    from .qa import find_crossings
-
-    crossings = find_crossings([p.dense.xy_game for p in pieces])
-    crossed: set[int] = set()
-    for la, sa, _, lb, sb, _ in crossings:
-        for li, si in ((la, sa), (lb, sb)):
-            part = pieces[li].chain.parts[pieces[li].dense.seg_part[si]]
-            crossed.add(id(part.edge.way))
-    hidden: dict[int, object] = {}
-    for p in pieces:
-        for part_idx in set(p.dense.seg_part):
-            way = p.chain.parts[part_idx].edge.way
-            tags = way.tags
-            if not is_bridge(tags) or is_tunnel(tags) or tags.get("highway") not in MAJOR:
-                continue
-            if id(way) in crossed:
-                continue
-            if dem is not None and _valley_under(pieces, way, dem) > EMPTY_BRIDGE_MAX_GAP_M:
-                continue
-            hidden[id(way)] = way
-    for way in hidden.values():
-        way.tags["osm2ets:bridge"] = way.tags.get("bridge", "")
-        way.tags["bridge"] = "no"
-        if "layer" in way.tags:
-            way.tags["osm2ets:layer"] = way.tags.pop("layer")
-    return len(hidden)
-
-
-def _valley_under(pieces: list[Piece], way, dem: "DemSampler") -> float:
-    """Größte Tiefe des Geländes unter der Linie zwischen den Enden des Wegs (m)."""
-    deepest = 0.0
-    for p in pieces:
-        segs = [j for j, part_idx in enumerate(p.dense.seg_part) if p.chain.parts[part_idx].edge.way is way]
-        if not segs:
-            continue
-        idx = sorted({j for j in segs} | {j + 1 for j in segs})
-        xy = p.dense.xy[idx]
-        h = dem.sample(xy)
-        s = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(xy, axis=0), axis=1))])
-        if len(h) < 3 or s[-1] <= 0:
-            continue
-        a = float(np.mean(h[:2])); b = float(np.mean(h[-2:]))
-        line = a + (b - a) * s / s[-1]
-        deepest = max(deepest, float(np.max(line - h)))
-    return deepest
 
 
 def _segment_flags(p: Piece) -> list[tuple[bool, bool, int]]:
