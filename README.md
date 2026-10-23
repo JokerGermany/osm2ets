@@ -35,10 +35,10 @@ v1–v46 (see commits).
 | Area-wide terrain between roads from the terrain model | implemented, gaps remain (see below) |
 | 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
 | Underpasses: open terrain under bridges over roads, stone slopes, bridge railings | implemented, not yet checked in game |
-| Bridge body (deck, abutment walls) for twin motorway bridges over a road (Italia DLC) | implemented, not yet checked in game |
+| Bridge bodies (deck, abutments, parapets) for all bridges: SCS bridge models per road type, wide motorway pairs Italia DLC | implemented, not yet checked in game |
 | Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
-| Bridge bodies for other bridges, vegetation/land use, cities, companies | not yet |
+| Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
 
 ### Area-wide terrain
@@ -86,8 +86,18 @@ Findings from editor tests that shaped this (useful if you work on it):
   carriageway, offset towards the other by half the distance + 2 m, as in the SCS map (11 + 2 m).
   It brings the deck and the abutment walls; the carrier's bridge becomes a single road item so
   the walls sit at its ends. Remove `bridge_body` from `mapping.jsonc` for maps without Italia.
-  All other bridges still have no body: seen from below the deck is see-through (ETS2 roads have
-  no underside), and over valleys the end of the road terrain shows as a face.
+- All other bridges get an SCS bridge model per road type with deck, abutments and parapets
+  (`bridge_bodies` in `mapping.jsonc`; then without `mod_ger_3`): `ger13` → `dlc_no_5`
+  (`shared_2lanes_x_1way`), `ger16`/`ger17` → `dlc_no_4` (`shared_3lanes_x_1way`), both on the
+  left with offset 0; `ger2` → `dlc_no_14` (`shared_hw_exit`) on the right; all others up to 11 m
+  wide → `dlc_no_6` (`shared_simple`, also used by the SCS editor tutorial for its bridge). Side and
+  offset are derived from the model dimensions (the parapets then lie 1.2–1.4 m outside the model
+  edge), not checked in game. Whether the `dlc_no_` models belong to the base game is unverified;
+  base-game models of the same size: `92`, `128`, `13`. Straight bridges become one road item;
+  bridges with a crest or curve stay several items – whether the game then also puts abutments at
+  the item joints is unverified. Without a body: bridges under an interchange prefab and over
+  200 m. The deck is 1.6 m deep (`dlc_it_8` 1.9 m); with 5.8–6.0 m between the road surfaces
+  4.2–4.4 m remain below.
 - Twin decks at different heights (A 70 over the B 85: 1.1 m): the upper carriageway runs above
   the body of the lower one.
 - Railing offset (1 m outside the model edge) and the model width of `ger17` are estimates.

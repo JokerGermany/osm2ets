@@ -15,7 +15,11 @@ namespace Osm2Ets.Writer;
 /// </summary>
 public static class BridgeBodies
 {
-    public sealed record Body(RoadEntry Road, int Segment, float Offset, string Partner);
+    public sealed record Body(RoadEntry Road, int Segment, float Offset, string Partner,
+                              RunEntry? Run = null, RunEntry? PartnerRun = null);
+
+    /// <summary>Körper für eine einzelne Brücke: alle Abschnitte des Laufs (gerade Brücken als ein Stück).</summary>
+    public sealed record Single(RoadEntry Road, RunEntry Run, BridgeBodyType Type, bool Merged);
 
     public const float MaxChordDeviation = 1.5f;
 
@@ -80,8 +84,41 @@ public static class BridgeBodies
                 continue;
             }
             int seg = Merge(carrier.R, carrier.Run);
-            res.Add(new Body(carrier.R, seg, bestD / 2 + spec.ExtraOffset, other.R.Id));
+            res.Add(new Body(carrier.R, seg, bestD / 2 + spec.ExtraOffset, other.R.Id, carrier.Run, other.Run));
         }
+        return res;
+    }
+
+    /// <summary>
+    /// Brückenkörper für alle übrigen Brücken: je Straßentyp ein Railing mit Überbau, Widerlagern
+    /// und Brüstung (SCS: shared_2lanes_x_1way, shared_3lanes_x_1way, shared_hw_exit, shared_simple).
+    /// Gerade Brücken werden ein Stück, damit die Widerlager sicher an ihren Enden sitzen. Gekrümmte
+    /// (auch in der Höhe: Kuppe über einer Straße – als ein Stück fehlte dort bis zu 1,3 m Lichtraum)
+    /// bleiben mehrere Stücke mit demselben Körper; angenommen, das Spiel setzt Widerlager nur an
+    /// die Enden einer durchgehenden Railing-Folge (ungeprüft). <paramref name="covered"/>: Läufe mit
+    /// Paar-Körper.
+    /// </summary>
+    public static List<Single> PlanSingle(List<RoadEntry> roads, Func<RunEntry, ResolvedStyle> resolve,
+                                          Func<ResolvedStyle, BridgeBodyType?> bodyFor, HashSet<RunEntry> covered,
+                                          float maxLength, List<string> warnings)
+    {
+        var res = new List<Single>();
+        int tooLong = 0;
+        foreach (var r in roads)
+            foreach (var run in r.Runs.Where(x => x.Bridge && !x.Tunnel && x.To > x.From).ToList())
+            {
+                if (covered.Contains(run)) continue;
+                var type = bodyFor(resolve(run));
+                if (type is null) continue;
+                var sp = new Span(r, run, MapWriter.ToVector(r.Points[run.From]), MapWriter.ToVector(r.Points[run.To]));
+                if (sp.Len < 3f) continue;
+                if (sp.Len > maxLength) { tooLong++; continue; }
+                bool straight = Straight(sp);
+                if (straight) Merge(r, run);
+                res.Add(new Single(r, run, type, straight));
+            }
+        if (tooLong > 0)
+            warnings.Add($"Info: ohne Brückenkörper: {tooLong} Brücken länger als {maxLength:0} m");
         return res;
     }
 

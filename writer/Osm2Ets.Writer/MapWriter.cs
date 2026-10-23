@@ -180,19 +180,36 @@ public static class MapWriter
         int separated = CarriagewaySeparation.Apply(valid, styles);
         // Brückenkörper (Railing mit Widerlagern) für Paare paralleler Autobahnbrücken über Straßen:
         // nach dem Auseinanderrücken (Abstand der Linien), Brücke des Trägers als ein Stück
-        if (mapping.BridgeBody is { } bb)
         {
-            var bodies = BridgeBodies.Plan(valid, bb, warnings);
-            foreach (var r in bodies.Select(x => x.Road).Distinct())
+            var bodies = mapping.BridgeBody is { } bb0 ? BridgeBodies.Plan(valid, bb0, warnings) : [];
+            // alle übrigen Brücken: Körper je Straßentyp (Brücke als ein Stück)
+            var covered = new HashSet<RunEntry>(bodies.SelectMany(b => new[] { b.Run, b.PartnerRun }).OfType<RunEntry>());
+            var singles = mapping.BridgeBodies is { Count: > 0 }
+                ? BridgeBodies.PlanSingle(valid, mapping.Resolve, mapping.BodyFor, covered,
+                                          mapping.BridgeBody?.MaxLength ?? 200f, warnings)
+                : [];
+            foreach (var r in bodies.Select(x => x.Road).Concat(singles.Select(x => x.Road)).Distinct())
             {
                 Validate(r, out var pts2, out var ros2);
                 styles[r] = Enumerable.Range(0, pts2.Count - 1).Select(i => mapping.Resolve(r.Runs[ros2[i]])).ToArray();
             }
             foreach (var b in bodies)
-                styles[b.Road][b.Segment] = styles[b.Road][b.Segment] with { Body = bb.Railing, BodyOffset = b.Offset };
+            {
+                int seg = b.Run?.From ?? b.Segment;
+                styles[b.Road][seg] = styles[b.Road][seg] with { Body = mapping.BridgeBody!.Railing, BodyOffset = b.Offset };
+            }
+            foreach (var s in singles)
+                for (int k = s.Run.From; k < s.Run.To; k++)
+                    styles[s.Road][k] = styles[s.Road][k] with
+                    {
+                        Body = s.Type.Railing, BodyOffset = s.Type.Offset, BodyRight = s.Type.Side == "right", BodyParapet = s.Type.Parapet,
+                    };
             if (bodies.Count > 0)
-                warnings.Add($"Info: Brückenkörper ({bb.Railing}) an {bodies.Count} Brückenpaaren über Straßen: " +
+                warnings.Add($"Info: Brückenkörper ({mapping.BridgeBody!.Railing}) an {bodies.Count} Brückenpaaren über Straßen: " +
                              string.Join(", ", bodies.Select(b => $"{b.Road.Id}/{b.Partner} {b.Offset:0.0} m")));
+            if (singles.Count > 0)
+                warnings.Add($"Info: Brückenkörper an {singles.Count} einzelnen Brücken ({singles.Count(s => !s.Merged)} aus mehreren Stücken): " +
+                             string.Join(", ", singles.GroupBy(s => s.Type.Railing).Select(g => $"{g.Key} {g.Count()}×")));
         }
         // An Anschluss-Prefabs kein Straßengelände auf den ersten 30 m: die Geländestreifen von
         // Rampe und Hauptfahrbahn kreuzen sich dort im spitzen Winkel und falten sich ins Prefab
@@ -567,14 +584,17 @@ public static class MapWriter
         // Plätze immer setzen – Append übernimmt die Einstellungen des vorigen Stücks
         for (int k = 0; k < road.Left.Railings.Models.Length; k++) road.Left.Railings.Models[k] = default;
         for (int k = 0; k < road.Right.Railings.Models.Length; k++) road.Right.Railings.Models[k] = default;
-        if (style.Railing is { } rail)
+        // Körper mit eigener Brüstung: kein zusätzliches Geländer
+        if (style.Railing is { } rail && !(style.Body is not null && style.BodyParapet))
         {
             if (style.RailingLeft)
                 road.Left.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 - style.ModelCenter + style.RailingOffset };
             road.Right.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 + style.ModelCenter + style.RailingOffset };
         }
-        if (style.Body is { } body)   // erster freier Platz links (wie in der SCS-Karte Platz 1 ohne Geländer)
-            road.Left.Railings.Models[style.Railing is not null && style.RailingLeft ? 1 : 0] = new Railing { Model = new Token(body), Offset = style.BodyOffset };
+        if (style.Body is { } body && style.BodyParapet)
+            (style.BodyRight ? road.Right : road.Left).Railings.Models[0] = new Railing { Model = new Token(body), Offset = style.BodyOffset };
+        else if (style.Body is { } body2)   // erster freier Platz links (wie in der SCS-Karte Platz 1 ohne Geländer)
+            road.Left.Railings.Models[style.Railing is not null && style.RailingLeft ? 1 : 0] = new Railing { Model = new Token(body2), Offset = style.BodyOffset };
         // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar

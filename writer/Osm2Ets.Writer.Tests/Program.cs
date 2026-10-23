@@ -28,6 +28,7 @@ var tests = new List<(string Name, Action Body)>
     ("Füllgelände: nie über Asphalt oder Straßengelände (Hang neben der Straße)", FillStaysBelowRoadTerrain),
     ("Unterführung: unter der Brücke Höhe der unteren Straße, Böschung zu den Enden, Damm daneben bleibt", UnderpassLowersTerrainUnderBridge),
     ("Brückenkörper: an der tieferen von zwei Autobahnbrücken über eine Straße, Brücke als ein Stück", BridgeBodyOnTwinBridges),
+    ("Brückenkörper je Straßentyp: gerade Brücke ein Stück, Kuppe mehrere Stücke, Rampe rechts", BridgeBodySingle),
 };
 
 int failed = 0;
@@ -689,10 +690,13 @@ static void UnderpassLowersTerrainUnderBridge()
         .Where(p => MathF.Abs(p.X - 100) < 6 && MathF.Abs(p.Z) < 8).ToList();
     Check(near.Count > 0, "kein Füllgelände unter der Brücke");
     Check(near.All(p => p.Y < 1f), $"Füllgelände unter der Brücke bis {near.Max(p => p.Y):0.00} m (Brücke 6 m)");
-    // Geländer an beiden Brückenrändern
+    // Brückenkörper mit Brüstung (Straßentyp der Brücke: Standard ger1 → shared_simple, dlc_no_6)
+    // statt der Geländer an beiden Rändern
     var bridgeItems = map.MapItems.Values.OfType<Road>().Where(r => r.Left.Terrain.Size == 0 && r.Right.Terrain.Size == 0).ToList();
-    Check(bridgeItems.Count > 0 && bridgeItems.All(r => r.Left.Railings.Models[0].Model.ToString() == "mod_ger_3" && r.Right.Railings.Models[0].Model.ToString() == "mod_ger_3"),
-        "Brücke ohne Geländer");
+    Check(bridgeItems.Count > 0 && bridgeItems.All(r =>
+            new[] { r.Left, r.Right }.SelectMany(sd => sd.Railings.Models).Count(m => m.Model.ToString() == "dlc_no_6") == 1 &&
+            new[] { r.Left, r.Right }.SelectMany(sd => sd.Railings.Models).All(m => m.Model.ToString() != "mod_ger_3")),
+        "Brücke ohne Körper oder mit zusätzlichem Geländer");
 }
 
 static void BridgeBodyOnTwinBridges()
@@ -718,4 +722,32 @@ static void BridgeBodyOnTwinBridges()
     var w2 = MakeRoad("w2", new[] { new[] { 200.0, 7, -10 }, new[] { 120.0, 7, -10 }, new[] { 80.0, 7, -10 }, new[] { 0.0, 7, -10 } },
         MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 2, "motorway", oneway: true, bridge: true), MakeRun(2, 3, "motorway", oneway: true));
     Check(BridgeBodies.Plan([e2, w2], new BridgeBodySpec { Railing = "dlc_it_8" }, warnings).Count == 0, "Talbrücke bekam einen Körper");
+}
+
+
+static void BridgeBodySingle()
+{
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var warnings = new List<string>();
+    // gerade Autobahnbrücke (3 Punkte auf einer Linie) → ein Stück, dlc_no_5 links mit Versatz 0
+    var mw = MakeRoad("mw", new[] { new[] { 0.0, 7, 0 }, new[] { 80.0, 7, 0 }, new[] { 100.0, 7, 0 }, new[] { 120.0, 7, 0 }, new[] { 200.0, 7, 0 } },
+        MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 3, "motorway", oneway: true, bridge: true), MakeRun(3, 4, "motorway", oneway: true));
+    // Feldweg über die Autobahn mit Kuppe (Mitte 1,2 m über der Sehne) → mehrere Stücke, dlc_no_6
+    var tr = MakeRoad("tr", new[] { new[] { 150.0, 0, -100 }, new[] { 150.0, 6, -30 }, new[] { 150.0, 8.4, 0 }, new[] { 150.0, 6, 30 }, new[] { 150.0, 0, 100 } },
+        MakeRun(0, 1, "track", role: "visible"), MakeRun(1, 3, "track", role: "visible", bridge: true), MakeRun(3, 4, "track", role: "visible"));
+    // Rampe auf einer Brücke → dlc_no_14 rechts
+    var ramp = MakeRoad("ramp", new[] { new[] { 0.0, 7, 40 }, new[] { 20.0, 7, 40 }, new[] { 40.0, 7, 40 } },
+        MakeRun(0, 1, "motorway_link", role: "link", oneway: true), MakeRun(1, 2, "motorway_link", role: "link", oneway: true, bridge: true));
+    var singles = BridgeBodies.PlanSingle([mw, tr, ramp], cfg.Resolve, cfg.BodyFor, [], 200f, warnings);
+    Check(singles.Count == 3, $"{singles.Count} Körper statt 3");
+    var a = singles.Single(x => x.Road == mw);
+    Check(a.Type.Railing == "dlc_no_5" && a.Type.Side == "left" && a.Type.Offset == 0 && a.Merged, "Autobahn: dlc_no_5 links, ein Stück");
+    Check(mw.Points.Count == 4 && a.Run.To == a.Run.From + 1, "gerade Brücke nicht zusammengelegt");
+    var b = singles.Single(x => x.Road == tr);
+    Check(b.Type.Railing == "dlc_no_6" && !b.Merged && tr.Points.Count == 5, "Kuppe: dlc_no_6, nicht zusammengelegt (Lichtraum)");
+    var c = singles.Single(x => x.Road == ramp);
+    Check(c.Type.Railing == "dlc_no_14" && c.Type.Side == "right", "Rampe: dlc_no_14 rechts");
+    // breite Straße (über max_width) bekommt keinen Körper
+    var wide = cfg.Resolve(new RunEntry { From = 0, To = 1, Highway = "primary", Role = "core", Lanes = 4 });
+    Check(wide.RoadType == "ger29" && cfg.BodyFor(wide) is null, $"Körper für zu breite Straße ({wide.RoadType}, {wide.Width} m)");
 }

@@ -35,10 +35,10 @@ v1–v46 (siehe Commits).
 | Flächiges Gelände zwischen den Straßen aus dem Geländemodell | umgesetzt, Lücken bleiben (siehe unten) |
 | 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
 | Unterführungen: offenes Gelände unter Brücken über Straßen, Steinböschungen, Brückengeländer | umgesetzt, im Spiel noch nicht geprüft |
-| Brückenkörper (Überbau, Widerlagerwände) für Autobahn-Brückenpaare über Straßen (Italia-DLC) | umgesetzt, im Spiel noch nicht geprüft |
+| Brückenkörper (Überbau, Widerlager, Brüstung) für alle Brücken: SCS-Brückenmodelle je Straßentyp, breite Autobahnpaare Italia-DLC | umgesetzt, im Spiel noch nicht geprüft |
 | Sichtstücke: Straßen höherer Stufen unter/über Brücken und unmittelbar neben der Strecke | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
-| Brückenkörper für andere Brücken, Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
+| Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
 
 ### Flächiges Gelände
@@ -87,8 +87,18 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
   Gegenfahrbahn hin um den halben Abstand + 2 m versetzt wie in der SCS-Karte (11 + 2 m). Es bringt
   Überbau und Widerlagerwände; die Brücke des Trägers wird ein einziges Straßenstück, damit die
   Wände an ihren Enden sitzen. Für Karten ohne Italia `bridge_body` aus `mapping.jsonc` entfernen.
-  Alle anderen Brücken haben weiterhin keinen Körper: von unten ist die Fahrbahn durchsichtig
-  (ETS2-Straßen haben keine Unterseite), über Tälern zeigt sich das Ende des Straßengeländes als Kante.
+- Alle übrigen Brücken bekommen je Straßentyp ein Brückenmodell der SCS-Karte mit Überbau,
+  Widerlagern und Brüstung (`bridge_bodies` in `mapping.jsonc`; dann ohne `mod_ger_3`):
+  `ger13` → `dlc_no_5` (`shared_2lanes_x_1way`), `ger16`/`ger17` → `dlc_no_4`
+  (`shared_3lanes_x_1way`), jeweils links mit Versatz 0; `ger2` → `dlc_no_14` (`shared_hw_exit`)
+  rechts; alle anderen bis 11 m Breite → `dlc_no_6` (`shared_simple`, damit baut auch das
+  SCS-Editor-Tutorial seine Brücke). Seite und Versatz sind aus den Modellmaßen abgeleitet (die
+  Brüstungen liegen dann 1,2–1,4 m außerhalb des Modellrands), im Spiel ungeprüft. Ob die
+  `dlc_no_`-Modelle zum Grundspiel gehören, ist ungeprüft; gleich große Modelle des Grundspiels:
+  `92`, `128`, `13`. Gerade Brücken werden ein Straßenstück; Brücken mit Kuppe oder Kurve bleiben
+  mehrere Stücke – ob das Spiel dann auch an den Stückgrenzen Widerlager setzt, ist ungeprüft.
+  Ohne Körper: Brücken unter einem Anschluss-Prefab und über 200 m. Der Überbau ist 1,6 m dick
+  (`dlc_it_8` 1,9 m); bei 5,8–6,0 m Höhenunterschied der Fahrbahnen bleiben darunter 4,2–4,4 m.
 - Unterschiedlich hohe Brückenpaare (A 70 über der B 85: 1,1 m): die höhere Fahrbahn liegt über dem
   Körper der tieferen.
 - Geländerabstand (1 m außerhalb des Modellrands) und Modellbreite von `ger17` sind geschätzt.

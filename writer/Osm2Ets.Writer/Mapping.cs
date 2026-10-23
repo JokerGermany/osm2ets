@@ -25,6 +25,8 @@ public sealed class MappingConfig
     public StyleSpec? Visible { get; set; }
     /// <summary>Brückenkörper für Paare paralleler Autobahnbrücken über Straßen (siehe BridgeBodies).</summary>
     public BridgeBodySpec? BridgeBody { get; set; }
+    /// <summary>Brückenkörper je Straßentyp für alle übrigen Brücken ("*" = alle anderen Typen).</summary>
+    public Dictionary<string, BridgeBodyType>? BridgeBodies { get; set; }
     public MapSpec Map { get; set; } = new();
 
     // Strenger als beim Zwischenformat: unbekannte Felder (Tippfehler) sind Fehler.
@@ -66,11 +68,23 @@ public sealed class MappingConfig
         Restricted?.Validate("restricted", errors);
         Visible?.Validate("visible", errors);
         BridgeBody?.Validate("bridge_body", errors);
+        foreach (var (type, b) in BridgeBodies ?? [])
+            b.Validate($"bridge_bodies.{type}", errors);
         if (errors.Count > 0)
             throw new InvalidDataException($"{source}:\n  " + string.Join("\n  ", errors));
     }
 
     public const string VisibleRole = "visible";
+
+    /// <summary>Brückenkörper für ein Brückenstück dieses Stils (Typ, sonst "*"), oder null.</summary>
+    public BridgeBodyType? BodyFor(ResolvedStyle style)
+    {
+        if (BridgeBodies is null) return null;
+        if (!BridgeBodies.TryGetValue(style.RoadType, out var b) && !BridgeBodies.TryGetValue("*", out b)) return null;
+        if (b.Railing.Length == 0) return null;
+        if (b.MaxWidth is float w && style.Width > w) return null;
+        return b;
+    }
 
     /// <summary>Bestimmt den Stil für ein Straßenstück mit den Attributen des Laufs.</summary>
     public ResolvedStyle Resolve(RunEntry run)
@@ -93,6 +107,28 @@ public sealed class MappingConfig
         if (run.Role == VisibleRole && Visible is not null)
             style = Visible.ToResolved(style);
         return style;
+    }
+}
+
+/// <summary>Brückenkörper (Railing mit Überbau, Widerlagern, Brüstung) für einen Straßentyp.</summary>
+public sealed class BridgeBodyType
+{
+    /// <summary>Railing-Token; leer = ohne Körper.</summary>
+    public string Railing { get; set; } = "";
+    /// <summary>Straßenseite, an der das Railing sitzt (das Modell ist zur Außenseite hin gespiegelt).</summary>
+    public string Side { get; set; } = "left";
+    /// <summary>Versatz ab der Straßenlinie (m).</summary>
+    public float Offset { get; set; }
+    /// <summary>Nur für Straßen bis zu dieser Modellbreite (m), z. B. weil die Brüstungen sonst auf der Fahrbahn stünden.</summary>
+    public float? MaxWidth { get; set; }
+    /// <summary>Das Modell hat eigene Brüstungen: kein zusätzliches Geländer.</summary>
+    public bool Parapet { get; set; } = true;
+
+    internal void Validate(string name, List<string> errors)
+    {
+        if (Railing.Length > 0) StyleSpec.CheckToken(Railing, $"{name}.railing", errors);
+        if (Side is not ("left" or "right")) errors.Add($"{name}.side: left oder right erwartet");
+        if (Offset is < -30 or > 30) errors.Add($"{name}.offset: −30–30 erwartet");
     }
 }
 
@@ -320,7 +356,9 @@ public sealed record ResolvedStyle(
     float RailingOffset = 1f,
     string? Body = null,
     float BodyOffset = 0f,
-    bool RailingLeft = true)
+    bool RailingLeft = true,
+    bool BodyRight = false,
+    bool BodyParapet = false)
 {
     /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
     public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;
