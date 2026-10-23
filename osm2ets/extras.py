@@ -715,10 +715,37 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
         comp_len[r] = comp_len.get(r, 0.0) + (b - a)
         comp_anchor[r] = comp_anchor.get(r, False) or anc
 
+    keep = [comp_anchor[find(i)] or comp_len[find(i)] >= min_m for i in range(len(pieces))]
+
+    # kurze Stummel ohne Kreuzung, die an einem Ende frei enden (offenes Ende oder Sackgasse),
+    # z. B. 11 m Feldweg an einer Einmündung zweier Sichtstücke: ihr Straßengelände stand als Keil
+    def ends(i):
+        ei, a, b, _ = pieces[i]
+        ids, _, cum = geo(ei)
+        return (ids[0] if a <= 0.0 else None), (ids[-1] if b >= cum[-1] else None)
+
+    for _ in range(3):
+        use: dict[int, int] = {}
+        for i in range(len(pieces)):
+            if keep[i]:
+                for n in ends(i):
+                    if n is not None:
+                        use[n] = use.get(n, 0) + 1
+        changed = False
+        for i, (ei, a, b, _) in enumerate(pieces):
+            if not keep[i] or b - a >= min_m or any(x < b and y > a for x, y in anchors.get(ei, [])):
+                continue
+            free = [n is None or (use.get(n, 0) <= 1 and n not in sel_nodes) for n in ends(i)]
+            if any(free) and not all(free):
+                keep[i] = False
+                stats["stubs"] = stats.get("stubs", 0) + 1
+                changed = True
+        if not changed:
+            break
+
     next_id = id_start
     for i, (ei, a, b, _) in enumerate(pieces):
-        r = find(i)
-        if not comp_anchor[r] and comp_len[r] < min_m:
+        if not keep[i]:
             stats["dropped"] += 1
             continue
         e = net.edges[ei]

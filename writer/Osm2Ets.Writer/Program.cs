@@ -21,6 +21,10 @@ public static class Program
                  Listet die Straßentypen (road_look) aus den .scs-Archiven, um mapping.jsonc zu füllen.
           prefabs --game <ETS2-Spielordner> [--filter <text>] [--all]
                  Listet Prefabs (/def/world/prefab*.sii) – z. B. Spurübergänge und Anschlussstellen.
+          railings --game <ETS2-Spielordner> [--filter <text>] [--all]
+                 Listet Railings (/def/world/railing*.sii) – z. B. Brückenkörper (--filter bridge).
+          models --game <ETS2-Spielordner> [--filter <text>] [--all]
+                 Listet Modelle (/def/world/model*.sii) – z. B. Brückenteile.
           extract --game <ETS2-Spielordner> --paths <datei mit Pfaden> --out <ordner>
                  Kopiert einzelne Dateien (z. B. /prefab2/…/x.ppd) aus den .scs-Archiven.
           info   --map <karte.mbd>
@@ -46,6 +50,8 @@ public static class Program
                 "write" => Write(opts),
                 "looks" => Looks(opts, "road_look"),
                 "prefabs" => Looks(opts, "prefab"),
+                "railings" => Looks(opts, "railing"),
+                "models" => Looks(opts, "model"),
                 "extract" => Extract(opts),
                 "info" => Info(opts),
                 _ => throw new UsageException($"Unbekannter Befehl '{args[0]}'"),

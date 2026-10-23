@@ -86,3 +86,14 @@ def test_short_tunnel_under_road_becomes_open_underpass():
     assert not any(r["tunnel"] for r in lower["runs"])
     assert upper["runs"][0]["from"] == 0 and upper["runs"][-1]["to"] == len(upper["points"]) - 1
     assert np.allclose([p[1] for p in upper["points"]], 10.0)
+
+
+def test_short_dangling_stub_is_dropped(tmp_path, profile):
+    """Ein 12-m-Feldweg, der vom Weg unter der Brücke abzweigt und gleich endet, entfällt – sein
+    Straßengelände stand sonst als Keil neben der Einmündung."""
+    nodes = {21: _pt(0, -600), 23: _pt(0, -45), 22: _pt(0, 600), 24: _pt(12, -45)}
+    ways = [(21, [21, 23, 22], {"highway": "service"}), (31, [23, 24], {"highway": "track"})]
+    _motorway(nodes, ways, bridge_x=0)
+    model = build(str(write_osm(tmp_path / "s.osm", nodes, ways)), profile, "L1")
+    ways_in = {w for r in _visible(model) for run in r["runs"] for w in run["osm_ways"]}
+    assert 21 in ways_in and 31 not in ways_in
