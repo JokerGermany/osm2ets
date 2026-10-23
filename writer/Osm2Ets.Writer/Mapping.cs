@@ -20,6 +20,9 @@ public sealed class MappingConfig
     public StyleSpec? Tunnel { get; set; }
     /// <summary>Überschreibt Werte auf Wegen ohne Kfz-Zugang (access=private|no), zusätzlich zur Regel.</summary>
     public StyleSpec? Restricted { get; set; }
+    /// <summary>Überschreibt Werte auf Sichtstücken (Rolle "visible": Straßen höherer Stufen, die man von der
+    /// Strecke aus sieht – nur ein Stück davon, mit offenem Ende), zusätzlich zur Regel.</summary>
+    public StyleSpec? Visible { get; set; }
     /// <summary>Brückenkörper für Paare paralleler Autobahnbrücken über Straßen (siehe BridgeBodies).</summary>
     public BridgeBodySpec? BridgeBody { get; set; }
     public MapSpec Map { get; set; } = new();
@@ -61,10 +64,13 @@ public sealed class MappingConfig
         Bridge?.Validate("bridge", errors);
         Tunnel?.Validate("tunnel", errors);
         Restricted?.Validate("restricted", errors);
+        Visible?.Validate("visible", errors);
         BridgeBody?.Validate("bridge_body", errors);
         if (errors.Count > 0)
             throw new InvalidDataException($"{source}:\n  " + string.Join("\n  ", errors));
     }
+
+    public const string VisibleRole = "visible";
 
     /// <summary>Bestimmt den Stil für ein Straßenstück mit den Attributen des Laufs.</summary>
     public ResolvedStyle Resolve(RunEntry run)
@@ -84,6 +90,8 @@ public sealed class MappingConfig
             style = Tunnel.ToResolved(style);
         if (run.Access is not null && Restricted is not null)
             style = Restricted.ToResolved(style);
+        if (run.Role == VisibleRole && Visible is not null)
+            style = Visible.ToResolved(style);
         return style;
     }
 }

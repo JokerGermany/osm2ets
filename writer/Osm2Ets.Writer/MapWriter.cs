@@ -60,6 +60,8 @@ public static class MapWriter
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
+        // Brückenläufe vor den Prefabs: Unterführungen auch unter Prefabs, die auf einer Brücke liegen
+        var bridgeShots = Underpasses.Snapshot(valid);
         var interchangePlans = new List<Interchanges.Plan>();
         Interchanges.OffsetOf = run => mapping.Resolve(run).Offset;
         if (prefabs is not null)
@@ -397,7 +399,7 @@ public static class MapWriter
         {
             // Unterführungen: unter Brücken über Straßen Gelände auf Höhe der unteren Straße,
             // Böschungen von den Brückenenden (wie in der SCS-Karte) – als Obergrenze des Rasters
-            var underpasses = Underpasses.Enabled ? Underpasses.Build(valid, styles, PrefabFootprint.All3(map)) : null;
+            var underpasses = Underpasses.Enabled ? Underpasses.Build(valid, styles, PrefabFootprint.All3(map), bridgeShots, mapping.Resolve) : null;
             tg2.Post = underpasses is { Count: > 0 } ? underpasses.Cap : null;
             if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null && underpasses is not null)
                 Console.Error.WriteLine("UNDERPASS " + string.Join(" ", underpasses.Ids));

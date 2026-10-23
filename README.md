@@ -36,6 +36,8 @@ v1–v46 (see commits).
 | 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
 | Underpasses: open terrain under bridges over roads, stone slopes, bridge railings | implemented, not yet checked in game |
 | Bridge body (deck, abutment walls) for twin motorway bridges over a road (Italia DLC) | implemented, not yet checked in game |
+| Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
+| Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Bridge bodies for other bridges, vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
 
@@ -79,7 +81,7 @@ Findings from editor tests that shaped this (useful if you work on it):
   close to some prefabs; fill rows run west–east and cannot follow diagonal gaps exactly.
 - Where a minor road is lowered under a motorway, the terrain beside it has no cut slope yet.
 - Bridge body: pairs of parallel motorway bridges over a road (starting and ending within 8 m of
-  each other, lines 12–30 m apart) get the railing `dlc_it_8`
+  each other, lines 18–30 m apart – the model is about 44 m wide) get the railing `dlc_it_8`
   (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia DLC**) on the lower
   carriageway, offset towards the other by half the distance + 2 m, as in the SCS map (11 + 2 m).
   It brings the deck and the abutment walls; the carrier's bridge becomes a single road item so
@@ -89,6 +91,16 @@ Findings from editor tests that shaped this (useful if you work on it):
 - Twin decks at different heights (A 70 over the B 85: 1.1 m): the upper carriageway runs above
   the body of the lower one.
 - Railing offset (1 m outside the model edge) and the model width of `ger17` are estimates.
+- Visible pieces next to the route: where a track or minor road runs close to the motorway at a
+  clearly different height, the road terrains meet with steps (test area L1: 577 instead of 41
+  edge points with a step above 1 m, 11 instead of 4 walls). The worst places (no 1 : 1.5 slope
+  fits between the edges) are left out by the pipeline; the ways end open there. Where a way passes
+  under a bridge at an angle, terrain partly covers the way's edge at the bridge ends.
+- A way that OSM maps as a short tunnel under a road (up to 80 m) becomes an open underpass: the
+  upper road gets a bridge section there (with railing). Longer tunnels stay tunnels without a
+  portal (the road disappears into the terrain).
+- Where a bridge lies under an interchange prefab, the writer opens the terrain below as under a
+  bridge; the prefab has no railing there, though.
 - Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
   of 1–3 m remain in a few places.
 - Junctions without a prefab: road piece between two junctions too short, or angle more
@@ -222,6 +234,18 @@ In addition, in every level (`extras` and `industry` in the profile):
 4. **Road ends continued**: where the selection ends but the road continues in OSM, the
    adjoining roads are included for 50 m (game metres), going straight on at further
    junctions. The road then ends open (`extras.end_extension_m`).
+5. **Visible pieces** (role `visible`): roads of higher levels that can be seen from the route –
+   so that e.g. in L1 the way a motorway bridge crosses lies under it, instead of a railing on
+   flat ground. Higher levels continue these roads.
+   - If such a road crosses a road of the level grade-separated (under a bridge, on a bridge
+     above, through a tunnel), 200 m on both sides of the crossing are included
+     (`extras.visible_crossing_m`), going straight on at junctions.
+   - Sections at most 60 m next to a road of the level (`extras.visible_near_m`): parallel ways,
+     branches at nodes of the network. Gaps up to 40 m are closed, isolated remains below 30 m
+     dropped, as are sections so much higher or lower that no 1 : 1.5 slope fits in between.
+   - Classes: everything L5 shows (`extras.visible_highway`). At motorway carriageways the pieces
+     end 15 m before (no at-grade junction). In the game: road type as usual, but not on the
+     map/GPS, GPS avoids, no AI traffic (`visible` in `mapping.jsonc`).
 
 L5 adds all ways. Ways without truck traffic get their own flags in the game
 (`mapping.jsonc`):
@@ -332,6 +356,11 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 3. 3-lane interchanges, left-hand ramps, motorway interchanges.
 4. Bridge models, terrain material/vegetation from OSM land use, higher-resolution DGM1.
 5. Larger areas: measure run time and memory for a federal state or all of Germany.
+6. Levels that build on each other: download L1, add L2 etc. for a denser network. For that,
+   L(n+1) must take over the roads of L(n) unchanged (same UIDs, heights, prefabs) and only
+   continue them; the visible pieces are the first step. Untested: how the game loads two map mods
+   with the same sector files (presumably the higher one replaces the lower one completely – then
+   an L2 package would have to bring the L1 content of its sectors along).
 
 ## Licences
 

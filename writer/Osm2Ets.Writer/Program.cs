@@ -149,10 +149,13 @@ public static class Program
                           $"leere .layer-Dateien angelegt: {layerFiles}");
         Console.WriteLine($"  Maßstab NormalScale={map.NormalScale:0.###} CityScale={map.CityScale:0.###}");
         Console.WriteLine($"  Startpunkt (Run Map): {result.StartPosition} auf {result.StartRoad ?? "-"}");
-        foreach (var w in result.Warnings.Take(50))
+        // Info-Zeilen (Zusammenfassungen) immer, danach höchstens 50 Einzelwarnungen
+        var infos = result.Warnings.Where(w => w.StartsWith("Info:")).ToList();
+        var others = result.Warnings.Where(w => !w.StartsWith("Info:")).ToList();
+        foreach (var w in infos.Concat(others.Take(50)))
             Console.WriteLine($"  Warnung: {w}");
-        if (result.Warnings.Count > 50)
-            Console.WriteLine($"  ... und {result.Warnings.Count - 50} weitere Warnungen");
+        if (others.Count > 50)
+            Console.WriteLine($"  ... und {others.Count - 50} weitere Warnungen");
 
         if (o.ContainsKey("--verify"))
         {

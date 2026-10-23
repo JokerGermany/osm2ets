@@ -78,6 +78,16 @@ def report_text(model: dict) -> str:
         "km im Spiel:   " + ", ".join(f"{k} {v:.2f}" for k, v in s["km_game_by_role"].items()),
         "nach Klasse:   " + ", ".join(f"{k} {v:.2f}" for k, v in s["km_game_by_highway"].items()),
         f"Echt-km:       {s['km_real_total']:.2f}",
+    ]
+    vis = s.get("visible_roads")
+    if vis:
+        lines.append(f"Sichtstücke:   {vis['crossings']} höhenfreie Kreuzungen mit {vis['ways']} Wegen höherer "
+                     f"Stufen, {vis['near_ways']} weitere Wege unmittelbar daneben (Rolle visible: "
+                     f"{vis['edges']} ganze Kanten, {vis['partial']} angeschnitten, {vis['dropped']} kurze Reste "
+                     f"weggelassen, {vis['kept_off']} Enden vor einer Fahrbahn zurückgenommen, "
+                     f"{vis.get('steep_m', 0) + (vis.get('trim') or {}).get('removed_m', 0)} m wegen zu großer "
+                     f"Höhenunterschiede ausgelassen)")
+    lines += [
         f"Knoten:        Kreuzungen {jk.get('junction', 0)}, Enden {jk.get('dead_end', 0)}, "
         f"Durchgänge {jk.get('through', 0)}",
         f"Segmente (m):  min {s['segment_m']['min']}, Median {s['segment_m']['median']}, "

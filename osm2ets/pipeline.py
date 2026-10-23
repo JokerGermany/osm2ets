@@ -61,8 +61,13 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     use_escape = bool(ext.get("escape"))
     via = frozenset(ext.get("via_highway", frozenset()))
     use_ends = float(ext.get("end_extension_m", 0)) > 0
+    vis_cross = float(ext.get("visible_crossing_m", 0)) * profile.scale_h   # Spielmeter → Echtmeter
+    vis_near = float(ext.get("visible_near_m", 0)) * profile.scale_h
+    vis_classes = (frozenset(ext.get("visible_highway", frozenset())) - lod.all_classes
+                   if vis_cross > 0 or vis_near > 0 else frozenset())
+    use_vis = bool(vis_classes)
     extra_classes = (via if use_links or use_ends else frozenset()) | (ind.get("highway", frozenset()) if use_ind else frozenset()) \
-        | (frozenset({"escape"}) if use_escape else frozenset())
+        | (frozenset({"escape"}) if use_escape else frozenset()) | vis_classes
     excl_service = lod.exclude_service if lod.exclude_service is not None else profile.exclude_service
     excl_access = lod.exclude_access if lod.exclude_access is not None else profile.exclude_access
     all_ways = read_ways(input_path, lod.all_classes | extra_classes, excl_access, excl_service)
@@ -71,8 +76,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     ways = [w for w in all_ways if w.tags.get("highway") in lod.all_classes]
     net = Network(ways, profile)
     selected = net.select(lod)
-    industry_stats = links_stats = escape_stats = services_stats = ends_stats = None
-    if use_ind or use_links or use_escape or use_ends:
+    industry_stats = links_stats = escape_stats = services_stats = ends_stats = vis_stats = None
+    if use_ind or use_links or use_escape or use_ends or use_vis:
         from .extras import escape_lanes, local_xy, same_level_links
         # alle Wege, damit an Einmündungen ins Netz geteilt wird; Netzwege selbst sind gesperrt
         net2 = Network(all_ways, profile)
@@ -141,6 +146,27 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         if ext_len > 0:
             from .extras import extend_ends
             ends_stats = extend_ends(net2, xy, loc, via | lod.all_classes, ext_len)
+        # 5. Straßen höherer Stufen, die man von der Strecke aus sieht (höhenfrei kreuzend oder
+        #    unmittelbar daneben)
+        if use_vis:
+            from .extras import visible_roads
+            end_parts = ends_stats["partial"] if ends_stats else []
+            end_loc = ends_stats["locations"] if ends_stats else {}
+            vis_loc = {**loc, **end_loc}
+            height = None
+            if dem_path and vis_near > 0:
+                # Geländemodell schon hier: Nahstücke nicht dort, wo sie viel höher/tiefer liegen
+                pr0 = Projector(profile.crs, profile.origin_lonlat)
+                ll = np.array(list(vis_loc.values()), float)
+                pxy = pr0.forward(ll[:, 0], ll[:, 1])
+                dem0 = DemSampler(dem_path, pr0, (float(pxy[:, 0].min()), float(pxy[:, 1].min()),
+                                                   float(pxy[:, 0].max()), float(pxy[:, 1].max())))
+
+                def height(lon, lat, _pr=pr0, _dem=dem0):
+                    return _dem.sample(_pr.forward(np.asarray(lon, float), np.asarray(lat, float)))
+            vis_stats = visible_roads(net2, local_xy(vis_loc), vis_loc, vis_classes, vis_cross, vis_near,
+                                      height=height, extra_edges=end_parts,
+                                      blocked=frozenset(ends_stats["partial_src"]) if ends_stats else frozenset())
         new = [e for e in net2.edges if e.role not in (None, "taken")]
         if new:
             # Netzkanten an den neuen Einmündungen teilen: Auswahl aus net2 übernehmen
@@ -154,11 +180,12 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                         resel.append(e)
                         break
             selected = resel + new
-        if ends_stats and ends_stats["partial"]:
-            top = max(e.idx for e in selected) + 1 if selected else 0
-            for k, e in enumerate(ends_stats["partial"]):
-                e.idx = top + k
-            selected = selected + ends_stats["partial"]
+        for st in (ends_stats, vis_stats):
+            if st and st["partial"]:
+                top = max(e.idx for e in selected) + 1 if selected else 0
+                for k, e in enumerate(st["partial"]):
+                    e.idx = top + k
+                selected = selected + st["partial"]
     chains = build_chains(selected)
     log.info("%d durchgehende Ketten", len(chains))
 
@@ -167,8 +194,9 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         needed.update(c.node_ids())
     log.info("Lese Koordinaten für %d Knoten ...", len(needed))
     locations = read_node_locations(input_path, {n for n in needed if n > 0})
-    if ends_stats:
-        locations.update(ends_stats["locations"])   # berechnete Endpunkte der Verlängerungen
+    for st in (ends_stats, vis_stats):
+        if st:
+            locations.update(st["locations"])   # berechnete Endpunkte (Verlängerungen, Sichtstücke)
 
     projector = Projector(profile.crs, profile.origin_lonlat)
     pieces = []
@@ -200,6 +228,9 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         dem = DemSampler(dem_path, projector, bounds)
     elevation_stats = apply_elevation(pieces, profile, dem)
     elevation_stats["aligned_points"] = aligned
+    if vis_stats and vis_near > 0:
+        from .extras import trim_steep_visible
+        vis_stats["trim"] = trim_steep_visible(pieces, vis_near, profile.scale_h)
 
     run_cache: dict[int, tuple] = {}
     kept, dropped_info = [], []
@@ -221,6 +252,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                            "Gebiet, Detailstufe und Maßstab prüfen")
 
     roads = [_road_dict(p) for p in kept]
+    implicit = implicit_bridges(roads)
     terrain_grid = None
     if dem is not None:
         from .terrain import build_grid
@@ -228,12 +260,17 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     junctions = _junctions(kept)
     stats = _stats(kept, roads, junctions, profile, dropped)
     stats["elevation"] = elevation_stats
+    stats["elevation"]["implicit_bridges"] = implicit
     stats["industry_access"] = industry_stats
     stats["same_level_links"] = links_stats
     stats["escape_lanes"] = escape_stats
     stats["services_access"] = services_stats
     stats["end_extensions"] = ({k: v for k, v in ends_stats.items() if k in ("ends", "edges")}
                                | {"partial": len(ends_stats["partial"])}) if ends_stats else None
+    stats["visible_roads"] = ({k: v for k, v in vis_stats.items()
+                               if k in ("crossings", "ways", "near_ways", "edges", "dropped", "kept_off", "steep_m",
+                                        "trim")}
+                                  | {"partial": len(vis_stats["partial"])}) if vis_stats else None
     crossings = crossing_clearances(roads)
     low = [c for c in crossings if c["clearance_m"] < MIN_CLEARANCE_M]
     stats["grade_separated_crossings"] = len(crossings)
@@ -295,6 +332,125 @@ def _road_dict(p) -> dict:
         "points": pts.tolist(),
         "runs": r.runs,
     }
+
+
+# Unterführungen, die OSM als Tunnel der unteren Straße erfasst
+IMPLICIT_MAX_TUNNEL_M = 80.0    # längere Tunnel liegen unter einem Berg – keine Unterführung
+IMPLICIT_MAX_CLEAR_M = 15.0
+IMPLICIT_HALF_M = 4.0           # halbe Breite der unteren Straße (etwa)
+IMPLICIT_SHOULDER_M = 1.5       # flach neben ihr (wie Underpasses.Shoulder im Writer)
+IMPLICIT_SLOPE = 0.67           # Böschung unter der Brücke bis an die Brückenenden (1 : 1,5)
+IMPLICIT_MAX_HALF_M = 25.0
+
+
+def implicit_bridges(roads: list[dict]) -> int:
+    """Unterführungen, die OSM als kurzen Tunnel der unteren Straße erfasst (die obere ist dort
+    keine Brücke): Die obere Straße wird über dem Tunnel zur Brücke (Punkte eingefügt, Lauf
+    geteilt, bridge=True) – so baut der Writer darunter eine offene Unterführung wie unter jeder
+    Brücke über eine Straße. Sonst lief die untere Straße in den Damm, das Gelände lag bis zu 3 m
+    über ihr. Die Brücke reicht beiderseits so weit, dass die Böschung (1 : 1,5) vom Brückenende bis
+    neben die untere Straße Platz hat; deren Tunnelabschnitt wird ein normaler Abschnitt (offen,
+    mit Straßengelände). Nur Tunnel bis IMPLICIT_MAX_TUNNEL_M mit 3 m bis IMPLICIT_MAX_CLEAR_M
+    Höhenabstand.
+    Gibt die Zahl der neuen Brückenabschnitte zurück."""
+    low = []
+    for r in roads:
+        P = np.asarray(r["points"], float)
+        for run in r["runs"]:
+            if not run["tunnel"]:
+                continue
+            Q = P[run["from"]:run["to"] + 1]
+            if float(np.hypot(*np.diff(Q[:, [0, 2]], axis=0).T).sum()) > IMPLICIT_MAX_TUNNEL_M:
+                continue
+            for i in range(run["from"], run["to"]):
+                low.append((r["id"], P[i], P[i + 1], run))
+    if not low:
+        return 0
+    opened: list[dict] = []
+    added = 0
+    for r in roads:
+        P = np.asarray(r["points"], float)
+        cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(P[:, [0, 2]], axis=0).T))])
+        seg_run = [None] * (len(P) - 1)
+        for run in r["runs"]:
+            for i in range(run["from"], run["to"]):
+                seg_run[i] = run
+        spans = []
+        for i in range(len(P) - 1):
+            run = seg_run[i]
+            if run is None or run["bridge"] or run["tunnel"]:
+                continue
+            a, b = P[i][[0, 2]], P[i + 1][[0, 2]]
+            for lid, c3, d3, lrun in low:
+                if lid == r["id"]:
+                    continue
+                c, d = c3[[0, 2]], d3[[0, 2]]
+                ab, cd = b - a, d - c
+                den = ab[0] * cd[1] - ab[1] * cd[0]
+                if abs(den) < 1e-9:
+                    continue
+                t = ((c[0] - a[0]) * cd[1] - (c[1] - a[1]) * cd[0]) / den
+                u = ((c[0] - a[0]) * ab[1] - (c[1] - a[1]) * ab[0]) / den
+                if not (0.0 < t < 1.0 and 0.0 < u < 1.0):
+                    continue
+                clear = (P[i][1] + t * (P[i + 1][1] - P[i][1])) - (c3[1] + u * (d3[1] - c3[1]))
+                if not (3.0 <= clear <= IMPLICIT_MAX_CLEAR_M):
+                    continue
+                sin = max(0.3, abs(den) / (np.hypot(*ab) * np.hypot(*cd)))
+                # Brücke so lang, dass die Böschung vom Brückenende bis neben die untere Straße passt
+                half = min(IMPLICIT_HALF_M / sin + IMPLICIT_SHOULDER_M + clear / IMPLICIT_SLOPE, IMPLICIT_MAX_HALF_M)
+                sc = cum[i] + t * (cum[i + 1] - cum[i])
+                spans.append((max(sc - half, 0.0), min(sc + half, cum[-1])))
+                opened.append(lrun)
+        if not spans:
+            continue
+        spans.sort()
+        merged = [list(spans[0])]
+        for s0, s1 in spans[1:]:
+            if s0 <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], s1)
+            else:
+                merged.append([s0, s1])
+        pts = [list(map(float, p)) for p in P]
+        seg_attr = [dict(run) for run in seg_run]   # je Segment eine Kopie des Laufs
+        for s0, s1 in merged:
+            idx = []
+            for s in (s0, s1):
+                cum_now = np.concatenate([[0.0], np.cumsum([np.hypot(pts[k + 1][0] - pts[k][0], pts[k + 1][2] - pts[k][2])
+                                                            for k in range(len(pts) - 1)])])
+                k = int(np.searchsorted(cum_now, s, side="right") - 1)
+                k = min(max(k, 0), len(pts) - 2)
+                if s - cum_now[k] < 2.0:
+                    idx.append(k)
+                elif cum_now[k + 1] - s < 2.0:
+                    idx.append(k + 1)
+                else:
+                    f = (s - cum_now[k]) / (cum_now[k + 1] - cum_now[k])
+                    q = [pts[k][j] + f * (pts[k + 1][j] - pts[k][j]) for j in range(3)]
+                    pts.insert(k + 1, q)
+                    seg_attr.insert(k + 1, dict(seg_attr[k]))
+                    idx.append(k + 1)
+            i0, i1 = idx
+            if i1 <= i0:
+                continue
+            for k in range(i0, i1):
+                seg_attr[k] = dict(seg_attr[k], bridge=True, layer=max(int(seg_attr[k].get("layer") or 0), 1))
+            added += 1
+        runs = []
+        for k, attr in enumerate(seg_attr):
+            base = {key: v for key, v in attr.items() if key not in ("from", "to")}
+            if runs and {key: v for key, v in runs[-1].items() if key not in ("from", "to")} == base:
+                runs[-1]["to"] = k + 1
+            else:
+                runs.append(dict(base, **{"from": k, "to": k + 1}))
+        r["points"] = [[round(v, 3) for v in p] for p in pts]
+        r["runs"] = runs
+    # die untere Straße liegt jetzt offen unter der Brücke: kein Tunnel mehr (Straßengelände wie sonst)
+    for run in opened:
+        run["tunnel"] = False
+    if added:
+        log.info("Unterführungen unter kurzen Tunneln: %d Brückenabschnitte über dem Tunnel", added)
+    return added
 
 
 def _heading(a, b) -> float:

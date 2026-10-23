@@ -36,6 +36,8 @@ v1–v46 (siehe Commits).
 | 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
 | Unterführungen: offenes Gelände unter Brücken über Straßen, Steinböschungen, Brückengeländer | umgesetzt, im Spiel noch nicht geprüft |
 | Brückenkörper (Überbau, Widerlagerwände) für Autobahn-Brückenpaare über Straßen (Italia-DLC) | umgesetzt, im Spiel noch nicht geprüft |
+| Sichtstücke: Straßen höherer Stufen unter/über Brücken und unmittelbar neben der Strecke | umgesetzt, im Spiel noch nicht geprüft |
+| Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Brückenkörper für andere Brücken, Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
 
@@ -80,7 +82,7 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
   und an manchen Prefabs; die Füllreihen laufen West-Ost und folgen schrägen Lücken nicht genau.
 - Wo eine untergeordnete Straße unter einer Autobahn abgesenkt wird, fehlt noch die Einschnittsböschung.
 - Brückenkörper: Paare paralleler Autobahnbrücken über eine Straße (Anfang und Ende höchstens 8 m
-  versetzt, Linien 12–30 m auseinander) bekommen an der tieferen Richtungsfahrbahn das Railing
+  versetzt, Linien 18–30 m auseinander – das Modell ist rund 44 m breit) bekommen an der tieferen Richtungsfahrbahn das Railing
   `dlc_it_8` (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia-DLC**), zur
   Gegenfahrbahn hin um den halben Abstand + 2 m versetzt wie in der SCS-Karte (11 + 2 m). Es bringt
   Überbau und Widerlagerwände; die Brücke des Trägers wird ein einziges Straßenstück, damit die
@@ -90,6 +92,16 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Unterschiedlich hohe Brückenpaare (A 70 über der B 85: 1,1 m): die höhere Fahrbahn liegt über dem
   Körper der tieferen.
 - Geländerabstand (1 m außerhalb des Modellrands) und Modellbreite von `ger17` sind geschätzt.
+- Sichtstücke neben der Strecke: Wo ein Feldweg oder eine Nebenstraße dicht neben der Autobahn
+  deutlich höher oder tiefer liegt, stoßen die Straßengelände mit Stufen aneinander (Testgebiet L1:
+  577 statt 41 Randpunkte mit mehr als 1 m Stufe, 11 statt 4 Wände). Die ärgsten Stellen (keine
+  Böschung 1 : 1,5 zwischen den Rändern möglich) lässt die Pipeline aus; dort enden die Wege offen.
+  An schräg unterquerenden Wegen ragt das Gelände an den Brückenenden teils über den Wegrand.
+- Ein Weg, der in OSM als kurzer Tunnel unter einer Straße liegt (bis 80 m), wird zur offenen
+  Unterführung: die obere Straße bekommt dort einen Brückenabschnitt (mit Geländer). Längere Tunnel
+  bleiben Tunnel ohne Portal (die Straße verschwindet im Gelände).
+- Liegt eine Brücke unter einem Anschluss-Prefab, öffnet der Writer das Gelände darunter wie unter
+  einer Brücke; das Prefab hat dort aber kein Geländer.
 - Wo Straßengelände zweier deutlich verschieden hoher Straßen aneinanderstößt (dichte
   Anschlussstellen), bleiben an wenigen Stellen Stufen von 1–3 m.
 - Kreuzungen ohne Prefab: Straßenstück zwischen zwei Kreuzungen zu kurz oder Winkel mehr als
@@ -222,6 +234,19 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
    weitergeht, werden die anschließenden Straßen 50 m (Spielmeter) mitgenommen, an
    weiteren Abzweigen nur geradeaus. Danach endet die Straße offen
    (`extras.end_extension_m`).
+5. **Sichtstücke** (Rolle `visible`): Straßen höherer Stufen, die man von der Strecke aus
+   sieht – damit z. B. unter einer Autobahnbrücke auch in L1 der Weg liegt, über den sie führt,
+   statt eines Geländers auf ebenem Boden. Höhere Stufen setzen diese Straßen fort.
+   - Kreuzt eine solche Straße eine Straße der Stufe höhenfrei (unter einer Brücke, auf einer
+     Brücke darüber, durch einen Tunnel), wird sie beiderseits der Kreuzung 200 m mitgenommen
+     (`extras.visible_crossing_m`), an Abzweigen nur geradeaus.
+   - Abschnitte höchstens 60 m neben einer Straße der Stufe (`extras.visible_near_m`):
+     Parallelwege, Abzweige an Knoten des Netzes. Lücken bis 40 m werden geschlossen,
+     freistehende Reste unter 30 m entfallen, ebenso Abschnitte, die so viel höher oder tiefer
+     liegen, dass keine Böschung 1 : 1,5 dazwischen passt.
+   - Klassen: alles, was L5 zeigt (`extras.visible_highway`). An Autobahnfahrbahnen enden die
+     Stücke 15 m davor (keine ebenerdige Einmündung). Im Spiel: Straßentyp wie sonst, aber nicht
+     auf Karte/Navi, Navi meidet, kein KI-Verkehr (`visible` in `mapping.jsonc`).
 
 In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Schalter
 (`mapping.jsonc`):
@@ -334,6 +359,11 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
 3. 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze.
 4. Brückenmodelle, Geländematerial/Bewuchs aus OSM-Landnutzung, höher aufgelöstes DGM1.
 5. Größere Gebiete: Laufzeit und Speicher für ein Bundesland oder ganz Deutschland messen.
+6. Stufen, die aufeinander aufbauen: L1 herunterladen, für ein dichteres Netz L2 usw. dazupacken.
+   Dafür muss L(n+1) die Straßen von L(n) unverändert übernehmen (gleiche UIDs, Höhen, Prefabs) und
+   nur fortsetzen; die Sichtstücke sind der erste Schritt. Ungeprüft ist, wie das Spiel zwei
+   Kartenmods mit denselben Sektordateien lädt (vermutlich ersetzt die höhere die niedrigere ganz –
+   dann müsste ein L2-Paket den L1-Inhalt seiner Sektoren mitbringen).
 
 ## Lizenzen
 

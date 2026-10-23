@@ -108,6 +108,13 @@ static void MappingResolve()
     var other = cfg.Resolve(MakeRun(0, 1, "tertiary", role: "core"));
     Check(other.TerrainLeft == 20 && other.Resolution == RoadResolution.HighPoly, "Standard");
     Check(cfg.Resolve(MakeRun(0, 1, "motorway", oneway: true)) == mw, "Wertgleichheit der Stile");
+    // Sichtstück (Straße einer höheren Stufe mit offenem Ende): Typ nach Klasse, aber ohne KI/Navi/Karte
+    var vis = cfg.Resolve(MakeRun(0, 1, "track", role: "visible"));
+    var track = cfg.Resolve(MakeRun(0, 1, "track", role: "core"));
+    Check(vis.RoadType == track.RoadType, "Sichtstück behält Straßentyp");
+    Check(vis.AiVehicles == false && vis.ShowInUiMap == false && vis.GpsAvoid == true, "Sichtstück ohne KI, nicht auf Karte/Navi");
+    var visRes = cfg.Resolve(MakeRun(0, 1, "unclassified", role: "visible"));
+    Check(visRes.AiVehicles == false && visRes.RoadType == other.RoadType, "Sichtstück einer Gemeindestraße");
 }
 
 static void MappingRejectsInvalid()

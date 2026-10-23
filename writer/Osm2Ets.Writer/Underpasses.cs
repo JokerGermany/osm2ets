@@ -62,11 +62,33 @@ public sealed class Underpasses
     public IEnumerable<string> Ids => spans.Select(x => x.Id);
     public int Paved { get; private set; }
 
-    public static Underpasses Build(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles, List<Vector3> prefabLanes)
+    /// <summary>Brückenlauf vor dem Setzen der Anschluss-Prefabs (Punkte kopiert).</summary>
+    public sealed record BridgeShot(RoadEntry Road, RunEntry Run, List<Vector3> P);
+
+    /// <summary>
+    /// Brückenläufe merken, bevor Anschluss-Prefabs Teile der Straßen ersetzen. Liegt eine Brücke
+    /// unter einem Prefab (z. B. Einmündung einer Rampe auf der Brücke), gibt es dort keinen
+    /// Brückenlauf mehr – die Unterführung darunter entsteht aus diesem Abbild.
+    /// </summary>
+    public static List<BridgeShot> Snapshot(List<RoadEntry> roads)
+    {
+        var res = new List<BridgeShot>();
+        foreach (var r in roads)
+        {
+            if (MapWriter.Validate(r, out var p, out _) is not null) continue;
+            foreach (var run in r.Runs.Where(x => x.Bridge && x.To > x.From))
+                res.Add(new BridgeShot(r, run, p.GetRange(run.From, run.To - run.From + 1).ToList()));
+        }
+        return res;
+    }
+
+    public static Underpasses Build(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles, List<Vector3> prefabLanes,
+                                    List<BridgeShot>? shots = null, Func<RunEntry, ResolvedStyle>? resolve = null)
     {
         var u = new Underpasses();
         var segs = new List<(RoadEntry R, Vector3 A, Vector3 B, float Hw, bool Bridge)>();
         var pts = new Dictionary<RoadEntry, List<Vector3>>();
+        var bridgeSegs = new List<(Vector2 A, Vector2 B)>();
         foreach (var r in roads)
         {
             if (MapWriter.Validate(r, out var p, out var ros) is not null || !styles.TryGetValue(r, out var st)) continue;
@@ -77,6 +99,7 @@ public sealed class Underpasses
                 var run = r.Runs[ros[i]];
                 // halbe Breite um die Linie: der weitere der beiden Modellränder
                 segs.Add((r, p[i], p[i + 1], sty.Width / 2 + MathF.Abs(sty.ModelCenter), run.Bridge || run.Tunnel));
+                if (run.Bridge) bridgeSegs.Add((new Vector2(p[i].X, p[i].Z), new Vector2(p[i + 1].X, p[i + 1].Z)));
             }
         }
         foreach (var r in roads)
@@ -87,13 +110,6 @@ public sealed class Underpasses
             {
                 int n = run.To - run.From + 1;
                 if (n < 2) continue;
-                var P = new Vector2[n]; var Y = new float[n]; var C = new float[n];
-                for (int k = 0; k < n; k++)
-                {
-                    var q = p[run.From + k];
-                    P[k] = new Vector2(q.X, q.Z); Y[k] = q.Y;
-                    if (k > 0) C[k] = C[k - 1] + Vector2.Distance(P[k - 1], P[k]);
-                }
                 float left = 0, right = 0;
                 for (int i = run.From; i < run.To; i++)
                 {
@@ -101,56 +117,126 @@ public sealed class Underpasses
                     left = MathF.Max(left, sty.Width / 2 - sty.ModelCenter);
                     right = MathF.Max(right, sty.Width / 2 + sty.ModelCenter);
                 }
-                var sp = new Span { Id = $"{r.Id}[{run.From}-{run.To}]", P = P, Y = Y, Cum = C, Left = left + SideMargin, Right = right + SideMargin };
-                // untere Straßen: Schnitt der Linien in der Draufsicht
-                foreach (var o in segs)
-                {
-                    if (ReferenceEquals(o.R, r)) continue;
-                    var a = new Vector2(o.A.X, o.A.Z); var b = new Vector2(o.B.X, o.B.Z);
-                    for (int k = 0; k < n - 1; k++)
-                    {
-                        if (!Cross(P[k], P[k + 1], a, b, out float t, out float w)) continue;
-                        float yb = Y[k] + (Y[k + 1] - Y[k]) * t, yl = o.A.Y + (o.B.Y - o.A.Y) * w;
-                        if (yb - yl < MinClear) continue;
-                        var d1 = Vector2.Normalize(P[k + 1] - P[k]); var d2 = Vector2.Normalize(b - a);
-                        float sin = MathF.Max(0.3f, MathF.Abs(d1.X * d2.Y - d1.Y * d2.X));
-                        sp.Lower.Add((C[k] + (C[k + 1] - C[k]) * t, yl, o.Hw / sin));
-                    }
-                }
-                // Prefab-Spuren unter der Brücke (je Meter längs die tiefste)
-                var byS = new Dictionary<int, float>();
-                foreach (var l in prefabLanes)
-                {
-                    if (!Project(sp, new Vector2(l.X, l.Z), out float s0, out float v0, out float yd)) continue;
-                    if (v0 < -sp.Left || v0 > sp.Right || yd - l.Y < MinClear) continue;
-                    int key = (int)MathF.Round(s0);
-                    byS[key] = byS.TryGetValue(key, out var y0) ? MathF.Min(y0, l.Y) : l.Y;
-                }
-                foreach (var (key, y) in byS) sp.Lower.Add((key, y, 3f));
-                if (sp.Lower.Count == 0) continue;   // Brücke über Tal/Fluss: nichts tun
-                // Böschung je Ende: muss vom Brückenende bis an die flache Sohle reichen
-                var first = sp.Lower.MinBy(x => x.S - x.W);
-                var last = sp.Lower.MaxBy(x => x.S + x.W);
-                sp.SlopeA = SlopeFor(Y[0] - DeckDrop - (first.Y - FloorDrop), first.S - first.W - Shoulder);
-                sp.SlopeB = SlopeFor(Y[^1] - DeckDrop - (last.Y - FloorDrop), sp.Len - (last.S + last.W) - Shoulder);
-                float floor = sp.Lower.Min(x => x.Y) - FloorDrop;
-                sp.Reach = MathF.Max(0, (Y.Max() + 2f - floor) / Slope);
-                float pad = MathF.Max(sp.Left, sp.Right) + sp.Reach;
-                sp.Min = new Vector2(P.Min(q => q.X), P.Min(q => q.Y)) - new Vector2(pad);
-                sp.Max = new Vector2(P.Max(q => q.X), P.Max(q => q.Y)) + new Vector2(pad);
-                foreach (var o in segs)
-                {
-                    if (o.Bridge) continue;
-                    var a = new Vector2(o.A.X, o.A.Z); var b = new Vector2(o.B.X, o.B.Z);
-                    float rr = o.Hw + Shoulder + (Y.Max() + 2f - floor) / Slope;
-                    if (MathF.Max(a.X, b.X) < sp.Min.X - rr || MathF.Min(a.X, b.X) > sp.Max.X + rr ||
-                        MathF.Max(a.Y, b.Y) < sp.Min.Y - rr || MathF.Min(a.Y, b.Y) > sp.Max.Y + rr) continue;
-                    sp.Support.Add((a, b, o.A.Y, o.B.Y, o.Hw));
-                }
-                u.spans.Add(sp);
+                u.TryAdd($"{r.Id}[{run.From}-{run.To}]", r, p.GetRange(run.From, n), left, right, segs, prefabLanes);
+            }
+        }
+        // Brückenteile, die ein Anschluss-Prefab übernommen hat: kein Brückenlauf mehr in der Nähe
+        if (shots is not null && resolve is not null)
+        {
+            foreach (var sh in shots)
+            {
+                var sty = resolve(sh.Run);
+                float left = sty.Width / 2 - sty.ModelCenter, right = sty.Width / 2 + sty.ModelCenter;
+                foreach (var part in Uncovered(sh.P, bridgeSegs, 2.5f, 4f))
+                    u.TryAdd($"{sh.Road.Id}[{sh.Run.From}-{sh.Run.To}]/Prefab", sh.Road, part, left, right, segs, prefabLanes);
             }
         }
         return u;
+    }
+
+    /// <summary>Teilstücke der Linie, die weiter als <paramref name="tol"/> von jedem Segment entfernt
+    /// liegen (je Meter geprüft), mindestens <paramref name="minLen"/> lang.</summary>
+    private static List<List<Vector3>> Uncovered(List<Vector3> line, List<(Vector2 A, Vector2 B)> cover, float tol, float minLen)
+    {
+        var res = new List<List<Vector3>>();
+        List<Vector3>? cur = null;
+        float curLen = 0;
+        for (int i = 0; i < line.Count - 1; i++)
+        {
+            var a = line[i]; var b = line[i + 1];
+            float len = Vector2.Distance(new Vector2(a.X, a.Z), new Vector2(b.X, b.Z));
+            int n = Math.Max(1, (int)MathF.Ceiling(len));
+            for (int k = 0; k <= n; k++)
+            {
+                if (k == 0 && i > 0) continue;
+                var q = Vector3.Lerp(a, b, k / (float)n);
+                var q2 = new Vector2(q.X, q.Z);
+                bool covered = cover.Any(c => DistSeg(q2, c.A, c.B) <= tol);
+                if (!covered)
+                {
+                    if (cur is null) { cur = [q]; curLen = 0; }
+                    else { curLen += Vector2.Distance(new Vector2(cur[^1].X, cur[^1].Z), q2); cur.Add(q); }
+                }
+                else if (cur is not null)
+                {
+                    if (curLen >= minLen && cur.Count >= 2) res.Add(cur);
+                    cur = null;
+                }
+            }
+        }
+        if (cur is not null && curLen >= minLen && cur.Count >= 2) res.Add(cur);
+        return res;
+    }
+
+    private static float DistSeg(Vector2 q, Vector2 a, Vector2 b)
+    {
+        var ab = b - a;
+        float l2 = ab.LengthSquared();
+        float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1) : 0;
+        return Vector2.Distance(q, a + ab * t);
+    }
+
+    /// <summary>Unterführung unter einer Brücke (Linie <paramref name="line"/>, Modellränder links/rechts),
+    /// wenn eine Straße oder Prefab-Spur mindestens <see cref="MinClear"/> tiefer kreuzt.</summary>
+    private void TryAdd(string id, RoadEntry self, List<Vector3> line, float left, float right,
+                        List<(RoadEntry R, Vector3 A, Vector3 B, float Hw, bool Bridge)> segs, List<Vector3> prefabLanes)
+    {
+        int n = line.Count;
+        if (n < 2) return;
+        var P = new Vector2[n]; var Y = new float[n]; var C = new float[n];
+        for (int k = 0; k < n; k++)
+        {
+            var q = line[k];
+            P[k] = new Vector2(q.X, q.Z); Y[k] = q.Y;
+            if (k > 0) C[k] = C[k - 1] + Vector2.Distance(P[k - 1], P[k]);
+        }
+        var sp = new Span { Id = id, P = P, Y = Y, Cum = C, Left = left + SideMargin, Right = right + SideMargin };
+        // untere Straßen: Schnitt der Linien in der Draufsicht
+        foreach (var o in segs)
+        {
+            if (ReferenceEquals(o.R, self)) continue;
+            var a = new Vector2(o.A.X, o.A.Z); var b = new Vector2(o.B.X, o.B.Z);
+            for (int k = 0; k < n - 1; k++)
+            {
+                if (!Cross(P[k], P[k + 1], a, b, out float t, out float w)) continue;
+                float yb = Y[k] + (Y[k + 1] - Y[k]) * t, yl = o.A.Y + (o.B.Y - o.A.Y) * w;
+                if (yb - yl < MinClear) continue;
+                var d1 = Vector2.Normalize(P[k + 1] - P[k]); var d2 = Vector2.Normalize(b - a);
+                float sin = MathF.Max(0.3f, MathF.Abs(d1.X * d2.Y - d1.Y * d2.X));
+                sp.Lower.Add((C[k] + (C[k + 1] - C[k]) * t, yl, o.Hw / sin));
+            }
+        }
+        // Prefab-Spuren unter der Brücke (je Meter längs die tiefste)
+        var byS = new Dictionary<int, float>();
+        foreach (var l in prefabLanes)
+        {
+            if (!Project(sp, new Vector2(l.X, l.Z), out float s0, out float v0, out float yd)) continue;
+            if (v0 < -sp.Left || v0 > sp.Right || yd - l.Y < MinClear) continue;
+            int key = (int)MathF.Round(s0);
+            byS[key] = byS.TryGetValue(key, out var y0) ? MathF.Min(y0, l.Y) : l.Y;
+        }
+        foreach (var (key, y) in byS) sp.Lower.Add((key, y, 3f));
+        if (sp.Lower.Count == 0) return;   // Brücke über Tal/Fluss: nichts tun
+        // Böschung je Ende: muss vom Brückenende bis an die flache Sohle reichen
+        var first = sp.Lower.MinBy(x => x.S - x.W);
+        var last = sp.Lower.MaxBy(x => x.S + x.W);
+        sp.SlopeA = SlopeFor(Y[0] - DeckDrop - (first.Y - FloorDrop), first.S - first.W - Shoulder);
+        sp.SlopeB = SlopeFor(Y[^1] - DeckDrop - (last.Y - FloorDrop), sp.Len - (last.S + last.W) - Shoulder);
+        float floor = sp.Lower.Min(x => x.Y) - FloorDrop;
+        sp.Reach = MathF.Max(0, (Y.Max() + 2f - floor) / Slope);
+        float pad = MathF.Max(sp.Left, sp.Right) + sp.Reach;
+        sp.Min = new Vector2(P.Min(q => q.X), P.Min(q => q.Y)) - new Vector2(pad);
+        sp.Max = new Vector2(P.Max(q => q.X), P.Max(q => q.Y)) + new Vector2(pad);
+        foreach (var o in segs)
+        {
+            if (o.Bridge) continue;
+            var a = new Vector2(o.A.X, o.A.Z); var b = new Vector2(o.B.X, o.B.Z);
+            float rr = o.Hw + Shoulder + (Y.Max() + 2f - floor) / Slope;
+            if (MathF.Max(a.X, b.X) < sp.Min.X - rr || MathF.Min(a.X, b.X) > sp.Max.X + rr ||
+                MathF.Max(a.Y, b.Y) < sp.Min.Y - rr || MathF.Min(a.Y, b.Y) > sp.Max.Y + rr) continue;
+            sp.Support.Add((a, b, o.A.Y, o.B.Y, o.Hw));
+        }
+        spans.Add(sp);
     }
 
     private static float SlopeFor(float drop, float room)

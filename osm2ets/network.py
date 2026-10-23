@@ -27,7 +27,10 @@ log = logging.getLogger(__name__)
 ROLE_CORE = "core"
 ROLE_LINK = "link"
 ROLE_CONNECTOR = "connector"
-_ROLE_RANK = {ROLE_CORE: 0, ROLE_LINK: 1, ROLE_CONNECTOR: 2}
+# Straße einer höheren Stufe, die eine Straße der Stufe höhenfrei kreuzt oder unmittelbar
+# daneben liegt – nur das Stück, das man von dort aus sieht (extras.visible_roads)
+ROLE_VISIBLE = "visible"
+_ROLE_RANK = {ROLE_CORE: 0, ROLE_LINK: 1, ROLE_CONNECTOR: 2, ROLE_VISIBLE: 3}
 
 
 def oneway_sign(tags: dict, implied: frozenset) -> int:
