@@ -112,9 +112,9 @@ static void MappingResolve()
     var vis = cfg.Resolve(MakeRun(0, 1, "track", role: "visible"));
     var track = cfg.Resolve(MakeRun(0, 1, "track", role: "core"));
     Check(vis.RoadType == track.RoadType, "Sichtstück behält Straßentyp");
-    Check(vis.AiVehicles == false && vis.ShowInUiMap == false && vis.GpsAvoid == true, "Sichtstück ohne KI, nicht auf Karte/Navi");
+    Check(vis.AiVehicles == track.AiVehicles && vis.ShowInUiMap == false && vis.GpsAvoid == true, "Sichtstück: KI wie sonst, nicht auf Karte/Navi");
     var visRes = cfg.Resolve(MakeRun(0, 1, "unclassified", role: "visible"));
-    Check(visRes.AiVehicles == false && visRes.RoadType == other.RoadType, "Sichtstück einer Gemeindestraße");
+    Check(visRes.AiVehicles != false && visRes.RoadType == other.RoadType, "Sichtstück einer Gemeindestraße mit KI");
 }
 
 static void MappingRejectsInvalid()

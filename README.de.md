@@ -246,7 +246,7 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
      liegen, dass keine Böschung 1 : 1,5 dazwischen passt.
    - Klassen: alles, was L5 zeigt (`extras.visible_highway`). An Autobahnfahrbahnen enden die
      Stücke 15 m davor (keine ebenerdige Einmündung). Im Spiel: Straßentyp wie sonst, aber nicht
-     auf Karte/Navi, Navi meidet, kein KI-Verkehr (`visible` in `mapping.jsonc`).
+     auf Karte/Navi, Navi meidet; KI-Verkehr wie sonst (`visible` in `mapping.jsonc`).
 
 In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Schalter
 (`mapping.jsonc`):

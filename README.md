@@ -245,7 +245,7 @@ In addition, in every level (`extras` and `industry` in the profile):
      dropped, as are sections so much higher or lower that no 1 : 1.5 slope fits in between.
    - Classes: everything L5 shows (`extras.visible_highway`). At motorway carriageways the pieces
      end 15 m before (no at-grade junction). In the game: road type as usual, but not on the
-     map/GPS, GPS avoids, no AI traffic (`visible` in `mapping.jsonc`).
+     map/GPS, GPS avoids; AI traffic as usual (`visible` in `mapping.jsonc`).
 
 L5 adds all ways. Ways without truck traffic get their own flags in the game
 (`mapping.jsonc`):
