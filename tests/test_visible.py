@@ -97,3 +97,29 @@ def test_short_dangling_stub_is_dropped(tmp_path, profile):
     model = build(str(write_osm(tmp_path / "s.osm", nodes, ways)), profile, "L1")
     ways_in = {w for r in _visible(model) for run in r["runs"] for w in run["osm_ways"]}
     assert 21 in ways_in and 31 not in ways_in
+
+
+def test_short_edge_between_bridge_and_junction_is_kept(tmp_path, profile):
+    """Ein Feldweg führt auf einer Brücke über die Autobahn; das Brückenende liegt 6 m vor einer
+    Einmündung. Das 6-m-Stück dazwischen gehört dazu – fehlte es, endete die Brücke frei in der Luft
+    (A 70 bei Bayreuth: 13 m über dem Weg)."""
+    nodes = {51: _pt(0, -40), 52: _pt(0, 70), 53: _pt(0, -300), 61: _pt(0, 76),
+             63: _pt(300, 76), 65: _pt(-300, 76), 67: _pt(0, 300)}
+    track = {"highway": "track"}
+    ways = [(50, [51, 52], dict(track, bridge="yes", layer="1")), (54, [53, 51], track),
+            (60, [52, 61], track), (62, [61, 63], track), (64, [61, 65], track), (66, [61, 67], track)]
+    _motorway(nodes, ways)
+    model = build(str(write_osm(tmp_path / "j.osm", nodes, ways)), profile, "L1")
+    vis = _visible(model)
+    ways_in = {w for r in vis for run in r["runs"] for w in run["osm_ways"]}
+    assert {50, 60} <= ways_in
+    # kein Brückenende ohne anschließende Straße
+    ends: dict = {}
+    for r in model["roads"]:
+        for e in (r["start"], r["end"]):
+            if e["kind"] == "node":
+                ends[e["osm_node"]] = ends.get(e["osm_node"], 0) + 1
+    for r in vis:
+        for e, run in ((r["start"], r["runs"][0]), (r["end"], r["runs"][-1])):
+            if run["bridge"]:
+                assert e["kind"] == "node" and ends[e["osm_node"]] >= 2, (r["id"], e)

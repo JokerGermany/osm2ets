@@ -685,7 +685,10 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
             if b >= length and ids[-1] in carriage:
                 b = max(length - keep_off_m, 0.0)
                 stats["kept_off"] += 1
-            if b - a < 2 * tol_m:
+            # kurze Reste weg – nicht aber ganze kurze Kanten: Sie verbinden zwei Knoten (z. B. 6 m
+            # Feldweg zwischen dem Ende einer Brücke über die A 70 und der nächsten Einmündung;
+            # fehlten sie, endete die Brücke 13 m über dem Weg)
+            if b - a < 2 * tol_m and not (a <= 0.0 and b >= length):
                 continue
             anchored = any(x < b and y > a for x, y in anc) \
                 or (a <= 0.0 and ids[0] in sel_nodes) or (b >= length and ids[-1] in sel_nodes)
@@ -795,13 +798,15 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
 
 def trim_steep_visible(pieces: list, near_m: float, scale_h: float, slope: float = 0.67,
                        tol_h: float = 1.0, half_near: float = 3.0, min_m: float = 30.0,
-                       cross_keep_m: float = 30.0) -> dict:
+                       cross_keep_m: float = 30.0, bridge_keep_m: float = 60.0) -> dict:
     """Nach den Höhen: Sichtstücke (Rolle 'visible') dort weglassen, wo sie neben einer Straße
     der Stufe so viel höher oder tiefer liegen, dass zwischen den Modellrändern keine Böschung mit
     ``slope`` (+ ``tol_h``) Platz hat – z. B. ein Feldweg am Fuß eines hohen Autobahndamms oder
     oben an der Kante eines Einschnitts. Dort endete das Straßengelände an einer Wand. Ausgenommen
     ist der Bereich ``cross_keep_m`` (Spielmeter, längs des Wegs) um eine höhenfreie Kreuzung mit
-    einer Straße der Stufe: Unterführung und Brückenrampen gehören dazu. Die Stücke werden an den
+    einer Straße der Stufe: Unterführung und Brückenrampen gehören dazu – ebenso jede Brücke samt
+    ``bridge_keep_m`` davor und dahinter (sonst hing z. B. eine Feldwegbrücke über dem Einschnitt der
+    A 70 an einem Ende in der Luft, weil ihre Zufahrt an der Einschnittkante fehlte). Die Stücke werden an den
     verdichteten Punkten geteilt; Reste unter ``min_m`` ohne Anschluss entfallen. Ändert
     ``pieces`` an Ort und Stelle.
 
@@ -810,6 +815,7 @@ def trim_steep_visible(pieces: list, near_m: float, scale_h: float, slope: float
     import numpy as np
 
     from .geometry import Dense, Piece
+    from .network import is_bridge
 
     def is_visible(part) -> bool:
         return part.edge.role == "visible"
@@ -843,6 +849,24 @@ def trim_steep_visible(pieces: list, near_m: float, scale_h: float, slope: float
         if not check.any():
             out.append(p)
             continue
+        # Brücken samt Zufahrten bleiben
+        is_br = np.array([is_bridge(p.chain.parts[k].edge.way.tags) for k in d.seg_part], bool)
+        if is_br.any():
+            mid = (d.s_game[:-1] + d.s_game[1:]) / 2
+            k = 0
+            while k < m - 1:
+                if not is_br[k]:
+                    k += 1
+                    continue
+                k2 = k
+                while k2 + 1 < m - 1 and is_br[k2 + 1]:
+                    k2 += 1
+                s0, s1 = d.s_game[k], d.s_game[k2 + 1]
+                check &= ~((mid > s0 - bridge_keep_m) & (mid < s1 + bridge_keep_m))
+                k = k2 + 1
+            if not check.any():
+                out.append(p)
+                continue
         lo = d.xy_game.min(axis=0) - reach
         hi = d.xy_game.max(axis=0) + reach
         sel = np.flatnonzero((lmax[:, 0] >= lo[0]) & (lmin[:, 0] <= hi[0]) &
