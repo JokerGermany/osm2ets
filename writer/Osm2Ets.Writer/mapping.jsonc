@@ -80,15 +80,15 @@
   // Richtungsfahrbahnen (railing_left: false in ihren Regeln) nur außen, wie in der SCS-Karte.
   "bridge": { "terrain_left": 0, "terrain_right": 0, "railing": "mod_ger_3", "railing_offset": 1 },
   "tunnel": { "terrain_left": 0, "terrain_right": 0 },
-  // Brückenkörper (Überbau mit Widerlagern) für Paare paralleler Autobahnbrücken über eine Straße,
-  // wie in der SCS-Karte: Railing dlc_it_8 = /model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd
-  // aus dem ITALIA-DLC, an einer Richtungsfahrbahn, zur Gegenfahrbahn hin um den halben Abstand
-  // der Linien + 2 m versetzt (SCS: 11 + 2 = 13 m). Eintrag entfernen, wenn die Karte ohne
-  // Italia laufen soll. Einzelne Brücken (z. B. Landstraße über Autobahn) bleiben ohne Körper.
-  // min_gap: Das Modell ist rund 44 m breit (für dreispurige Fahrbahnen); unter Paaren, deren Linien
-  // näher als 18 m beieinander liegen (zweispurige A 70: rund 14,5 m), stünde es seitlich weit über.
-  "bridge_body": { "railing": "dlc_it_8", "extra_offset": 2, "min_gap": 18 },
-  // Brückenkörper für alle übrigen Brücken, je Straßentyp ("*" = andere Typen). Railings mit Überbau,
+  // Ein Brückenkörper für beide Richtungsfahrbahnen eines Paars paralleler Autobahnbrücken, wie in
+  // der SCS-Karte: Railing dlc_it_8 = /model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd aus
+  // dem ITALIA-DLC, an einer Richtungsfahrbahn, zur Gegenfahrbahn hin um den halben Abstand der
+  // Linien + 2 m versetzt (SCS: 11 + 2 = 13 m). Seit v89 aus: unter den zweispurigen Paaren der
+  // A 70 (Linien 12–15 m auseinander, das Modell ist rund 44 m breit) passte er nur von einer Seite;
+  // jetzt bekommt jede Fahrbahn ihren Körper aus "bridge_bodies" (und die Karte braucht kein Italia).
+  // Zum Einschalten die Zeile wieder aufnehmen; min_gap: kleinster Abstand der Linien (m).
+  // "bridge_body": { "railing": "dlc_it_8", "extra_offset": 2, "min_gap": 18 },
+  // Brückenkörper für alle Brücken, je Straßentyp ("*" = andere Typen). Railings mit Überbau,
   // Widerlagern (16 m tief) und Brüstung aus /def/world/railing.sii (bridge: true); Breiten aus den
   // .pmg-Modellen gemessen. Das Modell ist zur Außenseite der gewählten Straßenseite gespiegelt (so
   // passt dlc_it_8 der SCS-Karte: links, 13 m). Mit Versatz 0 liegen die Brüstungen bei allen drei
@@ -97,14 +97,16 @@
   //   dlc_no_4  shared_3lanes_x_1way  x −9,25…10,23  (ger16 links: −10,23…9,25 um −9,0…8,0)
   //   dlc_no_14 shared_hw_exit        x −6,88…3,88   (ger2 rechts: −6,88…3,88 um −5,5…2,5)
   //   dlc_no_6  shared_simple         x −6,58…6,58   (Straße mittig auf der Linie, bis 11 m breit)
+  // half_width: weiteste Ausdehnung ab der Linie; kreuzt eine Straße schräg darunter, wird die
+  // Brücke so weit verlängert, dass sie an allen vier Ecken 3 m Platz bis zu den Widerlagern hat.
   // Ob diese Modelle zum Grundspiel gehören, ist ungeprüft (Token-Präfix dlc_no_); Ersatz aus dem
   // Grundspiel mit gleichen Maßen: 92 (2lanes_x_1way), 128 (3lanes_x_1way), 13 (simple).
   "bridge_bodies": {
-    "ger13": { "railing": "dlc_no_5", "side": "left", "offset": 0 },
-    "ger16": { "railing": "dlc_no_4", "side": "left", "offset": 0 },
-    "ger17": { "railing": "dlc_no_4", "side": "left", "offset": 0 },
-    "ger2": { "railing": "dlc_no_14", "side": "right", "offset": 0 },
-    "*": { "railing": "dlc_no_6", "side": "right", "offset": 0, "max_width": 11 }
+    "ger13": { "railing": "dlc_no_5", "side": "left", "offset": 0, "half_width": 9.4 },
+    "ger16": { "railing": "dlc_no_4", "side": "left", "offset": 0, "half_width": 10.3 },
+    "ger17": { "railing": "dlc_no_4", "side": "left", "offset": 0, "half_width": 10.3 },
+    "ger2": { "railing": "dlc_no_14", "side": "right", "offset": 0, "half_width": 6.9 },
+    "*": { "railing": "dlc_no_6", "side": "right", "offset": 0, "max_width": 11, "half_width": 6.6 }
   },
   // Wege ohne Kfz-Zugang (access=private|no, nur in L5): Straßentyp wie sonst, aber nicht
   // auf Karte/Navi, Navi meidet, kein KI-Verkehr (z. B. Firmengelände, Privatstraßen).

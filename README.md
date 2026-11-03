@@ -35,7 +35,7 @@ v1–v46 (see commits).
 | Area-wide terrain between roads from the terrain model | implemented, gaps remain (see below) |
 | 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
 | Underpasses: open terrain under bridges over roads, stone slopes, bridge railings | implemented, not yet checked in game |
-| Bridge bodies (deck, abutments, parapets) for all bridges: SCS bridge models per road type, wide motorway pairs Italia DLC | implemented, not yet checked in game |
+| Bridge bodies (deck, abutments, parapets) for all bridges: SCS bridge models per road type | implemented, not yet checked in game |
 | Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
@@ -63,9 +63,9 @@ How fill and road terrain fit together:
   bridge ends it falls as a slope (1 : 1.5, steeper if the span is short), beyond the deck edges
   as a cone. This is an upper limit applied to every grid query, so road terrain and fill follow
   it; embankments of at-grade roads next to it stay. The slope quads of the road terrain get the
-  stone material of the SCS map (token `175`). Bridges carry the railing `railing_01_ger`
-  (token `mod_ger_3`) at the model edges – motorway carriageways only on the outer (right) side,
-  as in the SCS map; other roads on both sides.
+  stone material of the SCS map (token `175`). Bridges without a bridge body (see below) carry the
+  railing `railing_01_ger` (token `mod_ger_3`) at the model edges – motorway carriageways only on
+  the outer (right) side, as in the SCS map; other roads on both sides.
 
 Findings from editor tests that shaped this (useful if you work on it):
 - Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),
@@ -80,14 +80,8 @@ Findings from editor tests that shaped this (useful if you work on it):
 - Gaps (black areas in the editor) remain in narrow gores between ramp and main road and
   close to some prefabs; fill rows run west–east and cannot follow diagonal gaps exactly.
 - Where a minor road is lowered under a motorway, the terrain beside it has no cut slope yet.
-- Bridge body: pairs of parallel motorway bridges over a road (starting and ending within 8 m of
-  each other, lines 18–30 m apart – the model is about 44 m wide) get the railing `dlc_it_8`
-  (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia DLC**) on the lower
-  carriageway, offset towards the other by half the distance + 2 m, as in the SCS map (11 + 2 m).
-  It brings the deck and the abutment walls; the carrier's bridge becomes a single road item so
-  the walls sit at its ends. Remove `bridge_body` from `mapping.jsonc` for maps without Italia.
-- All other bridges get an SCS bridge model per road type with deck, abutments and parapets
-  (`bridge_bodies` in `mapping.jsonc`; then without `mod_ger_3`): `ger13` → `dlc_no_5`
+- Bridge bodies: every bridge gets an SCS bridge model per road type with deck, abutments and
+  parapets (`bridge_bodies` in `mapping.jsonc`; then without `mod_ger_3`): `ger13` → `dlc_no_5`
   (`shared_2lanes_x_1way`), `ger16`/`ger17` → `dlc_no_4` (`shared_3lanes_x_1way`), both on the
   left with offset 0; `ger2` → `dlc_no_14` (`shared_hw_exit`) on the right; all others up to 11 m
   wide → `dlc_no_6` (`shared_simple`, also used by the SCS editor tutorial for its bridge). Side and
@@ -95,22 +89,36 @@ Findings from editor tests that shaped this (useful if you work on it):
   edge), not checked in game. Whether the `dlc_no_` models belong to the base game is unverified;
   base-game models of the same size: `92`, `128`, `13`. Straight bridges become one road item;
   bridges with a crest or curve stay several items – whether the game then also puts abutments at
-  the item joints is unverified. Without a body: bridges under an interchange prefab and over
-  200 m. The deck is 1.6 m deep (`dlc_it_8` 1.9 m); with 5.8–6.0 m between the road surfaces
-  4.2–4.4 m remain below.
-- Twin decks at different heights (A 70 over the B 85: 1.1 m): the upper carriageway runs above
-  the body of the lower one.
+  the item joints is unverified. Without a body: bridges over 200 m and bridges covered by an
+  interchange prefab (see below). The deck is 1.6 m deep; with 5.8–6.0 m between the road surfaces
+  4.2–4.4 m remain below. The abutments are always square to the bridge – a railing follows the
+  road and cannot be skewed. Where the lower road crosses at an angle, it shifts sideways towards
+  the bridge edges (half the body width · cot α, `half_width`); the writer then lengthens the
+  bridge at its ends (at most 15 m per end, keeping at least 8 m of embankment before/after) until
+  the lower road has 3 m to the abutment at all four corners. Test area L1: 9 bridges, 61 m in
+  total. The flat floor below is widened by the same shift; the slopes stay parallel to the
+  abutments (and get steeper there).
+- One body for both carriageways of a bridge pair (`bridge_body`: railing `dlc_it_8`,
+  `/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia DLC**, offset towards the
+  other carriageway by half the distance + 2 m as in the SCS map) is off since v89: under the
+  two-lane pairs of the A 70 (lines 12–15 m apart, the model is about 44 m wide) it only fitted
+  from one side. The line is commented out in `mapping.jsonc`.
 - Railing offset (1 m outside the model edge) and the model width of `ger17` are estimates.
 - Visible pieces next to the route: where a track or minor road runs close to the motorway at a
   clearly different height, the road terrains meet with steps (test area L1: 577 instead of 41
   edge points with a step above 1 m, 11 instead of 4 walls). The worst places (no 1 : 1.5 slope
-  fits between the edges) are left out by the pipeline; the ways end open there. Where a way passes
-  under a bridge at an angle, terrain partly covers the way's edge at the bridge ends.
+  fits between the edges) are left out by the pipeline; the ways end open there (bridges plus 60 m
+  before and after them stay).
 - A way that OSM maps as a short tunnel under a road (up to 80 m) becomes an open underpass: the
   upper road gets a bridge section there (with railing). Longer tunnels stay tunnels without a
   portal (the road disappears into the terrain).
-- Where a bridge lies under an interchange prefab, the writer opens the terrain below as under a
-  bridge; the prefab has no railing there, though.
+- Where a structure lies under the outer prefab of an interchange (widening or lane end), that
+  prefab moves beyond the structure; a road with an extra lane (`ger17`) with bridge body runs in
+  between. Where it lies under the inner prefab (split or merge), that prefab moves up to 30 m away
+  from the structure to the other side of the OSM node (entry upstream, exit downstream) – in the
+  test area the entry on the A 70 bridge at x = −3270, z = −3143: 15 m. If that is not possible
+  (structure too close to the node, another structure on the other side, roads too short), the
+  prefab stays on the structure: terrain open below, but no railing and no body.
 - Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
   of 1–3 m remain in a few places.
 - Junctions without a prefab: road piece between two junctions too short, or angle more
@@ -253,6 +261,8 @@ In addition, in every level (`extras` and `industry` in the profile):
    - Sections at most 60 m next to a road of the level (`extras.visible_near_m`): parallel ways,
      branches at nodes of the network. Gaps up to 40 m are closed, isolated remains below 30 m
      dropped, as are sections so much higher or lower that no 1 : 1.5 slope fits in between.
+     Whole edges stay even when short: they connect two nodes (e.g. 6 m of track between a bridge
+     end and a junction).
    - Classes: everything L5 shows (`extras.visible_highway`). At motorway carriageways the pieces
      end 15 m before (no at-grade junction). In the game: road type as usual, but not on the
      map/GPS, GPS avoids; AI traffic as usual (`visible` in `mapping.jsonc`).

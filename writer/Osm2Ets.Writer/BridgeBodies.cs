@@ -103,24 +103,170 @@ public static class BridgeBodies
                                           float maxLength, List<string> warnings)
     {
         var res = new List<Single>();
-        int tooLong = 0;
+        int tooLong = 0, extended = 0;
+        float extendedM = 0, extendedMax = 0;
+        // alle Abschnitte mit Lauf (untere Straßen für die Verlängerung schräg unterquerter Brücken)
+        var segs = new List<(RoadEntry R, RunEntry Run, Vector3 A, Vector3 B)>();
+        foreach (var r in roads)
+            for (int i = 0; i < r.Points.Count - 1; i++)
+                if (r.Runs.FirstOrDefault(x => x.From <= i && i < x.To) is { } run)
+                    segs.Add((r, run, MapWriter.ToVector(r.Points[i]), MapWriter.ToVector(r.Points[i + 1])));
         foreach (var r in roads)
             foreach (var run in r.Runs.Where(x => x.Bridge && !x.Tunnel && x.To > x.From).ToList())
             {
                 if (covered.Contains(run)) continue;
-                var type = bodyFor(resolve(run));
+                var style = resolve(run);
+                var type = bodyFor(style);
                 if (type is null) continue;
                 var sp = new Span(r, run, MapWriter.ToVector(r.Points[run.From]), MapWriter.ToVector(r.Points[run.To]));
                 if (sp.Len < 3f) continue;
                 if (sp.Len > maxLength) { tooLong++; continue; }
+                if (UseExtend)
+                {
+                    float half = type.HalfWidth ?? style.Width / 2 + MathF.Abs(style.ModelCenter) + 1.5f;
+                    var (e0, e1) = Extend(r, run, half, resolve, segs);
+                    if (e0 + e1 > 0)
+                    {
+                        extended++; extendedM += e0 + e1; extendedMax = MathF.Max(extendedMax, MathF.Max(e0, e1));
+                        if (Environment.GetEnvironmentVariable("OSM2ETS_BPROBE") is not null)
+                            Console.Error.WriteLine($"EXTEND {r.Id} [{run.From}-{run.To}] {string.Join("/", run.OsmWays)} +{e0:0.0} +{e1:0.0}");
+                        sp = new Span(r, run, MapWriter.ToVector(r.Points[run.From]), MapWriter.ToVector(r.Points[run.To]));
+                    }
+                }
                 bool straight = Straight(sp);
                 if (straight) Merge(r, run);
                 res.Add(new Single(r, run, type, straight));
             }
         if (tooLong > 0)
             warnings.Add($"Info: ohne Brückenkörper: {tooLong} Brücken länger als {maxLength:0} m");
+        if (extended > 0)
+            warnings.Add($"Info: {extended} Brücken über schräg oder dicht am Widerlager kreuzende Straßen verlängert, " +
+                         $"zusammen {extendedM:0} m, je Ende höchstens {extendedMax:0.0} m");
         return res;
     }
+
+    /// <summary>Stärke der Widerlager an den Enden des Brückenstücks (gemessen an den shared_…-Modellen: rund 1,6 m).</summary>
+    public const float Wall = 1.6f;
+    /// <summary>Freier Raum zwischen Modellrand einer unteren Straße und Widerlager (m).</summary>
+    public const float Clearance = 3f;
+    /// <summary>Höchstens so weit wird eine Brücke je Ende verlängert (m).</summary>
+    public const float MaxExtend = 15f;
+    /// <summary>So viel Straße ohne Bauwerk bleibt vor bzw. hinter einer verlängerten Brücke mindestens (m).</summary>
+    public const float MinApproach = 8f;
+    /// <summary>Verlängerung schräg unterquerter Brücken (aus: OSM2ETS_NO_BRIDGE_EXTEND).</summary>
+    public static bool UseExtend = Environment.GetEnvironmentVariable("OSM2ETS_NO_BRIDGE_EXTEND") is null;
+
+    /// <summary>
+    /// Die Widerlager der Körper-Modelle stehen immer quer zur Brücke (ein Railing folgt der Straße und
+    /// lässt sich nicht schräg stellen). Kreuzt die untere Straße schräg, wandert sie zu den Brückenkanten
+    /// hin um <paramref name="half"/>·cot α zur Seite – bei kurzen Brücken bis ans Widerlager. Die
+    /// Brücke wird dann an den Enden in die Straße davor bzw. dahinter verlängert (Punkt einfügen), bis
+    /// jede untere Straße an allen vier Ecken <see cref="Clearance"/> Platz hat. Gibt die Verlängerung
+    /// am Anfang und am Ende zurück (m).
+    /// </summary>
+    private static (float Start, float End) Extend(RoadEntry r, RunEntry run, float half, Func<RunEntry, ResolvedStyle> resolve,
+                                                   List<(RoadEntry R, RunEntry Run, Vector3 A, Vector3 B)> segs)
+    {
+        float lo = float.MaxValue, hi = float.MinValue, acc = 0;
+        for (int k = run.From; k < run.To; k++)
+        {
+            var p = MapWriter.ToVector(r.Points[k]); var q = MapWriter.ToVector(r.Points[k + 1]);
+            var p2 = new Vector2(p.X, p.Z); var q2 = new Vector2(q.X, q.Z);
+            float sl = Vector2.Distance(p2, q2);
+            if (sl < 1e-3f) continue;
+            var d1 = (q2 - p2) / sl;
+            foreach (var (o, orun, a, b) in segs)
+            {
+                if (ReferenceEquals(o, r) || orun.Tunnel) continue;
+                var a2 = new Vector2(a.X, a.Z); var b2 = new Vector2(b.X, b.Z);
+                if ((b2 - a2).LengthSquared() < 1e-6f) continue;
+                if (!Cross(p2, q2, a2, b2, out float t, out float u)) continue;
+                float yb = p.Y + (q.Y - p.Y) * t, yl = a.Y + (b.Y - a.Y) * u;
+                if (yb - yl < Underpasses.MinClear) continue;
+                var d2 = Vector2.Normalize(b2 - a2);
+                var st = resolve(orun);
+                float hw = st.Width / 2 + MathF.Abs(st.ModelCenter);
+                float need = (hw + Clearance) / Underpasses.SinOf(d1, d2) + Wall + half * MathF.Abs(Underpasses.CotOf(d1, d2));
+                float s = acc + sl * t;
+                lo = MathF.Min(lo, s - need);
+                hi = MathF.Max(hi, s + need);
+            }
+            acc += sl;
+        }
+        if (lo == float.MaxValue) return (0, 0);
+        float e0 = ExtendStart(r, run, MathF.Min(MathF.Max(0, -lo), MaxExtend));
+        float e1 = ExtendEnd(r, run, MathF.Min(MathF.Max(0, hi - acc), MaxExtend));
+        return (e0, e1);
+    }
+
+    /// <summary>Rückt den Anfang des Brückenlaufs um bis zu e Meter in den Lauf davor (ohne Bauwerk,
+    /// davon bleiben mindestens <see cref="MinApproach"/>). Gibt die Verlängerung zurück.</summary>
+    private static float ExtendStart(RoadEntry r, RunEntry run, float e)
+    {
+        if (e < 0.3f) return 0;
+        var prev = r.Runs.FirstOrDefault(x => x.To == run.From && x.To > x.From);
+        if (prev is null || prev.Bridge || prev.Tunnel) return 0;
+        float avail = 0;
+        for (int k = prev.From; k < prev.To; k++) avail += Dist2(r.Points[k], r.Points[k + 1]);
+        e = MathF.Min(e, avail - MinApproach);
+        if (e < 0.3f) return 0;
+        // Abschnitt j..j+1, in dem die neue Grenze liegt (back = Abstand vor Punkt j+1)
+        float acc = 0;
+        int j = run.From - 1;
+        while (j > prev.From && acc + Dist2(r.Points[j], r.Points[j + 1]) < e) { acc += Dist2(r.Points[j], r.Points[j + 1]); j--; }
+        float len = Dist2(r.Points[j], r.Points[j + 1]), back = e - acc;
+        if (back < 0.5f) { SetBoundary(prev, run, j + 1); return acc; }
+        if (len - back < 0.5f && j > prev.From) { SetBoundary(prev, run, j); return acc + len; }
+        InsertPoint(r, j + 1, Lerp(r.Points[j], r.Points[j + 1], 1 - back / len));
+        SetBoundary(prev, run, j + 1);
+        return e;
+    }
+
+    /// <summary>Wie <see cref="ExtendStart"/> am Ende des Brückenlaufs.</summary>
+    private static float ExtendEnd(RoadEntry r, RunEntry run, float e)
+    {
+        if (e < 0.3f) return 0;
+        var next = r.Runs.FirstOrDefault(x => x.From == run.To && x.To > x.From);
+        if (next is null || next.Bridge || next.Tunnel) return 0;
+        float avail = 0;
+        for (int k = next.From; k < next.To; k++) avail += Dist2(r.Points[k], r.Points[k + 1]);
+        e = MathF.Min(e, avail - MinApproach);
+        if (e < 0.3f) return 0;
+        // Abschnitt j..j+1, in dem die neue Grenze liegt (fwd = Abstand hinter Punkt j)
+        float acc = 0;
+        int j = run.To;
+        while (j < next.To - 1 && acc + Dist2(r.Points[j], r.Points[j + 1]) < e) { acc += Dist2(r.Points[j], r.Points[j + 1]); j++; }
+        float len = Dist2(r.Points[j], r.Points[j + 1]), fwd = e - acc;
+        if (fwd < 0.5f) { SetBoundary(run, next, j); return acc; }
+        if (len - fwd < 0.5f && j + 1 < next.To) { SetBoundary(run, next, j + 1); return acc + len; }
+        InsertPoint(r, j + 1, Lerp(r.Points[j], r.Points[j + 1], fwd / len));
+        SetBoundary(run, next, j + 1);
+        return e;
+    }
+
+    /// <summary>Grenze zwischen zwei aufeinanderfolgenden Läufen auf Punkt k legen.</summary>
+    private static void SetBoundary(RunEntry before, RunEntry after, int k)
+    {
+        before.To = k;
+        after.From = k;
+    }
+
+    /// <summary>Punkt an Stelle at einfügen; Laufgrenzen ab dort rücken um eins.</summary>
+    private static void InsertPoint(RoadEntry r, int at, double[] p)
+    {
+        r.Points.Insert(at, p);
+        foreach (var x in r.Runs)
+        {
+            if (x.From >= at) x.From++;
+            if (x.To >= at) x.To++;
+        }
+    }
+
+    private static double[] Lerp(double[] a, double[] b, float t) =>
+        [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+
+    private static float Dist2(double[] a, double[] b) =>
+        (float)Math.Sqrt(Math.Pow(b[0] - a[0], 2) + Math.Pow(b[2] - a[2], 2));
 
     /// <summary>Überquert die Brücke eine andere Straße mindestens MinClear tiefer?</summary>
     private static bool OverRoad(RoadEntry r, RunEntry run, List<(RoadEntry R, Vector3 A, Vector3 B)> segs)

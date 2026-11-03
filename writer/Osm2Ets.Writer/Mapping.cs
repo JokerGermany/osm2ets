@@ -123,10 +123,15 @@ public sealed class BridgeBodyType
     public float? MaxWidth { get; set; }
     /// <summary>Das Modell hat eigene Brüstungen: kein zusätzliches Geländer.</summary>
     public bool Parapet { get; set; } = true;
+    /// <summary>Weiteste seitliche Ausdehnung des Modells ab der Straßenlinie (m); bestimmt, wie weit
+    /// eine schräg unterquerende Straße an den Brückenkanten seitlich wandert. Fehlt sie: Modellrand
+    /// der Straße + 1,5 m.</summary>
+    public float? HalfWidth { get; set; }
 
     internal void Validate(string name, List<string> errors)
     {
         if (Railing.Length > 0) StyleSpec.CheckToken(Railing, $"{name}.railing", errors);
+        if (HalfWidth is < 0 or > 40) errors.Add($"{name}.half_width: 0–40 erwartet");
         if (Side is not ("left" or "right")) errors.Add($"{name}.side: left oder right erwartet");
         if (Offset is < -30 or > 30) errors.Add($"{name}.offset: −30–30 erwartet");
     }

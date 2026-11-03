@@ -29,6 +29,9 @@ var tests = new List<(string Name, Action Body)>
     ("Unterführung: unter der Brücke Höhe der unteren Straße, Böschung zu den Enden, Damm daneben bleibt", UnderpassLowersTerrainUnderBridge),
     ("Brückenkörper: an der tieferen von zwei Autobahnbrücken über eine Straße, Brücke als ein Stück", BridgeBodyOnTwinBridges),
     ("Brückenkörper je Straßentyp: gerade Brücke ein Stück, Kuppe mehrere Stücke, Rampe rechts", BridgeBodySingle),
+    ("Brückenkörper: Brücke über schräg kreuzende Straße wird verlängert, rechtwinklige nicht", BridgeExtendedOverSkewedRoad),
+    ("Unterführung: Sohle bei schräger Kreuzung um den Versatz an den Brückenkanten breiter", UnderpassSoleWiderWhenSkewed),
+    ("Anschlussstelle: inneres Prefab rückt vom Bauwerk weg (Zusatzspur-Straße darüber)", InterchangeShiftAwayFromStructure),
 };
 
 int failed = 0;
@@ -750,4 +753,66 @@ static void BridgeBodySingle()
     // breite Straße (über max_width) bekommt keinen Körper
     var wide = cfg.Resolve(new RunEntry { From = 0, To = 1, Highway = "primary", Role = "core", Lanes = 4 });
     Check(wide.RoadType == "ger29" && cfg.BodyFor(wide) is null, $"Körper für zu breite Straße ({wide.RoadType}, {wide.Width} m)");
+}
+
+static void BridgeExtendedOverSkewedRoad()
+{
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var warnings = new List<string>();
+    // 16 m Autobahnbrücke (x −8…8, y 7) über einen Feldweg (y 0), der unter 60° kreuzt
+    RoadEntry Motorway(string id) => MakeRoad(id, new[] { new[] { -100.0, 7, 0 }, new[] { -8.0, 7, 0 }, new[] { 8.0, 7, 0 }, new[] { 100.0, 7, 0 } },
+        MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 2, "motorway", oneway: true, bridge: true), MakeRun(2, 3, "motorway", oneway: true));
+    var mw = Motorway("mw");
+    var c = MathF.Cos(MathF.PI / 3); var s = MathF.Sin(MathF.PI / 3);
+    var tr = MakeRoad("tr", new[] { new[] { -50.0 * c, 0, -50.0 * s }, new[] { 50.0 * c, 0, 50.0 * s } }, MakeRun(0, 1, "track", role: "visible"));
+    var singles = BridgeBodies.PlanSingle([mw, tr], cfg.Resolve, cfg.BodyFor, [], 200f, warnings);
+    var a = singles.Single(x => x.Road == mw);
+    // nötig je Seite: (2,25 + 3) / sin 60° + 1,6 (Widerlager) + 9,4 (Körperbreite ab Linie) · cot 60° ≈ 13,1 m
+    float need = (2.25f + BridgeBodies.Clearance) / s + BridgeBodies.Wall + 9.4f * c / s;
+    double x0 = mw.Points[a.Run.From][0], x1 = mw.Points[a.Run.To][0];
+    Check(Math.Abs(x0 + need) < 0.1 && Math.Abs(x1 - need) < 0.1, $"Brücke {x0:0.0}…{x1:0.0} statt ±{need:0.0}");
+    Check(a.Merged && mw.Points.Count == 4 && mw.Runs.Count == 3 && mw.Runs[0].To == a.Run.From && mw.Runs[2].From == a.Run.To,
+        "verlängerte Brücke nicht als ein Stück oder Läufe nicht lückenlos");
+    Check(warnings.Any(w => w.Contains("verlängert")), "keine Meldung zur Verlängerung");
+    // rechtwinklig darunter mit genug Platz: bleibt 16 m
+    var mw2 = Motorway("mw2");
+    var tr2 = MakeRoad("tr2", new[] { new[] { 0.0, 0, -50 }, new[] { 0.0, 0, 50 } }, MakeRun(0, 1, "track", role: "visible"));
+    var b = BridgeBodies.PlanSingle([mw2, tr2], cfg.Resolve, cfg.BodyFor, [], 200f, warnings).Single(x => x.Road == mw2);
+    Check(mw2.Points[b.Run.From][0] == -8 && mw2.Points[b.Run.To][0] == 8, "rechtwinklig unterquerte Brücke verändert");
+}
+
+static void UnderpassSoleWiderWhenSkewed()
+{
+    // 60 m Brücke (y 8) längs x über eine Straße (y 0, Breite 8), die unter 45° kreuzt
+    var st = new ResolvedStyle("ger1", 60, 60, RoadResolution.HighPoly, null, null, Width: 8);
+    var up = MakeRoad("up", new[] { new[] { -150.0, 8, 0 }, new[] { -30.0, 8, 0 }, new[] { 30.0, 8, 0 }, new[] { 150.0, 8, 0 } },
+        MakeRun(0, 1, "primary"), MakeRun(1, 2, "primary", bridge: true), MakeRun(2, 3, "primary"));
+    var low = MakeRoad("low", new[] { new[] { -100.0, 0, -100 }, new[] { 100.0, 0, 100 } }, MakeRun(0, 1, "primary"));
+    var styles = new Dictionary<RoadEntry, ResolvedStyle[]> { [low] = [st], [up] = [st, st, st] };
+    var u = Underpasses.Build([low, up], styles, []);
+    Check(u.Count == 1, $"{u.Count} Unterführungen statt 1");
+    float floor = -Underpasses.FloorDrop;
+    // Brückenkante 4 m + 2 m neben der Linie: Straßenmitte dort 6 m längs versetzt (cot 45° = 1),
+    // ihr Rand 4 / sin 45° = 5,7 m weiter – bis 11,7 m (+ 1,5 m Bankett) längs bleibt die Sohle flach
+    Check(MathF.Abs(u.Cap(11, 4, 8) - floor) < 0.01f, $"Sohle an der Brückenkante bei s+11: {u.Cap(11, 4, 8):0.00} statt {floor:0.00}");
+    Check(MathF.Abs(u.Cap(-11, -4, 8) - floor) < 0.01f, "Sohle an der anderen Kante");
+    Check(u.Cap(25, 0, 8) > floor + 1, $"vor dem Brückenende keine Böschung: {u.Cap(25, 0, 8):0.00}");
+}
+
+static void InterchangeShiftAwayFromStructure()
+{
+    // Einfahrt: Zusammenführung 40 m lang, Spurende 63 m; Brücke 29,5…49,5 m hinter dem Knoten,
+    // also unter dem Ende der Zusammenführung
+    float d = Interchanges.ShiftFor([(29.5f, 49.5f)], [], 40f, 63f, 1000, 1000, 1000, out float ext);
+    Check(MathF.Abs(d - (40 + Interchanges.ExtMargin - 29.5f + 0.5f)) < 0.01f, $"Verschiebung {d:0.00}");
+    Check(MathF.Abs(ext - (49.5f + d + Interchanges.ExtMargin - 40)) < 0.01f, $"Zusatzspur-Straße {ext:0.00}");
+    // auf der anderen Seite des Knotens ein Bauwerk im Weg: keine Verschiebung (wie bisher)
+    Check(Interchanges.ShiftFor([(29.5f, 49.5f)], [(10f, 20f)], 40f, 63f, 1000, 1000, 1000, out _) == 0, "trotz Bauwerk verschoben");
+    // Bauwerk dicht am Knoten: mehr als MaxShift nötig – keine Verschiebung
+    Check(Interchanges.ShiftFor([(5f, 25f)], [], 40f, 63f, 1000, 1000, 1000, out _) == 0, "zu weit verschoben");
+    // Bauwerk nur unter dem äußeren Prefab: keine Verschiebung, nur Zusatzspur-Straße
+    float d2 = Interchanges.ShiftFor([(60f, 80f)], [], 40f, 63f, 1000, 1000, 1000, out float ext2);
+    Check(d2 == 0 && ext2 > 0, $"Verschiebung {d2:0.0}, Zusatzspur-Straße {ext2:0.0}");
+    // Rampe zu kurz für die Verschiebung
+    Check(Interchanges.ShiftFor([(29.5f, 49.5f)], [], 40f, 63f, 1000, 1000, 50, out _) == 0, "Rampe zu kurz, trotzdem verschoben");
 }

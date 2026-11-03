@@ -35,7 +35,7 @@ v1–v46 (siehe Commits).
 | Flächiges Gelände zwischen den Straßen aus dem Geländemodell | umgesetzt, Lücken bleiben (siehe unten) |
 | 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze/-dreiecke | noch nicht |
 | Unterführungen: offenes Gelände unter Brücken über Straßen, Steinböschungen, Brückengeländer | umgesetzt, im Spiel noch nicht geprüft |
-| Brückenkörper (Überbau, Widerlager, Brüstung) für alle Brücken: SCS-Brückenmodelle je Straßentyp, breite Autobahnpaare Italia-DLC | umgesetzt, im Spiel noch nicht geprüft |
+| Brückenkörper (Überbau, Widerlager, Brüstung) für alle Brücken: SCS-Brückenmodelle je Straßentyp | umgesetzt, im Spiel noch nicht geprüft |
 | Sichtstücke: Straßen höherer Stufen unter/über Brücken und unmittelbar neben der Strecke | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
@@ -64,9 +64,10 @@ Wie Füll- und Straßengelände zusammenpassen:
   Brückenenden fällt es als Böschung ab (1 : 1,5, steiler bei kurzer Brücke), seitlich über die
   Brückenränder hinaus als Kegel. Das ist eine Obergrenze für jede Rasterabfrage, Straßen- und
   Füllgelände folgen ihr; Dämme ebenerdiger Straßen daneben bleiben stehen. Die Böschungsquads des
-  Straßengeländes bekommen das Steinmaterial der SCS-Karte (Token `175`). Brücken tragen am Modellrand das
-  Geländer `railing_01_ger` (Token `mod_ger_3`) – Richtungsfahrbahnen von Autobahnen nur außen
-  (rechts) wie in der SCS-Karte, andere Straßen auf beiden Seiten.
+  Straßengeländes bekommen das Steinmaterial der SCS-Karte (Token `175`). Brücken ohne Brückenkörper
+  (siehe unten) tragen am Modellrand das Geländer `railing_01_ger` (Token `mod_ger_3`) –
+  Richtungsfahrbahnen von Autobahnen nur außen (rechts) wie in der SCS-Karte, andere Straßen auf
+  beiden Seiten.
 
 Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Höhenpunkte (vertex offsets) sind **absolute** Lagen (Zeilenabstände 1,1,1,2,6,6,10,10,10,20,40,50… m),
@@ -81,13 +82,7 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
 - Lücken (schwarz im Editor) bleiben in schmalen Zwickeln zwischen Rampe und Hauptfahrbahn
   und an manchen Prefabs; die Füllreihen laufen West-Ost und folgen schrägen Lücken nicht genau.
 - Wo eine untergeordnete Straße unter einer Autobahn abgesenkt wird, fehlt noch die Einschnittsböschung.
-- Brückenkörper: Paare paralleler Autobahnbrücken über eine Straße (Anfang und Ende höchstens 8 m
-  versetzt, Linien 18–30 m auseinander – das Modell ist rund 44 m breit) bekommen an der tieferen Richtungsfahrbahn das Railing
-  `dlc_it_8` (`/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia-DLC**), zur
-  Gegenfahrbahn hin um den halben Abstand + 2 m versetzt wie in der SCS-Karte (11 + 2 m). Es bringt
-  Überbau und Widerlagerwände; die Brücke des Trägers wird ein einziges Straßenstück, damit die
-  Wände an ihren Enden sitzen. Für Karten ohne Italia `bridge_body` aus `mapping.jsonc` entfernen.
-- Alle übrigen Brücken bekommen je Straßentyp ein Brückenmodell der SCS-Karte mit Überbau,
+- Brückenkörper: Jede Brücke bekommt je Straßentyp ein Brückenmodell der SCS-Karte mit Überbau,
   Widerlagern und Brüstung (`bridge_bodies` in `mapping.jsonc`; dann ohne `mod_ger_3`):
   `ger13` → `dlc_no_5` (`shared_2lanes_x_1way`), `ger16`/`ger17` → `dlc_no_4`
   (`shared_3lanes_x_1way`), jeweils links mit Versatz 0; `ger2` → `dlc_no_14` (`shared_hw_exit`)
@@ -97,21 +92,36 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
   `dlc_no_`-Modelle zum Grundspiel gehören, ist ungeprüft; gleich große Modelle des Grundspiels:
   `92`, `128`, `13`. Gerade Brücken werden ein Straßenstück; Brücken mit Kuppe oder Kurve bleiben
   mehrere Stücke – ob das Spiel dann auch an den Stückgrenzen Widerlager setzt, ist ungeprüft.
-  Ohne Körper: Brücken unter einem Anschluss-Prefab und über 200 m. Der Überbau ist 1,6 m dick
-  (`dlc_it_8` 1,9 m); bei 5,8–6,0 m Höhenunterschied der Fahrbahnen bleiben darunter 4,2–4,4 m.
-- Unterschiedlich hohe Brückenpaare (A 70 über der B 85: 1,1 m): die höhere Fahrbahn liegt über dem
-  Körper der tieferen.
+  Ohne Körper: Brücken über 200 m und Brücken, die ein Anschluss-Prefab überdeckt (siehe unten).
+  Der Überbau ist 1,6 m dick; bei 5,8–6,0 m Höhenunterschied der Fahrbahnen bleiben darunter
+  4,2–4,4 m. Die Widerlager stehen immer quer zur Brücke – ein Railing folgt der Straße und lässt
+  sich nicht schräg stellen. Kreuzt die untere Straße schräg, rückt sie zu den Brückenkanten hin
+  seitlich (halbe Körperbreite · cot α, `half_width`); der Writer verlängert die Brücke dann an den
+  Enden (je Ende höchstens 15 m, davor bzw. dahinter bleiben mindestens 8 m Damm), bis die untere
+  Straße an allen vier Ecken 3 m Platz bis zum Widerlager hat. Im Testgebiet L1: 9 Brücken,
+  zusammen 61 m. Die flache Sohle darunter ist um denselben Versatz breiter; die Böschungen bleiben
+  parallel zu den Widerlagern (werden dort aber steiler).
+- Ein Körper für beide Richtungsfahrbahnen eines Brückenpaars (`bridge_body`: Railing `dlc_it_8`,
+  `/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia-DLC**, zur Gegenfahrbahn
+  hin um den halben Abstand + 2 m versetzt wie in der SCS-Karte) ist seit v89 aus: unter den
+  zweispurigen Paaren der A 70 (Linien 12–15 m auseinander, das Modell ist rund 44 m breit) passte
+  er nur von einer Seite. Die Zeile steht auskommentiert in `mapping.jsonc`.
 - Geländerabstand (1 m außerhalb des Modellrands) und Modellbreite von `ger17` sind geschätzt.
 - Sichtstücke neben der Strecke: Wo ein Feldweg oder eine Nebenstraße dicht neben der Autobahn
   deutlich höher oder tiefer liegt, stoßen die Straßengelände mit Stufen aneinander (Testgebiet L1:
   577 statt 41 Randpunkte mit mehr als 1 m Stufe, 11 statt 4 Wände). Die ärgsten Stellen (keine
-  Böschung 1 : 1,5 zwischen den Rändern möglich) lässt die Pipeline aus; dort enden die Wege offen.
-  An schräg unterquerenden Wegen ragt das Gelände an den Brückenenden teils über den Wegrand.
+  Böschung 1 : 1,5 zwischen den Rändern möglich) lässt die Pipeline aus; dort enden die Wege offen
+  (Brücken samt 60 m davor und dahinter bleiben).
 - Ein Weg, der in OSM als kurzer Tunnel unter einer Straße liegt (bis 80 m), wird zur offenen
   Unterführung: die obere Straße bekommt dort einen Brückenabschnitt (mit Geländer). Längere Tunnel
   bleiben Tunnel ohne Portal (die Straße verschwindet im Gelände).
-- Liegt eine Brücke unter einem Anschluss-Prefab, öffnet der Writer das Gelände darunter wie unter
-  einer Brücke; das Prefab hat dort aber kein Geländer.
+- Liegt ein Bauwerk unter dem äußeren Prefab einer Anschlussstelle (Aufweitung bzw. Spurende),
+  rückt dieses hinter das Bauwerk; dazwischen läuft eine Straße mit Zusatzspur (`ger17`) samt
+  Brückenkörper. Liegt es unter dem inneren Prefab (Teilung bzw. Zusammenführung), rückt dieses bis
+  zu 30 m vom Bauwerk weg auf die andere Seite des OSM-Knotens (Einfahrt stromauf, Ausfahrt stromab)
+  – im Testgebiet die Einfahrt auf der A-70-Brücke bei x = −3270, z = −3143: 15 m. Geht das nicht
+  (Bauwerk zu dicht am Knoten, auf der anderen Seite ein weiteres Bauwerk, Straßen zu kurz),
+  bleibt das Prefab über dem Bauwerk: Gelände darunter offen, aber ohne Geländer und Körper.
 - Wo Straßengelände zweier deutlich verschieden hoher Straßen aneinanderstößt (dichte
   Anschlussstellen), bleiben an wenigen Stellen Stufen von 1–3 m.
 - Kreuzungen ohne Prefab: Straßenstück zwischen zwei Kreuzungen zu kurz oder Winkel mehr als
@@ -253,7 +263,8 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
    - Abschnitte höchstens 60 m neben einer Straße der Stufe (`extras.visible_near_m`):
      Parallelwege, Abzweige an Knoten des Netzes. Lücken bis 40 m werden geschlossen,
      freistehende Reste unter 30 m entfallen, ebenso Abschnitte, die so viel höher oder tiefer
-     liegen, dass keine Böschung 1 : 1,5 dazwischen passt.
+     liegen, dass keine Böschung 1 : 1,5 dazwischen passt. Ganze Kanten bleiben auch, wenn sie kurz
+     sind: Sie verbinden zwei Knoten (z. B. 6 m Feldweg zwischen Brückenende und Einmündung).
    - Klassen: alles, was L5 zeigt (`extras.visible_highway`). An Autobahnfahrbahnen enden die
      Stücke 15 m davor (keine ebenerdige Einmündung). Im Spiel: Straßentyp wie sonst, aber nicht
      auf Karte/Navi, Navi meidet; KI-Verkehr wie sonst (`visible` in `mapping.jsonc`).

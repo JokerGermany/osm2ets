@@ -20,6 +20,11 @@ namespace Osm2Ets.Writer;
 public sealed class Underpasses
 {
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_UNDERPASS") is null;
+    /// <summary>Kreuzt die untere Straße schräg, wandert sie zu den Brückenkanten hin seitlich (um den
+    /// Abstand von der Linie · cot α). Die flache Sohle wird dann um diesen Versatz breiter, damit die
+    /// Straße auch an den Kanten auf ihr liegt; die Böschungen bleiben parallel zu den Widerlagern
+    /// (aus: OSM2ETS_UNDERPASS_NOSKEW).</summary>
+    public static bool Skew = Environment.GetEnvironmentVariable("OSM2ETS_UNDERPASS_NOSKEW") is null;
     /// <summary>Höhenabstand Brücke – untere Fahrbahn, ab dem eine Kreuzung als Unterführung gilt (m).</summary>
     public const float MinClear = 3f;
     /// <summary>Böschungsneigung; 1 : 1,5 wie unter der SCS-Brücke (10 m Höhe auf 15 m).</summary>
@@ -47,6 +52,8 @@ public sealed class Underpasses
         public required float[] Y;
         public required float[] Cum;
         public float Left, Right;   // flache Breite links/rechts der Linie (Modellrand + SideMargin)
+        /// <summary>Untere Straßen: Kreuzung bei S (auf der Brückenlinie), Höhe Y, halbe Breite W der
+        /// flachen Sohle längs der Brücke (ohne Bankett).</summary>
         public readonly List<(float S, float Y, float W)> Lower = [];
         public float SlopeA = Slope, SlopeB = Slope;
         public float Reach;          // seitliche Reichweite des Kegels über Left/Right hinaus
@@ -202,8 +209,9 @@ public sealed class Underpasses
                 float yb = Y[k] + (Y[k + 1] - Y[k]) * t, yl = o.A.Y + (o.B.Y - o.A.Y) * w;
                 if (yb - yl < MinClear) continue;
                 var d1 = Vector2.Normalize(P[k + 1] - P[k]); var d2 = Vector2.Normalize(b - a);
-                float sin = MathF.Max(0.3f, MathF.Abs(d1.X * d2.Y - d1.Y * d2.X));
-                sp.Lower.Add((C[k] + (C[k + 1] - C[k]) * t, yl, o.Hw / sin));
+                float half = o.Hw / SinOf(d1, d2);
+                if (Skew) half += MathF.Max(sp.Left, sp.Right) * MathF.Abs(CotOf(d1, d2));
+                sp.Lower.Add((C[k] + (C[k + 1] - C[k]) * t, yl, half));
             }
         }
         // Prefab-Spuren unter der Brücke (je Meter längs die tiefste)
@@ -283,6 +291,19 @@ public sealed class Underpasses
             if (c < best) best = c;
         }
         return best;
+    }
+
+    /// <summary>|sin| des Winkels zwischen Brücke (d1) und unterer Straße (d2), höchstens bis 0,3 herab.</summary>
+    internal static float SinOf(Vector2 d1, Vector2 d2) => MathF.Max(0.3f, MathF.Abs(d1.X * d2.Y - d1.Y * d2.X));
+
+    /// <summary>Versatz der unteren Straße längs der Brücke je Meter quer (rechts positiv): cot des
+    /// Kreuzungswinkels mit Vorzeichen (|sin| höchstens bis 0,3 herab wie <see cref="SinOf"/>).</summary>
+    internal static float CotOf(Vector2 d1, Vector2 d2)
+    {
+        var right = new Vector2(-d1.Y, d1.X);
+        float sin = Vector2.Dot(d2, right), cos = Vector2.Dot(d2, d1);
+        float ssin = MathF.Max(0.3f, MathF.Abs(sin)) * (sin < 0 ? -1 : 1);
+        return cos / ssin;
     }
 
     /// <summary>Lage von q zur Brückenlinie: Bogenlänge s ∈ [0, Länge], Abstand v (rechts positiv).</summary>

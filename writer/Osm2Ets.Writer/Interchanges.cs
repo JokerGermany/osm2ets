@@ -42,6 +42,10 @@ public static class Interchanges
     public const float MaxExt = 160f;
     /// <summary>Zusatzspur-Straße über Bauwerke (aus: OSM2ETS_PREFAB_NOEXT).</summary>
     public static bool UseExt = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOEXT") is null;
+    /// <summary>Weiteste Verschiebung des inneren Prefabs weg von einem Bauwerk (m), siehe
+    /// <see cref="Plan.Shift"/> (aus: OSM2ETS_PREFAB_NOSHIFT).</summary>
+    public const float MaxShift = 30f;
+    public static bool UseShift = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOSHIFT") is null;
     /// <summary>Rolle der Abschnitte einer Zusatzspur-Straße (Zuordnung: Straßentyp "hw2 ext one lane").</summary>
     public const string ExtRole = "ext";
 
@@ -58,6 +62,10 @@ public static class Interchanges
         /// Spurende), rückt dieses über das Bauwerk hinaus; dazwischen läuft eine Straße mit
         /// Zusatzspur (wie in der SCS-Karte). Länge dieser Straße (m), 0 = Prefabs direkt verbunden.</summary>
         public float Ext;
+        /// <summary>Liegt ein Bauwerk unter dem inneren Prefab (Teilung bzw. Zusammenführung), rückt
+        /// dieses um Shift Meter vom Bauwerk weg auf die andere Seite des OSM-Knotens (Ausfahrt:
+        /// stromab, Einfahrt: stromauf); das Bauwerk liegt dann unter der Zusatzspur-Straße.</summary>
+        public float Shift;
         public RoadEntry? ExtRoad;
         public Vector3 FarAnchor, FarDirection;   // äußeres Prefab: Lage des Außenknotens (Achse), Richtung
         public float FarGrade;
@@ -541,58 +549,100 @@ public static class Interchanges
     public static bool Prepare(Plan p, PpdSource src)
     {
         // erst prüfen, dann kürzen – sonst bliebe bei Abbruch eine Lücke
+        // Alle Abstände (lenNear, d, far …) zählen entlang der Hauptfahrbahn ab dem OSM-Knoten; d ist
+        // die Verschiebung des inneren Prefabs auf die andere Seite des Knotens (meist 0).
         if (p.Kind == "exit")
         {
             float lenNear = Length(src, Split, SplitIn, SplitMain), lenFar = Length(src, Widen, WidenIn, WidenOut);
             float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack)) { p.Blocked = true; return false; }
-            var spans = StructureSpans(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack + MaxExt);
-            p.Ext = ExtFor(spans, lenNear, lenFar);
-            float total = len + p.Ext;
-            if (ArcLength(p.MainIn) < total + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
+            // Bauwerke stromauf vom Knoten (dort liegen die Prefabs) und stromab (Platz zum Verschieben)
+            var spans = StructureSpans(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack + MaxExt + MaxShift);
+            var behind = StructureSpans(p.MainOut.Points, p.MainOut.Runs, false, MaxShift + ExtMargin + Slack);
+            float d = ShiftFor(spans, behind, lenNear, lenFar, (float)ArcLength(p.MainIn), (float)ArcLength(p.MainOut),
+                               (float)ArcLength(p.Ramp), out float ext);
+            p.Shift = d;
+            p.Ext = ext;
+            float far = len + p.Ext - d;      // so weit reichen die Prefabs stromauf
+            if (ArcLength(p.MainIn) < far + Slack + 20 || ArcLength(p.Ramp) < RampTrim + d + 20) return false;
+            // Teilung stromab gerückt: ihr Hauptausgang liegt d hinter dem Knoten auf der OSM-Linie
+            if (d > 0) p.Anchor = AxisAt(p.MainOut, true, d);
             if (p.Ext > 0)
             {
-                p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, lenNear)) / lenNear;
-                if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, lenNear), p.Anchor, p.Direction);
+                p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, lenNear - d)) / lenNear;
+                if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, lenNear - d), p.Anchor, p.Direction);
                 // äußeres Prefab mit seinem Außenknoten (zweispurig) auf der Achse – der dreispurige
                 // Innenknoten liegt wie bei direkt verbundenen Prefabs seitlich versetzt
-                p.FarAnchor = AxisAt(p.MainIn, false, total);
-                p.FarDirection = Chord(p.FarAnchor, AxisAt(p.MainIn, false, lenNear + p.Ext), p.Direction);
-                p.FarGrade = (HeightFromEnd(p.MainIn, lenNear + p.Ext) - p.FarAnchor.Y) / lenFar;
-                p.ExtRoad = ExtRoad(p, p.MainIn, false, lenNear + p.Ext, lenNear, spans);
+                p.FarAnchor = AxisAt(p.MainIn, false, far);
+                p.FarDirection = Chord(p.FarAnchor, AxisAt(p.MainIn, false, lenNear + p.Ext - d), p.Direction);
+                p.FarGrade = (HeightFromEnd(p.MainIn, lenNear + p.Ext - d) - p.FarAnchor.Y) / lenFar;
+                p.ExtRoad = ExtRoad(p, p.MainIn, false, lenNear + p.Ext - d, lenNear - d, spans);
             }
             else
             {
                 p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
                 if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, len), p.Anchor, p.Direction);
             }
-            return TrimEnd(p.MainIn, total + Slack) && TrimStart(p.Ramp, RampTrim);
+            return TrimEnd(p.MainIn, far + Slack) && TrimStart(p.Ramp, RampTrim + d) && (d == 0 || TrimStart(p.MainOut, d));
         }
         else
         {
             float lenNear = Length(src, Join, JoinMain, JoinOut), lenFar = Length(src, Narrow, NarrowIn, NarrowOut);
             float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(p.MainOut.Points, p.MainOut.Runs, false, len + Slack)) { p.Blocked = true; return false; }
-            var spans = StructureSpans(p.MainOut.Points, p.MainOut.Runs, false, len + Slack + MaxExt);
-            p.Ext = ExtFor(spans, lenNear, lenFar);
-            float total = len + p.Ext;
-            if (ArcLength(p.MainOut) < total + Slack + 20 || ArcLength(p.Ramp) < RampTrim + 20) return false;
+            // Bauwerke stromab vom Knoten (dort liegen die Prefabs) und stromauf (Platz zum Verschieben)
+            var spans = StructureSpans(p.MainOut.Points, p.MainOut.Runs, false, len + Slack + MaxExt + MaxShift);
+            var behind = StructureSpans(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, MaxShift + ExtMargin + Slack);
+            float d = ShiftFor(spans, behind, lenNear, lenFar, (float)ArcLength(p.MainOut), (float)ArcLength(p.MainIn),
+                               (float)ArcLength(p.Ramp), out float ext);
+            p.Shift = d;
+            p.Ext = ext;
+            float far = len + p.Ext - d;      // so weit reichen die Prefabs stromab
+            if (ArcLength(p.MainOut) < far + Slack + 20 || ArcLength(p.Ramp) < RampTrim + d + 20) return false;
+            // Zusammenführung stromauf gerückt: ihr Haupteingang liegt d vor dem Knoten auf der OSM-Linie
+            if (d > 0) p.Anchor = AxisAt(p.MainIn, false, d);
             if (p.Ext > 0)
             {
-                p.Grade = (HeightFromStart(p.MainOut, lenNear) - p.Anchor.Y) / lenNear;
-                if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, lenNear), p.Direction);
-                p.FarAnchor = AxisAt(p.MainOut, true, total);
-                p.FarDirection = Chord(AxisAt(p.MainOut, true, lenNear + p.Ext), p.FarAnchor, p.Direction);
-                p.FarGrade = (p.FarAnchor.Y - HeightFromStart(p.MainOut, lenNear + p.Ext)) / lenFar;
-                p.ExtRoad = ExtRoad(p, p.MainOut, true, lenNear, lenNear + p.Ext, spans);
+                p.Grade = (HeightFromStart(p.MainOut, lenNear - d) - p.Anchor.Y) / lenNear;
+                if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, lenNear - d), p.Direction);
+                p.FarAnchor = AxisAt(p.MainOut, true, far);
+                p.FarDirection = Chord(AxisAt(p.MainOut, true, lenNear + p.Ext - d), p.FarAnchor, p.Direction);
+                p.FarGrade = (p.FarAnchor.Y - HeightFromStart(p.MainOut, lenNear + p.Ext - d)) / lenFar;
+                p.ExtRoad = ExtRoad(p, p.MainOut, true, lenNear - d, lenNear + p.Ext - d, spans);
             }
             else
             {
                 p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
                 if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, len), p.Direction);
             }
-            return TrimStart(p.MainOut, total + Slack) && TrimEnd(p.Ramp, RampTrim);
+            return TrimStart(p.MainOut, far + Slack) && TrimEnd(p.Ramp, RampTrim + d) && (d == 0 || TrimEnd(p.MainIn, d));
         }
+    }
+
+    /// <summary>
+    /// Verschiebung des inneren Prefabs (siehe <see cref="Plan.Shift"/>) und Länge der Zusatzspur-
+    /// Straße. spans: Bauwerke ab dem Knoten auf der Seite der Prefabs, behind: auf der anderen Seite.
+    /// 0, wenn kein Bauwerk unter dem inneren Prefab läge. Sonst so weit, dass es
+    /// <see cref="ExtMargin"/> vor dem ersten Bauwerk endet – aber nur, wenn das höchstens
+    /// <see cref="MaxShift"/> ist, auf der anderen Seite des Knotens dort kein Bauwerk liegt, die
+    /// Straßen lang genug bleiben und das äußere Prefab jenseits des Bauwerks Platz findet.
+    /// Andernfalls bleibt es wie bisher (Prefab über dem Bauwerk, ohne Brückenkörper).
+    /// </summary>
+    internal static float ShiftFor(List<(float A, float B)> spans, List<(float A, float B)> behind, float lenNear, float lenFar,
+                                  float lenMain, float lenOther, float lenRamp, out float ext)
+    {
+        ext = ExtFor(spans, lenNear, lenFar);
+        if (!UseShift || !UseExt) return 0;
+        var under = spans.Where(s => s.A < lenNear + ExtMargin).ToList();
+        if (under.Count == 0) return 0;
+        float d = lenNear + ExtMargin - under.Min(s => s.A) + 0.5f;
+        if (d > MaxShift || d > lenNear - 5) return 0;
+        if (behind.Any(s => s.A < d + ExtMargin)) return 0;
+        float e = ExtFor(spans.Select(s => (s.A + d, s.B + d)).ToList(), lenNear, lenFar);
+        if (e <= 0) return 0;
+        if (lenMain < lenNear + lenFar + e - d + Slack + 20 || lenOther < d + Slack + 20 || lenRamp < RampTrim + d + 20) return 0;
+        ext = e;
+        return d;
     }
 
     /// <summary>

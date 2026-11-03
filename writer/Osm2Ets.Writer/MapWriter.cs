@@ -86,7 +86,8 @@ public static class MapWriter
                 if (plan.ExtRoad is not null)
                 {
                     valid.Add(plan.ExtRoad);
-                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): Bauwerk im Prefab-Bereich – {plan.Ext:0} m Zusatzspur-Straße zwischen den Prefabs");
+                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): Bauwerk im Prefab-Bereich – {plan.Ext:0} m Zusatzspur-Straße zwischen den Prefabs"
+                                 + (plan.Shift > 0 ? $", {(plan.Kind == "exit" ? "Teilung" : "Zusammenführung")} {plan.Shift:0} m vom Bauwerk weggerückt" : ""));
                     if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
                         Console.Error.WriteLine($"EXT {plan.ExtRoad.Id} pts " + string.Join(" ", plan.ExtRoad.Points.Select(q => $"({q[0]:0.0},{q[1]:0.0},{q[2]:0.0})")) +
                             " runs " + string.Join(" ", plan.ExtRoad.Runs.Select(x => $"{x.From}-{x.To}{(x.Bridge ? "B" : "")}{(x.Tunnel ? "T" : "")} {x.Role}")));
