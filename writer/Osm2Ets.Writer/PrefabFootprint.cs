@@ -25,6 +25,9 @@ public static class PrefabFootprint
     /// Knotenhöhen – bei zwei Knoten weit von linear (ein Drittel des Wegs: 80 % Gewicht auf dem
     /// nahen Knoten), auf 2,5 % Gefälle bis 0,2 m zu hoch: Füllgelände durch den Prefab-Asphalt.
     /// </summary>
+    /// <summary>Spurhöhe relativ zu den Knoten (aus: OSM2ETS_LANE_ABSY=1).</summary>
+    public static bool UseNodeRelative = Environment.GetEnvironmentVariable("OSM2ETS_LANE_ABSY") != "1";
+
     public static List<Vector3> All3(Map map)
     {
         var res = new List<Vector3>();
@@ -34,8 +37,12 @@ public static class PrefabFootprint
             var pts = LanesOf(pf, ppd);
             if (pts is null) continue;
             var (h0, g, o) = Plane(pf);
+            // Die Ebene geht durch die Knoten; Spurhöhen relativ zur mittleren Knotenhöhe der .ppd
+            // (sonst zählt z. B. bei mod_ger_29 – alle Knoten 0,22 m über Null – der Versatz doppelt
+            // und das Gelände darf 0,2 m über der Fahrbahn liegen)
+            float ny = UseNodeRelative ? ppd.Nodes.Average(k => k.Position.Y) : 0f;
             foreach (var (p, ly) in pts)
-                res.Add(new Vector3(p.X, h0 + Vector2.Dot(g, p - o) + ly, p.Y));
+                res.Add(new Vector3(p.X, h0 + Vector2.Dot(g, p - o) + ly - ny, p.Y));
         }
         return res;
     }
