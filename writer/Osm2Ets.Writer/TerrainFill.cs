@@ -97,6 +97,10 @@ public static class TerrainFill
     {
         CoverLimit = cover;
         placedFill.Clear();
+        // Zellen mit Prefab-Spuren: Füllstücke dort mit feinem Raster (siehe Emit)
+        PrefabCells.Clear(); FinePieces = 0;
+        if (FinePrefabLanes is not null)
+            foreach (var c in FinePrefabLanes) PrefabCells.Add(((int)MathF.Floor(c.X / PrefabCell), (int)MathF.Floor(c.Y / PrefabCell)));
         CoverCap.ConeLowered = 0; CoverCap.ConeRaised = 0; CoverCap.CoverLowered = 0;
         // mit CoverCap begrenzen Fahrbahnen das Füllgelände über ihre tatsächliche Oberfläche;
         // RoadCap nur noch für Brücken (Überbau) und Prefabs
@@ -334,6 +338,33 @@ public static class TerrainFill
         return new Result(items, rows, area / 1e6);
     }
 
+    /// <summary>
+    /// Füllstücke nahe Spuren von Anschluss-Prefabs mit 4-m-Raster statt 16 m (aus: OSM2ETS_FILL_COARSE_PREFAB=1).
+    /// Prefabs haben kein eigenes Straßengelände; das Füllgelände reicht bis an ihren Rand. Mit
+    /// 16-m-Spalten quer zum Rand lief ein Hang (Einschnitt) über bis zu 16 m linear bis unter das
+    /// Prefab und lag über dessen Seitenstreifen bis 0,8 m hoch („Sanddünen“ an der Ausfahrt
+    /// A 9 → A 70).
+    /// </summary>
+    public static bool FineNearPrefabs = Environment.GetEnvironmentVariable("OSM2ETS_FILL_COARSE_PREFAB") != "1";
+    /// <summary>Spurpunkte der Prefabs, neben denen das feine Raster gilt (nur Anschluss-Prefabs:
+    /// an Kreuzungs-Prefabs kleiner Straßen brachte es nichts, an einer Stelle aber Gelände über
+    /// einer Straße).</summary>
+    public static List<Vector2>? FinePrefabLanes;
+    private const float PrefabCell = 8f, PrefabReach = 10f;
+    private static readonly HashSet<(int, int)> PrefabCells = [];
+    public static int FinePieces;
+
+    private static bool NearPrefab(float xa, float xb, float za, float zb)
+    {
+        if (PrefabCells.Count == 0) return false;
+        int i0 = (int)MathF.Floor((xa - PrefabReach) / PrefabCell), i1 = (int)MathF.Floor((xb + PrefabReach) / PrefabCell);
+        int j0 = (int)MathF.Floor((za - PrefabReach) / PrefabCell), j1 = (int)MathF.Floor((zb + PrefabReach) / PrefabCell);
+        for (int i = i0; i <= i1; i++)
+            for (int j = j0; j <= j1; j++)
+                if (PrefabCells.Contains((i, j))) return true;
+        return false;
+    }
+
     private static int Emit(Map map, TerrainGridEntry grid, List<(float X, float L, float R)> run, float z,
                             Token material, ref double area, Action<float, float, float, float> placed)
     {
@@ -394,12 +425,14 @@ public static class TerrainFill
             float plen = pb.X - pa.X;
             // kurze Stücke: Standard-Schrittweite und eben (ohne Höhenpunkte) – mit eigenen
             // Höhenpunkten wurden sie im Editor teils nicht gezeichnet
-            t.StepSize = StepSize.Meters16;
+            bool fine = FineNearPrefabs && NearPrefab(pa.X, pb.X, z - l, z + r);
+            t.StepSize = fine ? StepSize.Meters4 : StepSize.Meters16;
+            if (fine) FinePieces++;
             t.Recalculate();
             if (Shape)
             {
-                if (ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1, 16) < 0) Mismatch++;
-                if (ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1, 16) < 0) Mismatch++;
+                if (ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1, fine ? 4 : 16) < 0) Mismatch++;
+                if (ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1, fine ? 4 : 16) < 0) Mismatch++;
             }
             map.AddSector(Map.GetSectorOfCoordinate((pa + pb) / 2));
             area += (pb.X - pa.X) * (l + r);
