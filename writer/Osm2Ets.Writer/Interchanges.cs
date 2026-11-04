@@ -50,6 +50,15 @@ public static class Interchanges
             Environment.GetEnvironmentVariable("OSM2ETS_HW3DOUBLE_VARIANT") ?? "default", "ger_1"),
         null, null, "ext3");
 
+    /// <summary>Gehört das Prefab-Modell zu einem Anschluss-Prefab-Satz?</summary>
+    public static bool IsKitPrefab(TruckLib.Token model)
+    {
+        foreach (var k in new[] { Hw2, Hw3Double })
+            foreach (var d in new[] { k.Widen, k.Split, k.Join, k.Narrow })
+                if (d is not null && (TruckLib.Token)d.Unit == model) return true;
+        return false;
+    }
+
     /// <summary>Zweispurige Ausfahrt von 3 Spuren (aus: OSM2ETS_NO_HW3DOUBLE=1).</summary>
     public static bool UseHw3Double = Environment.GetEnvironmentVariable("OSM2ETS_NO_HW3DOUBLE") != "1";
 
