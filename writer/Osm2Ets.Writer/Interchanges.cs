@@ -50,13 +50,13 @@ public static class Interchanges
             Environment.GetEnvironmentVariable("OSM2ETS_HW3DOUBLE_VARIANT") ?? "default", "ger_1"),
         null, null, "ext3");
 
-    /// <summary>Gehört das Prefab-Modell zu einem Anschluss-Prefab-Satz?</summary>
-    public static bool IsKitPrefab(TruckLib.Token model)
+    /// <summary>Seitlicher Abstand zusätzlicher Spurpunkte unter dem Seitenstreifen (0 = keine).</summary>
+    public static float ShoulderOf(TruckLib.Token model)
     {
-        foreach (var k in new[] { Hw2, Hw3Double })
+        foreach (var (k, off) in new[] { (Hw3Double, PrefabFootprint.ShoulderOffset3), (Hw2, PrefabFootprint.ShoulderOffset) })
             foreach (var d in new[] { k.Widen, k.Split, k.Join, k.Narrow })
-                if (d is not null && (TruckLib.Token)d.Unit == model) return true;
-        return false;
+                if (d is not null && (TruckLib.Token)d.Unit == model) return off;
+        return 0f;
     }
 
     /// <summary>Zweispurige Ausfahrt von 3 Spuren (aus: OSM2ETS_NO_HW3DOUBLE=1).</summary>

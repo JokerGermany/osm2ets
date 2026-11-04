@@ -34,7 +34,7 @@ public static class PrefabFootprint
         foreach (var (pf, ppd) in Ppd.ToList())
         {
             if (!map.MapItems.ContainsKey(pf.Uid)) continue;
-            var pts = LanesOf(pf, ppd, Interchanges.IsKitPrefab(pf.Model) ? ShoulderOffset : 0f);
+            var pts = LanesOf(pf, ppd, Interchanges.ShoulderOf(pf.Model));
             if (pts is null) continue;
             var (h0, g, o) = Plane(pf);
             // Die Ebene geht durch die Knoten; Spurhöhen relativ zur mittleren Knotenhöhe der .ppd
@@ -110,9 +110,11 @@ public static class PrefabFootprint
     /// <summary>
     /// Autobahn-Anschluss-Prefabs: zusätzliche Spurpunkte so weit neben jeder Spur (m). Ihr Modell
     /// hat neben der äußeren Spur einen Seitenstreifen; mit nur 3 m um die Spurmitte lag das
-    /// Gelände dort bis 0,8 m über dem Rand (A 9, Aufweitung vor der Ausfahrt zur A 70).
+    /// Gelände dort bis 0,8 m über dem Rand (A 9, Aufweitung vor der Ausfahrt zur A 70). Beim
+    /// dreispurigen Satz reichten 2,5 m nicht (Rand bis 0,9 m darüber); 4,5 m bei hw2 gäben an
+    /// der A 70 (x = 4234, z = -1841) neue Wände.
     /// </summary>
-    public const float ShoulderOffset = 2.5f;
+    public const float ShoulderOffset = 2.5f, ShoulderOffset3 = 4.5f;
 
     private static List<(Vector2 P, float LocalY)>? LanesOf(Prefab pf, PrefabDescriptor ppd, float side = 0f)
     {
