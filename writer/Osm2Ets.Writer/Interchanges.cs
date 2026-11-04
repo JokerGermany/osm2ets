@@ -128,8 +128,23 @@ public static class Interchanges
         foreach (var (node, list) in ends)
         {
             if (list.Count != 3) continue;
-            var mains = list.Where(e => IsMotorway2(e.R)).ToList();
+            var mains = list.Where(e => IsMotorway2(e.R, e.AtStart)).ToList();
             var ramps = list.Where(e => IsRamp(e.R)).ToList();
+            // Autobahnbeginn/-ende: zwei Anschlussäste und eine Autobahn. Der Ast, der
+            // geradeaus in die Autobahn übergeht, ist dann die Hauptfahrbahn.
+            if (UseLinkMain && mains.Count == 1 && ramps.Count == 2)
+            {
+                var m = mains[0];
+                var mAway = Away(m.R, m.AtStart);
+                var cand = ramps.Where(e => e.AtStart != m.AtStart && e.R.Runs.All(x => x.Lanes is null or 2))
+                                .Select(e => (e, Dot: -Vector2.Dot(Away(e.R, e.AtStart), mAway)))
+                                .OrderByDescending(t => t.Dot).ToList();
+                if (cand.Count > 0 && cand[0].Dot > 0.97f && (cand.Count == 1 || cand[1].Dot < cand[0].Dot - 0.005f))
+                {
+                    mains.Add(cand[0].e);
+                    ramps.Remove(cand[0].e);
+                }
+            }
             if (mains.Count != 2 || ramps.Count != 1) continue;
             var mainIn = mains.FirstOrDefault(e => !e.AtStart).R;
             var mainOut = mains.FirstOrDefault(e => e.AtStart).R;
@@ -148,12 +163,48 @@ public static class Interchanges
                 OsmNode = node, MainIn = mainIn, MainOut = mainOut, Ramp = ramp.R,
                 Anchor = anchor, Direction = dir,
             });
+            foreach (var m in mains) NarrowAtNode(m.R, m.AtStart);
         }
         return plans;
     }
 
-    private static bool IsMotorway2(RoadEntry r) =>
-        r.Runs.All(x => x.Oneway && x.Highway == "motorway") && r.Runs.All(x => x.Lanes is null or 2);
+    /// <summary>Autobahnbeginn mit Anschlussast als Hauptfahrbahn zulassen (OSM2ETS_NO_LINKMAIN=1 schaltet ab).</summary>
+    public static bool UseLinkMain = Environment.GetEnvironmentVariable("OSM2ETS_NO_LINKMAIN") != "1";
+
+    /// <summary>Höchstlänge eines 3-spurigen Laufs am Knoten, der als Zusatzspur gilt (m).</summary>
+    public const float MaxAuxLane = 400f;
+
+    /// <summary>
+    /// 2-spurige Autobahn. Ein 3-spuriger Lauf direkt am Knoten (bis MaxAuxLane lang,
+    /// dahinter 2 Spuren) zählt als Beschleunigungs-/Verzögerungsstreifen: Den enthält das Prefab.
+    /// </summary>
+    internal static bool IsMotorway2(RoadEntry r, bool atStart)
+    {
+        if (!r.Runs.All(x => x.Oneway && x.Highway == "motorway")) return false;
+        int k = AuxRun(r, atStart);
+        for (int i = 0; i < r.Runs.Count; i++)
+            if (i != k && r.Runs[i].Lanes is not (null or 2)) return false;
+        return true;
+    }
+
+    /// <summary>Index des 3-spurigen Laufs am Knotenende, der als Zusatzspur gilt, sonst -1.</summary>
+    private static int AuxRun(RoadEntry r, bool atStart)
+    {
+        if (r.Runs.Count < 2) return -1;
+        int k = atStart ? 0 : r.Runs.Count - 1;
+        var run = r.Runs[k];
+        if (run.Lanes != 3 || run.Bridge || run.Tunnel) return -1;
+        double len = 0;
+        for (int i = run.From; i < run.To && i + 1 < r.Points.Count; i++)
+            len += Vector2.Distance(P(r.Points[i]), P(r.Points[i + 1]));
+        return len <= MaxAuxLane ? k : -1;
+    }
+
+    internal static void NarrowAtNode(RoadEntry r, bool atStart)
+    {
+        int k = AuxRun(r, atStart);
+        if (k >= 0) r.Runs[k].Lanes = 2;
+    }
 
     private static bool IsRamp(RoadEntry r) =>
         r.Runs.All(x => x.Oneway && x.Highway is "motorway_link" or "trunk_link");

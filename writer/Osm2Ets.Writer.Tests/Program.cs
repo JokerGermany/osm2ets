@@ -33,6 +33,7 @@ var tests = new List<(string Name, Action Body)>
     ("Unterführung: Sohle bei schräger Kreuzung um den Versatz an den Brückenkanten breiter", UnderpassSoleWiderWhenSkewed),
     ("Anschlussstelle: inneres Prefab rückt vom Bauwerk weg (Zusatzspur-Straße darüber)", InterchangeShiftAwayFromStructure),
     ("Anschlussstelle: kurze Endstücke der Zusatzspur-Straße gehören zur Brücke", ExtRoadAbsorbsStubs),
+    ("Anschlussstelle: Autobahnbeginn aus zwei Anschlussästen wird Einfahrt", MotorwayStartFromTwoLinks),
 };
 
 int failed = 0;
@@ -831,4 +832,27 @@ static void ExtRoadAbsorbsStubs()
         "Endstücke nicht zur Brücke: " + string.Join(" ", ext.Runs.Select(r => $"{r.From}-{r.To}{(r.Bridge ? "B" : "")}")));
     var ext2 = Interchanges.ExtRoad(plan, main, true, 20, 54, [(30f, 50f)]);
     Check(!ext2.Runs[0].Bridge && ext2.Runs.Any(r => r.Bridge), "10 m langes Endstück wurde Brücke");
+}
+
+static void MotorwayStartFromTwoLinks()
+{
+    // Zwei 2-spurige Anschlussäste treffen sich bei (0,0); in +x Richtung beginnt die
+    // Autobahn mit 150 m 3 Spuren (Beschleunigungsstreifen), dann 2 Spuren.
+    RunEntry R(int a, int b, string hw, int lanes) => new() { From = a, To = b, Highway = hw, Role = hw == "motorway" ? "core" : "link", Oneway = true, Lanes = lanes };
+    var main = MakeRoad("m", [[0, 0, 0], [150, 0, 0], [600, 0, 0]], R(0, 1, "motorway", 3), R(1, 2, "motorway", 2));
+    main.Start = new EndInfo { Kind = "node", OsmNode = 7 };
+    var through = MakeRoad("t", [[-500, 0, 0], [0, 0, 0]], R(0, 1, "motorway_link", 2));
+    through.End = new EndInfo { Kind = "node", OsmNode = 7 };
+    // Zufahrt kommt von rechts (rechts von +x ist +z)
+    var ramp = MakeRoad("r", [[-400, 0, 60], [-150, 0, 12], [0, 0, 0]], R(0, 2, "motorway_link", 1));
+    ramp.End = new EndInfo { Kind = "node", OsmNode = 7 };
+    var plans = Interchanges.Find([main, through, ramp], []);
+    Check(plans.Count == 1 && plans[0].Kind == "entry" && plans[0].MainIn == through && plans[0].Ramp == ramp,
+          $"keine Einfahrt erkannt ({plans.Count})");
+    Check(main.Runs[0].Lanes == 2 && main.Runs[1].Lanes == 2, "Zusatzspur nicht auf 2 Spuren gesetzt");
+    // ohne eindeutige Geradeaus-Richtung (beide Äste gleich schräg) keine Einfahrt
+    var a = MakeRoad("a", [[-300, 0, 60], [0, 0, 0]], R(0, 1, "motorway_link", 2)); a.End = new EndInfo { Kind = "node", OsmNode = 8 };
+    var b = MakeRoad("b", [[-300, 0, -60], [0, 0, 0]], R(0, 1, "motorway_link", 2)); b.End = new EndInfo { Kind = "node", OsmNode = 8 };
+    var m2 = MakeRoad("m2", [[0, 0, 0], [600, 0, 0]], R(0, 1, "motorway", 2)); m2.Start = new EndInfo { Kind = "node", OsmNode = 8 };
+    Check(Interchanges.Find([m2, a, b], []).Count == 0, "Gabel ohne Geradeaus-Ast als Einfahrt erkannt");
 }
