@@ -798,17 +798,21 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
 
 def trim_steep_visible(pieces: list, near_m: float, scale_h: float, slope: float = 0.67,
                        tol_h: float = 1.0, half_near: float = 3.0, min_m: float = 30.0,
-                       cross_keep_m: float = 30.0, bridge_keep_m: float = 60.0) -> dict:
+                       cross_keep_m: float = 30.0, bridge_keep_m: float = 60.0,
+                       gap_keep_m: float = 40.0) -> dict:
     """Nach den Höhen: Sichtstücke (Rolle 'visible') dort weglassen, wo sie neben einer Straße
     der Stufe so viel höher oder tiefer liegen, dass zwischen den Modellrändern keine Böschung mit
     ``slope`` (+ ``tol_h``) Platz hat – z. B. ein Feldweg am Fuß eines hohen Autobahndamms oder
     oben an der Kante eines Einschnitts. Dort endete das Straßengelände an einer Wand. Ausgenommen
-    ist der Bereich ``cross_keep_m`` (Spielmeter, längs des Wegs) um eine höhenfreie Kreuzung mit
-    einer Straße der Stufe: Unterführung und Brückenrampen gehören dazu – ebenso jede Brücke samt
-    ``bridge_keep_m`` davor und dahinter (sonst hing z. B. eine Feldwegbrücke über dem Einschnitt der
-    A 70 an einem Ende in der Luft, weil ihre Zufahrt an der Einschnittkante fehlte). Die Stücke werden an den
-    verdichteten Punkten geteilt; Reste unter ``min_m`` ohne Anschluss entfallen. Ändert
-    ``pieces`` an Ort und Stelle.
+    ist der Bereich ``cross_keep_m`` (Spielmeter, längs des Wegs; bei schräger Kreuzung geteilt durch
+    sin α, höchstens bis 0,3 herab – der Weg bleibt dann länger neben dem Bauwerk) um eine
+    höhenfreie Kreuzung mit einer Straße der Stufe: Unterführung und Brückenrampen gehören dazu –
+    ebenso jede Brücke samt ``bridge_keep_m`` davor und dahinter (sonst hing z. B. eine Feldwegbrücke
+    über dem Einschnitt der A 70 an einem Ende in der Luft, weil ihre Zufahrt an der Einschnittkante
+    fehlte). Lücken bis ``gap_keep_m`` mitten in einem Stück bleiben geschlossen: Eine Straße mit
+    16 m Loch (St 2183 unter der A 70) sieht schlimmer aus als eine kurze steile Böschung. Die Stücke
+    werden an den verdichteten Punkten geteilt; Reste unter ``min_m`` ohne Anschluss entfallen.
+    Ändert ``pieces`` an Ort und Stelle.
 
     Rückgabe: {"pieces_split", "removed_m"}.
     """
@@ -884,10 +888,12 @@ def trim_steep_visible(pieces: list, near_m: float, scale_h: float, slope: float
                     t = ((A[:, 0] - p0[0]) * AB[:, 1] - (A[:, 1] - p0[1]) * AB[:, 0]) / den
                     u = ((A[:, 0] - p0[0]) * r[1] - (A[:, 1] - p0[1]) * r[0]) / den
                 hit = (t > 0) & (t < 1) & (u > 0) & (u < 1)
-                if hit.any():
-                    sc = d.s_game[j] + float(t[hit].min()) * (d.s_game[j + 1] - d.s_game[j])
+                for h in np.flatnonzero(hit):
+                    sc = d.s_game[j] + float(t[h]) * (d.s_game[j + 1] - d.s_game[j])
+                    sin = abs(float(den[h])) / max(float(np.hypot(*r) * np.sqrt(L2[h])), 1e-9)
+                    keep = cross_keep_m / max(sin, 0.3)
                     mid = (d.s_game[:-1] + d.s_game[1:]) / 2
-                    check &= ~(np.abs(mid - sc) < cross_keep_m)
+                    check &= ~(np.abs(mid - sc) < keep)
             for j in np.flatnonzero(check):
                 p0, p1 = d.xy_game[j], d.xy_game[j + 1]
                 n = max(2, int(np.ceil(np.hypot(*(p1 - p0)) / 5.0)) + 1)
@@ -903,11 +909,23 @@ def trim_steep_visible(pieces: list, near_m: float, scale_h: float, slope: float
                 gap = np.maximum(dist - H[k] - half_near, 0.0)
                 near = dist <= near_m / scale_h + H[k]
                 bad[j] = bool(np.any(near & (np.abs(zq - zl) > tol_h + slope * gap)))
+        # kurze Lücken mitten im Stück wieder schließen
+        seg_len = np.diff(d.s_game)
+        j = 0
+        while j < m - 1:
+            if not bad[j]:
+                j += 1
+                continue
+            k = j
+            while k + 1 < m - 1 and bad[k + 1]:
+                k += 1
+            if j > 0 and k + 1 < m - 1 and float(seg_len[j:k + 1].sum()) <= gap_keep_m:
+                bad[j:k + 1] = False
+            j = k + 1
         if not bad.any():
             out.append(p)
             continue
         stats["pieces_split"] += 1
-        seg_len = np.diff(d.s_game)
         stats["removed_m"] += float(seg_len[bad].sum())
         keep_runs = []
         j = 0

@@ -123,3 +123,20 @@ def test_short_edge_between_bridge_and_junction_is_kept(tmp_path, profile):
         for e, run in ((r["start"], r["runs"][0]), (r["end"], r["runs"][-1])):
             if run["bridge"]:
                 assert e["kind"] == "node" and ends[e["osm_node"]] >= 2, (r["id"], e)
+
+
+def test_skewed_way_under_bridge_has_no_gap(tmp_path, profile):
+    """Ein Weg unterquert die Autobahn sehr schräg (20°). Neben der Brücke liegt er tiefer als die
+    Fahrbahn daneben; früher fiel dort ein Stück heraus (Loch in der Straße, St 2183 unter der A 70).
+    Jetzt bleibt der Weg am Stück."""
+    import math
+    a = math.radians(20)
+    nodes = {21: _pt(-300 * math.cos(a), -300 * math.sin(a)), 22: _pt(300 * math.cos(a), 300 * math.sin(a))}
+    ways = [(21, [21, 22], {"highway": "service"})]
+    _motorway(nodes, ways, bridge_x=0)
+    model = build(str(write_osm(tmp_path / "k.osm", nodes, ways)), profile, "L1")
+    vis = [r for r in _visible(model) if any(21 in run["osm_ways"] for run in r["runs"])]
+    assert vis
+    # höchstens die beiden offenen Enden (200 m ab den Kreuzungen) – kein Loch dazwischen
+    cuts = sum(e["kind"] == "cut" for r in vis for e in (r["start"], r["end"]))
+    assert cuts == 2, [(r["id"], r["start"]["kind"], r["end"]["kind"]) for r in vis]
