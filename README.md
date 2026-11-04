@@ -58,6 +58,11 @@ How fill and road terrain fit together:
   terrain it continues the edge with at most 0.7 slope up or down, so the edge meets the fill.
 - The fill quads are coarse (up to 16 m); after placing them every quad is checked against the
   surface above and lowered where it would poke through.
+- Next to prefabs (which have no road terrain of their own) every grid query has an embankment as
+  lower bound: at lane height up to 5 m from the lane centre, then falling at 0.7. Where a prefab
+  lies at least 3 m above a road next to it, that road's terrain runs as a straight ramp up to the
+  prefab edge (not within an underpass). Before, e.g. the terrain next to the merge prefab in
+  front of the A 70 bridge ended 3–4 m below the prefab.
 - Underpasses (as in the SCS map): under a bridge that crosses a road of the network (or a
   prefab) at least 3 m higher, the terrain lies at the level of the lower road; from both
   bridge ends it falls as a slope (1 : 1.5, steeper if the span is short), beyond the deck edges
@@ -118,7 +123,9 @@ Findings from editor tests that shaped this (useful if you work on it):
   from the structure to the other side of the OSM node (entry upstream, exit downstream) – in the
   test area the entry on the A 70 bridge at x = −3270, z = −3143: 15 m. If that is not possible
   (structure too close to the node, another structure on the other side, roads too short), the
-  prefab stays on the structure: terrain open below, but no railing and no body.
+  prefab stays on the structure: terrain open below, but no railing and no body. End pieces of
+  the extra-lane road up to 5.5 m between prefab and bridge become part of the bridge – as a road
+  of their own, their terrain stood as a narrow tongue next to the underpass.
 - Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
   of 1–3 m remain in a few places.
 - Junctions without a prefab: road piece between two junctions too short, or angle more
@@ -260,9 +267,12 @@ In addition, in every level (`extras` and `industry` in the profile):
      (`extras.visible_crossing_m`), going straight on at junctions.
    - Sections at most 60 m next to a road of the level (`extras.visible_near_m`): parallel ways,
      branches at nodes of the network. Gaps up to 40 m are closed, isolated remains below 30 m
-     dropped, as are sections so much higher or lower that no 1 : 1.5 slope fits in between.
-     Whole edges stay even when short: they connect two nodes (e.g. 6 m of track between a bridge
-     end and a junction).
+     dropped, as are sections so much higher or lower that no 1 : 1.5 slope fits in between –
+     except around a grade-separated crossing (30 m along the way, 30 m / sin α at a skewed
+     crossing), at bridges including 60 m before and after, and for gaps up to 40 m within a piece
+     (otherwise e.g. 16 m of the St 2183 next to the A 70 bridge went missing). Whole edges stay
+     even when short: they connect two nodes (e.g. 6 m of track between a bridge end and a
+     junction).
    - Classes: everything L5 shows (`extras.visible_highway`). At motorway carriageways the pieces
      end 15 m before (no at-grade junction). In the game: road type as usual, but not on the
      map/GPS, GPS avoids; AI traffic as usual (`visible` in `mapping.jsonc`).

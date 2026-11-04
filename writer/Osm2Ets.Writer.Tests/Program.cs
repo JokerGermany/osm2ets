@@ -32,6 +32,7 @@ var tests = new List<(string Name, Action Body)>
     ("Brückenkörper: Brücke über schräg kreuzende Straße wird verlängert, rechtwinklige nicht", BridgeExtendedOverSkewedRoad),
     ("Unterführung: Sohle bei schräger Kreuzung um den Versatz an den Brückenkanten breiter", UnderpassSoleWiderWhenSkewed),
     ("Anschlussstelle: inneres Prefab rückt vom Bauwerk weg (Zusatzspur-Straße darüber)", InterchangeShiftAwayFromStructure),
+    ("Anschlussstelle: kurze Endstücke der Zusatzspur-Straße gehören zur Brücke", ExtRoadAbsorbsStubs),
 };
 
 int failed = 0;
@@ -815,4 +816,19 @@ static void InterchangeShiftAwayFromStructure()
     Check(d2 == 0 && ext2 > 0, $"Verschiebung {d2:0.0}, Zusatzspur-Straße {ext2:0.0}");
     // Rampe zu kurz für die Verschiebung
     Check(Interchanges.ShiftFor([(29.5f, 49.5f)], [], 40f, 63f, 1000, 1000, 50, out _) == 0, "Rampe zu kurz, trotzdem verschoben");
+}
+
+static void ExtRoadAbsorbsStubs()
+{
+    // Hauptfahrbahn längs x mit Brücke 30…50 m; Zusatzspur-Straße 25…54 m: die 5 m davor und 4 m
+    // dahinter werden Brücke (bis ExtMargin + 1,5 m), längere Endstücke nicht
+    var main = MakeRoad("m", new[] { new[] { 0.0, 5, 0 }, new[] { 30.0, 5, 0 }, new[] { 50.0, 5, 0 }, new[] { 200.0, 5, 0 } },
+        MakeRun(0, 1, "motorway", oneway: true), MakeRun(1, 2, "motorway", oneway: true, bridge: true), MakeRun(2, 3, "motorway", oneway: true));
+    var plan = new Interchanges.Plan { Kind = "entry", OsmNode = 1, MainIn = main, MainOut = main, Ramp = main,
+                                       Anchor = Vector3.Zero, Direction = Vector3.UnitX };
+    var ext = Interchanges.ExtRoad(plan, main, true, 25, 54, [(30f, 50f)]);
+    Check(ext.Runs.All(r => r.Bridge) && ext.Runs.All(r => r.Role == Interchanges.ExtRole),
+        "Endstücke nicht zur Brücke: " + string.Join(" ", ext.Runs.Select(r => $"{r.From}-{r.To}{(r.Bridge ? "B" : "")}")));
+    var ext2 = Interchanges.ExtRoad(plan, main, true, 20, 54, [(30f, 50f)]);
+    Check(!ext2.Runs[0].Bridge && ext2.Runs.Any(r => r.Bridge), "10 m langes Endstück wurde Brücke");
 }

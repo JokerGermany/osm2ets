@@ -59,6 +59,11 @@ Wie Füll- und Straßengelände zusammenpassen:
   so dass der Rand auf das Füllgelände trifft.
 - Die Füllquads sind grob (bis 16 m); nach dem Setzen wird jedes Quad gegen die Fläche darüber
   geprüft und dort abgesenkt, wo es durchstoßen würde.
+- Neben Prefabs (ohne eigenes Straßengelände) gilt für jede Rasterabfrage eine Böschung als
+  Untergrenze: bis 5 m neben der Spurmitte auf Spurhöhe, dann mit 0,7 fallend. Liegt ein Prefab
+  mindestens 3 m höher als eine Straße daneben, läuft deren Straßengelände als gerade Rampe bis an
+  den Prefab-Rand (nicht im Bereich einer Unterführung). Sonst endete z. B. das Gelände neben der
+  Zusammenführung vor der A-70-Brücke 3–4 m unter dem Prefab.
 - Unterführungen (wie in der SCS-Karte): Unter einer Brücke, die eine Straße des Netzes (oder ein
   Prefab) mindestens 3 m höher überquert, liegt das Gelände auf Höhe der unteren Straße; von beiden
   Brückenenden fällt es als Böschung ab (1 : 1,5, steiler bei kurzer Brücke), seitlich über die
@@ -122,6 +127,8 @@ Erkenntnisse aus Editor-Tests (nützlich für Weiterarbeit):
   – im Testgebiet die Einfahrt auf der A-70-Brücke bei x = −3270, z = −3143: 15 m. Geht das nicht
   (Bauwerk zu dicht am Knoten, auf der anderen Seite ein weiteres Bauwerk, Straßen zu kurz),
   bleibt das Prefab über dem Bauwerk: Gelände darunter offen, aber ohne Geländer und Körper.
+  Endstücke der Zusatzspur-Straße bis 5,5 m zwischen Prefab und Brücke gehören zur Brücke – als
+  eigene Straße stand ihr Gelände als schmale Zunge neben der Unterführung.
 - Wo Straßengelände zweier deutlich verschieden hoher Straßen aneinanderstößt (dichte
   Anschlussstellen), bleiben an wenigen Stellen Stufen von 1–3 m.
 - Kreuzungen ohne Prefab: Straßenstück zwischen zwei Kreuzungen zu kurz oder Winkel mehr als
@@ -263,8 +270,11 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
    - Abschnitte höchstens 60 m neben einer Straße der Stufe (`extras.visible_near_m`):
      Parallelwege, Abzweige an Knoten des Netzes. Lücken bis 40 m werden geschlossen,
      freistehende Reste unter 30 m entfallen, ebenso Abschnitte, die so viel höher oder tiefer
-     liegen, dass keine Böschung 1 : 1,5 dazwischen passt. Ganze Kanten bleiben auch, wenn sie kurz
-     sind: Sie verbinden zwei Knoten (z. B. 6 m Feldweg zwischen Brückenende und Einmündung).
+     liegen, dass keine Böschung 1 : 1,5 dazwischen passt – außer rund um eine höhenfreie
+     Kreuzung (30 m längs des Wegs, bei schräger Kreuzung 30 m / sin α), an Brücken samt 60 m davor
+     und dahinter und bei Lücken bis 40 m mitten in einem Stück (sonst fehlte z. B. ein 16-m-Stück
+     der St 2183 neben der A-70-Brücke). Ganze Kanten bleiben auch, wenn sie kurz sind: Sie
+     verbinden zwei Knoten (z. B. 6 m Feldweg zwischen Brückenende und Einmündung).
    - Klassen: alles, was L5 zeigt (`extras.visible_highway`). An Autobahnfahrbahnen enden die
      Stücke 15 m davor (keine ebenerdige Einmündung). Im Spiel: Straßentyp wie sonst, aber nicht
      auf Karte/Navi, Navi meidet; KI-Verkehr wie sonst (`visible` in `mapping.jsonc`).

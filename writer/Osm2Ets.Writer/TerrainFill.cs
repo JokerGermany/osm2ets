@@ -39,6 +39,9 @@ public static class TerrainFill
     public static float GapMaxDh = 3f;
     public static bool GapRamp = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOGAP") is null;
     public static int GapRamped;
+    /// <summary>Straßengelände-Punkte, die als Rampe an ein höheres bzw. tieferes Prefab laufen.</summary>
+    public static int PrefabRamped;
+    public static bool PrefabRamp = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOPREFABRAMP") is null;
     /// <summary>Je Spalte kürzen: Reihen enden kurz vor dem Modell einer anderen Straße (an
     /// zusammenlaufenden Fahrbahnen ist die Lücke je Spalte verschieden). Aus: OSM2ETS_RT_NOCLAMP.</summary>
     public static bool ClampColumns = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOCLAMP") is null;
@@ -459,7 +462,8 @@ public static class TerrainFill
     /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
     /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
     /// </summary>
-    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float, (float Dist, float Height, bool Bridge)>? other = null, Vector3? dA = null, Vector3? dB = null, Func<Vector2, Vector2, float, float>? rayFree = null)
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float, (float Dist, float Height, bool Bridge)>? other = null, Vector3? dA = null, Vector3? dB = null, Func<Vector2, Vector2, float, float>? rayFree = null,
+                                       Func<float, float, (float Dist, float Height)>? prefabNear = null)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
@@ -559,6 +563,25 @@ public static class TerrainFill
                 // und müssen gleich hoch sein – mit der ungekürzten Reihenlage bekamen die äußeren
                 // Reihen die Rasterhöhe, die inneren die Fahrbahnhöhe: senkrechte Wand (v79)
                 float tt = Math.Clamp((dd - flat) / blend, 0, 1);
+                // Prefab deutlich höher daneben (auf einem Damm, ohne eigenes Straßengelände): gerade
+                // Rampe bis an seinen Rand. Sonst endete das Gelände dort 3–4 m unter dem Prefab (an der
+                // Zusammenführung vor der A-70-Brücke über die Gemeindeverbindung: Mulde mit Wänden
+                // neben dem Prefab). Nicht unter Brücken (prefabNear liefert dort nichts) und nicht zu
+                // tieferen Prefabs (eine Kreuzung unter der A 70 zog sonst den Damm daneben herunter).
+                if (prefabNear is not null && PrefabRamp)
+                {
+                    var (pd, ph) = prefabNear(w.X, w.Y);
+                    if (!float.IsNaN(ph) && pd < GoreDist && ph - roadY >= GapMaxDh)
+                    {
+                        float k = Math.Clamp((GoreDist - pd) / (GoreDist - GoreFull), 0, 1);
+                        float hr = roadY + (h - roadY) * tt;
+                        float rj = d - edge;
+                        float hg = roadY + (ph - roadY) * (rj / MathF.Max(rj + pd, 1e-3f));
+                        h = hr + (hg - hr) * k;
+                        PrefabRamped++;
+                        goto shaped;
+                    }
+                }
                 if (other is not null)
                 {
                     var (od, oh, ob) = other(w.X, w.Y, roadY);

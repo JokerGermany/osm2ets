@@ -134,7 +134,10 @@ public sealed class Underpasses
             {
                 var sty = resolve(sh.Run);
                 float left = sty.Width / 2 - sty.ModelCenter, right = sty.Width / 2 + sty.ModelCenter;
-                foreach (var part in Uncovered(sh.P, bridgeSegs, 2.5f, 4f))
+                // 5 m: Die Zusatzspur-Straße einer Anschlussstelle liegt bis 4,5 m neben der Linie der
+                // ursprünglichen Brücke (dreispuriger Prefab-Knoten) – sonst entstand daneben eine zweite,
+                // versetzte Unterführung
+                foreach (var part in Uncovered(sh.P, bridgeSegs, 5f, 4f))
                     u.TryAdd($"{sh.Road.Id}[{sh.Run.From}-{sh.Run.To}]/Prefab", sh.Road, part, left, right, segs, prefabLanes);
             }
         }
@@ -251,6 +254,19 @@ public sealed class Underpasses
     {
         if (drop <= 0) return Slope;
         return Math.Clamp(drop / MathF.Max(room, 0.5f), Slope, MaxSlope);
+    }
+
+    /// <summary>Liegt (x, z) im Bereich einer Unterführung (unter einer Brücke oder in ihrem Kegel)?</summary>
+    public bool Inside(float x, float z)
+    {
+        var q = new Vector2(x, z);
+        foreach (var sp in spans)
+        {
+            if (q.X < sp.Min.X || q.Y < sp.Min.Y || q.X > sp.Max.X || q.Y > sp.Max.Y) continue;
+            if (!Project(sp, q, out _, out float v, out _)) continue;
+            if (MathF.Max(0, MathF.Max(v - sp.Right, -v - sp.Left)) <= sp.Reach) return true;
+        }
+        return false;
     }
 
     /// <summary>Obergrenze der Geländehöhe an (x, z); h unverändert außerhalb jeder Unterführung.</summary>

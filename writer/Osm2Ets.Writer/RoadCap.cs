@@ -76,6 +76,14 @@ public sealed class RoadCap
         return c;
     }
 
+    /// <summary>Nur Prefab-Spurpunkte – für die Böschung neben Prefabs (<see cref="Floor"/>).</summary>
+    public static RoadCap PrefabsOnly(List<Vector3> lanes)
+    {
+        var c = new RoadCap();
+        foreach (var p in lanes) c.Add(p, p + new Vector3(0.01f, 0, 0), LaneHalf, 0f, 0f, false);
+        return c;
+    }
+
     private void Add(Vector3 a, Vector3 b, float hw, float center, float drop, bool bridge)
     {
         int i = segs.Count;
@@ -224,6 +232,23 @@ public sealed class RoadCap
             if (d < best) { best = d; bh = hy; bb = bridge; }
         }
         return (best, bh, bb);
+    }
+
+    /// <summary>Nächste Prefab-Spur (Kreis mit halber Spurbreite + Rand): Abstand von ihrem Rand
+    /// (höchstens maxD) und ihre Höhe – ohne Höhenfilter (vgl. <see cref="NearestOther"/>).</summary>
+    public (float Dist, float Height) NearestPrefab(float x, float z, float maxD)
+    {
+        if (!index.TryGetValue(((int)MathF.Floor(x / Cell), (int)MathF.Floor(z / Cell)), out var l)) return (maxD, float.NaN);
+        float best = maxD, bh = float.NaN;
+        var p = new Vector2(x, z);
+        foreach (var i in l)
+        {
+            if (owners[i] is not null) continue;
+            var a = segs[i].A;
+            float dc = MathF.Max(0, Vector2.Distance(p, new Vector2(a.X, a.Z)) - segs[i].Hw);
+            if (dc < best) { best = dc; bh = a.Y; }
+        }
+        return (best, bh);
     }
 
     /// <summary>

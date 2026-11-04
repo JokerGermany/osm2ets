@@ -40,6 +40,9 @@ public static class Interchanges
     public const float ExtMargin = 4f;
     /// <summary>Längste Zusatzspur-Straße zwischen den beiden Prefabs einer Anschlussstelle (m).</summary>
     public const float MaxExt = 160f;
+    /// <summary>Endstücke der Zusatzspur-Straße bis <see cref="ExtMargin"/> + 1,5 m zwischen Prefab und
+    /// Brücke gehören zur Brücke (aus: OSM2ETS_PREFAB_KEEPSTUBS).</summary>
+    public static bool AbsorbStubs = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_KEEPSTUBS") is null;
     /// <summary>Zusatzspur-Straße über Bauwerke (aus: OSM2ETS_PREFAB_NOEXT).</summary>
     public static bool UseExt = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOEXT") is null;
     /// <summary>Weiteste Verschiebung des inneren Prefabs weg von einem Bauwerk (m), siehe
@@ -713,7 +716,7 @@ public static class Interchanges
     /// (Reihenfolge = Fahrtrichtung). Punkte an jedem Bauwerksende, dazwischen höchstens 20 m.
     /// Die Enden werden nach dem Setzen der Prefabs genau auf deren Knoten gelegt (<see cref="SnapExt"/>).
     /// </summary>
-    private static RoadEntry ExtRoad(Plan p, RoadEntry main, bool fromStart, float d0, float d1, List<(float A, float B)> spans)
+    internal static RoadEntry ExtRoad(Plan p, RoadEntry main, bool fromStart, float d0, float d1, List<(float A, float B)> spans)
     {
         float lo = MathF.Min(d0, d1), hi = MathF.Max(d0, d1);
         var ds = new List<float> { lo, hi };
@@ -735,6 +738,23 @@ public static class Interchanges
             float mid = (dense[k] + dense[k + 1]) / 2;
             var src = RunAt(main, fromStart, mid);
             bool structure = spans.Any(s => mid > s.A && mid < s.B);
+            // Kurzes Endstück zwischen Prefab und Brücke (ExtMargin): gehört zur Brücke. Als eigene
+            // Straße stand sein Straßengelände als schmale Zunge neben der Unterführung, daneben eine
+            // Mulde (an der verschobenen Zusammenführung vor der A-70-Brücke, v89).
+            if (!structure && AbsorbStubs && (k == 0 || k == dense.Count - 2))
+            {
+                float s0 = MathF.Min(dense[k], dense[k + 1]), s1 = MathF.Max(dense[k], dense[k + 1]);
+                if (s1 - s0 <= ExtMargin + 1.5f)
+                    foreach (var sp in spans)
+                    {
+                        if (MathF.Abs(sp.A - s1) > 0.5f && MathF.Abs(sp.B - s0) > 0.5f) continue;
+                        var sr = RunAt(main, fromStart, (sp.A + sp.B) / 2);
+                        if (!sr.Bridge || sr.Tunnel) continue;
+                        src = sr;
+                        structure = true;
+                        break;
+                    }
+            }
             var run = src.Span(k, k + 1);
             run.Role = ExtRole;
             run.Bridge = structure && src.Bridge;

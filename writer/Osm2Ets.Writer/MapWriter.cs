@@ -418,7 +418,24 @@ public static class MapWriter
             // Unterführungen: unter Brücken über Straßen Gelände auf Höhe der unteren Straße,
             // Böschungen von den Brückenenden (wie in der SCS-Karte) – als Obergrenze des Rasters
             var underpasses = Underpasses.Enabled ? Underpasses.Build(valid, styles, PrefabFootprint.All3(map), bridgeShots, mapping.Resolve) : null;
-            tg2.Post = underpasses is { Count: > 0 } ? underpasses.Cap : null;
+            Func<float, float, float, float>? post = underpasses is { Count: > 0 } ? underpasses.Cap : null;
+            // Böschung neben Prefabs als Untergrenze jeder Rasterabfrage – auch für das Straßengelände
+            // anderer Straßen. Bisher nur für das Füllgelände; das breite Straßengelände einer Straße
+            // daneben folgte dem tiefen Raster. An der Zusammenführung vor der A-70-Brücke über die
+            // Gemeindeverbindung lag das Gelände neben dem Prefab so 3–4 m tiefer (Mulde mit Wänden).
+            // Unter Brücken gilt weiter die Obergrenze der Unterführung (danach angewandt).
+            if (PrefabBanks && TerrainFill.WideRoadTerrain)
+            {
+                var banks = RoadCap.PrefabsOnly(PrefabFootprint.All3(map));
+                var cap = post;
+                post = (x, z, h) =>
+                {
+                    float f = banks.Floor(x, z);
+                    if (f > h) h = f;
+                    return cap is null ? h : cap(x, z, h);
+                };
+            }
+            tg2.Post = post;
             if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null && underpasses is not null)
                 Console.Error.WriteLine("UNDERPASS " + string.Join(" ", underpasses.Ids));
             if (TerrainFill.WideRoadTerrain)
@@ -427,8 +444,14 @@ public static class MapWriter
                 // Zwickel an Gabelungen: nahe anderer Straßen/Prefabs kürzerer Übergang ins Raster
                 RoadCap.PrefabLanes = PrefabFootprint.All3(map);
                 RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0; TerrainFill.SlopeLimited = 0;
+                TerrainFill.PrefabRamped = 0;
                 var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null
                     ? RoadCap.Build(valid, styles, null) : null;
+                // nächste Prefab-Spur für die Rampe ans Prefab – nicht im Bereich einer Unterführung
+                // (dort liegt das Prefab womöglich über der Straße)
+                Func<float, float, (float, float)>? prefabNear = others is null ? null : (x, z) =>
+                    underpasses is { Count: > 0 } && underpasses.Inside(x, z) ? (TerrainFill.GoreDist, float.NaN)
+                                                                              : others.NearestPrefab(x, z, TerrainFill.GoreDist);
                 foreach (var entry in valid)
                 {
                     if (!firstItem.TryGetValue(entry, out var it)) continue;
@@ -478,8 +501,8 @@ public static class MapWriter
                             var sa2 = new Vector2(pa.X, pa.Z); var sb2 = new Vector2(pb.X, pb.Z);
                             Func<Vector2, Vector2, float, float>? ray = others is null || !TerrainFill.ClampColumns || !Overlaps.ExactRoads ? null
                                 : (o, dir, maxD) => others.RayFree(o, dir, maxD, entry, sa2, sb2);
-                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, eL, ta, tb, cap, da, db, ray) < 0) bad++;
-                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, eR, ta, tb, cap, da, db, ray) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, eL, ta, tb, cap, da, db, ray, prefabNear) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, eR, ta, tb, cap, da, db, ray, prefabNear) < 0) bad++;
                             // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
                             float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, eL, ta, tb, da, db);
                             float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, eR, ta, tb, da, db);
@@ -491,7 +514,7 @@ public static class MapWriter
                         if (rd == lastItem[entry]) break;
                     }
                 }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}, Neigung begrenzt: {TerrainFill.SlopeLimited} Punkte");
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, als Rampe ans Prefab: {TerrainFill.PrefabRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}, Neigung begrenzt: {TerrainFill.SlopeLimited} Punkte");
                 if (underpasses is { Count: > 0 })
                 {
                     int paved = underpasses.Pave(valid, firstItem, lastItem);
@@ -565,6 +588,9 @@ public static class MapWriter
     }
 
     public const float IcTerrainGap = 30f;
+
+    /// <summary>Böschung neben Prefabs auch im Straßengelände (aus: OSM2ETS_NO_PREFAB_BANKS).</summary>
+    public static bool PrefabBanks = Environment.GetEnvironmentVariable("OSM2ETS_NO_PREFAB_BANKS") is null;
 
     private static void ApplyStyle(Road road, ResolvedStyle style)
     {
