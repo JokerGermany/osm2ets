@@ -23,11 +23,35 @@ public static class Interchanges
     public static readonly PrefabDef Join = new("ch_4200c", "/prefab2/fork_temp/ger/ger_hw2_exit_joint_tmpl_v02.ppd", "default", "ger_1");
     public static readonly PrefabDef Narrow = new("ch_4202q", "/prefab2/fork_temp/ger/ger_hw2-hw2_exit_tmpl_v02.ppd", "default", "ger_1");
 
-    // Knotenrollen je Prefab (Index in der .ppd)
+    // Knotenrollen je Prefab (Index in der .ppd) – für alle Sätze gleich
     private const ushort WidenIn = 0, WidenOut = 1;
     private const ushort SplitIn = 0, SplitMain = 1, SplitRamp = 2;
     private const ushort JoinMain = 0, JoinOut = 1, JoinRamp = 2;
     private const ushort NarrowIn = 0, NarrowOut = 1;
+
+    /// <summary>Prefab-Satz einer Anschlussstelle: Aufweitung + Teilung (Ausfahrt) bzw.
+    /// Zusammenführung + Spurende (Einfahrt), Spurzahlen von Hauptfahrbahn und Rampe.</summary>
+    public sealed record Kit(string Name, int MainLanes, int RampLanes, PrefabDef Widen, PrefabDef Split,
+                             PrefabDef? Join, PrefabDef? Narrow, string ExtRole);
+
+    /// <summary>2 Spuren, einspurige Rampe (Grundspiel-Vorlagen).</summary>
+    public static readonly Kit Hw2 = new("hw2", 2, 1, Widen, Split, Join, Narrow, "ext");
+
+    /// <summary>
+    /// 3 Spuren, zweispurige Ausfahrt (4 Spuren vor der Teilung, die rechte Hauptspur führt in
+    /// beide Richtungen). Prefabs aus mod_germany: Aufweitung mod_ger_38
+    /// (ger_hw3-hw3_exit_mirrored_tmpl, Variante sh_ger laut .pmd) und Teilung mod_ger_29
+    /// (ger_hw3_exit_double). Variante/Look von mod_ger_29: .pmd lag nicht vor – angenommen
+    /// "default"/"ger_1". Nur Ausfahrten; eine passende Einfahrt fehlt.
+    /// </summary>
+    public static readonly Kit Hw3Double = new("hw3 double", 3, 2,
+        new("mod_ger_38", "/prefab2/fork_temp/ger/ger_hw3-hw3_exit_mirrored_tmpl.ppd", "sh_ger", "ger_1"),
+        new("mod_ger_29", "/prefab2/fork_temp/ger/ger_hw3_exit_double.ppd",
+            Environment.GetEnvironmentVariable("OSM2ETS_HW3DOUBLE_VARIANT") ?? "default", "ger_1"),
+        null, null, "ext3");
+
+    /// <summary>Zweispurige Ausfahrt von 3 Spuren (aus: OSM2ETS_NO_HW3DOUBLE=1).</summary>
+    public static bool UseHw3Double = Environment.GetEnvironmentVariable("OSM2ETS_NO_HW3DOUBLE") != "1";
 
     /// <summary>Anschluss-Prefabs weglassen, wenn im Prefab-Bereich eine Brücke/ein Tunnel liegt
     /// (OSM2ETS_PREFAB_NOBRIDGE=1). Standard: aus – sonst fallen z. B. in Bayreuth alle vier weg.</summary>
@@ -55,6 +79,7 @@ public static class Interchanges
     public sealed class Plan
     {
         public required string Kind;        // "exit" | "entry"
+        public Kit K = Hw2;
         public required long OsmNode;
         public required RoadEntry MainIn, MainOut, Ramp;
         public required Vector3 Anchor;     // Lage des OSM-Knotens
@@ -112,6 +137,7 @@ public static class Interchanges
 
     public static List<Plan> Find(List<RoadEntry> roads, List<string> warnings)
     {
+        OneLane.Clear();
         var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
         foreach (var r in roads)
             foreach (var atStart in new[] { true, false })
@@ -128,7 +154,15 @@ public static class Interchanges
         foreach (var (node, list) in ends)
         {
             if (list.Count != 3) continue;
+            var kit = Hw2;
             var mains = list.Where(e => IsMotorway2(e.R, e.AtStart)).ToList();
+            if (UseHw3Double && mains.Count == 0)
+            {
+                // 3-spurige Autobahn mit zweispuriger Ausfahrt
+                var m3 = list.Where(e => IsMotorwayN(e.R, e.AtStart, 3)).ToList();
+                var r2 = list.Where(e => IsRamp(e.R) && e.AtStart && e.R.Runs.All(x => x.Lanes == 2)).ToList();
+                if (m3.Count == 2 && r2.Count == 1) { mains = m3; kit = Hw3Double; }
+            }
             var ramps = list.Where(e => IsRamp(e.R)).ToList();
             // Autobahnbeginn/-ende: zwei Anschlussäste und eine Autobahn. Der Ast, der
             // geradeaus in die Autobahn übergeht, ist dann die Hauptfahrbahn.
@@ -146,6 +180,7 @@ public static class Interchanges
                 }
             }
             if (mains.Count != 2 || ramps.Count != 1) continue;
+            if (kit.Join is null && !ramps[0].AtStart) continue;
             var mainIn = mains.FirstOrDefault(e => !e.AtStart).R;
             var mainOut = mains.FirstOrDefault(e => e.AtStart).R;
             if (mainIn is null || mainOut is null || mainIn == mainOut) continue;
@@ -159,11 +194,12 @@ public static class Interchanges
             if (Vector2.Dot(rampAway, right) <= 0.05f) { warnings.Add($"Knoten {node}: Rampe links – noch nicht unterstützt"); continue; }
             plans.Add(new Plan
             {
-                Kind = ramp.AtStart ? "exit" : "entry",
+                Kind = ramp.AtStart ? "exit" : "entry", K = kit,
                 OsmNode = node, MainIn = mainIn, MainOut = mainOut, Ramp = ramp.R,
                 Anchor = anchor, Direction = dir,
             });
-            foreach (var m in mains) NarrowAtNode(m.R, m.AtStart);
+            foreach (var m in mains) NarrowAtNode(m.R, m.AtStart, kit.MainLanes);
+            if (kit.RampLanes == 1) OneLane.Add(ramp.R);
         }
         return plans;
     }
@@ -181,29 +217,76 @@ public static class Interchanges
     internal static bool IsMotorway2(RoadEntry r, bool atStart)
     {
         if (!r.Runs.All(x => x.Oneway && x.Highway == "motorway")) return false;
-        int k = AuxRun(r, atStart);
+        int k = AuxRun(r, atStart, 2);
         for (int i = 0; i < r.Runs.Count; i++)
             if (i != k && r.Runs[i].Lanes is not (null or 2)) return false;
         return true;
     }
 
+    /// <summary>Autobahn mit genau n Spuren (ein Lauf mit n+1 Spuren am Knoten zählt als Zusatzspur).</summary>
+    internal static bool IsMotorwayN(RoadEntry r, bool atStart, int n)
+    {
+        if (!r.Runs.All(x => x.Oneway && x.Highway == "motorway")) return false;
+        int k = AuxRun(r, atStart, n);
+        for (int i = 0; i < r.Runs.Count; i++)
+            if (i != k && r.Runs[i].Lanes != n) return false;
+        return true;
+    }
+
     /// <summary>Index des 3-spurigen Laufs am Knotenende, der als Zusatzspur gilt, sonst -1.</summary>
-    private static int AuxRun(RoadEntry r, bool atStart)
+    private static int AuxRun(RoadEntry r, bool atStart, int n = 2)
     {
         if (r.Runs.Count < 2) return -1;
         int k = atStart ? 0 : r.Runs.Count - 1;
         var run = r.Runs[k];
-        if (run.Lanes != 3 || run.Bridge || run.Tunnel) return -1;
+        if (run.Lanes != n + 1 || run.Bridge || run.Tunnel) return -1;
         double len = 0;
         for (int i = run.From; i < run.To && i + 1 < r.Points.Count; i++)
             len += Vector2.Distance(P(r.Points[i]), P(r.Points[i + 1]));
         return len <= MaxAuxLane ? k : -1;
     }
 
-    internal static void NarrowAtNode(RoadEntry r, bool atStart)
+    internal static void NarrowAtNode(RoadEntry r, bool atStart, int n = 2)
     {
-        int k = AuxRun(r, atStart);
-        if (k >= 0) r.Runs[k].Lanes = 2;
+        int k = AuxRun(r, atStart, n);
+        if (k >= 0) r.Runs[k].Lanes = n;
+    }
+
+    /// <summary>
+    /// Rampen werden zweispurig gebaut (Rolle link2), wenn alle Läufe mindestens 2 Spuren haben,
+    /// sie an keinem Prefab mit einspurigem Rampenknoten hängen und jede an einem Knoten
+    /// anschließende Rampe ebenso zweispurig ist – ein Wechsel des Straßentyps ohne Übergangs-
+    /// Prefab gäbe eine Stufe. Spurzahlen bleiben unverändert (Kreuzungs-Prefabs nutzen sie).
+    /// Nach den Anschluss-Prefabs aufrufen. Gibt die Zahl der zweispurigen Rampen zurück.
+    /// </summary>
+    /// <summary>Rolle der Läufe zweispuriger Rampen (Zuordnung "Autobahnrampe zweispurig").</summary>
+    public const string TwoLaneLinkRole = "link2";
+    /// <summary>Rampen an Prefabs mit einspurigem Rampenknoten.</summary>
+    public static readonly HashSet<RoadEntry> OneLane = [];
+
+    public static int NormalizeLinkLanes(List<RoadEntry> roads)
+    {
+        static bool Link(RoadEntry r) => r.Runs.All(x => x.Highway is "motorway_link" or "trunk_link");
+        var links = roads.Where(Link).ToList();
+        var two = links.Where(r => r.Runs.All(x => x.Lanes >= 2) && !OneLane.Contains(r)).ToHashSet();
+        // Ebenso einspurig, wenn eine anschließende Rampe einspurig ist (Wechsel am Knoten = Stufe)
+        var byNode = new Dictionary<long, List<RoadEntry>>();
+        foreach (var r in links)
+            foreach (var e in new[] { r.Start, r.End })
+                if (e?.Kind == "node" && e.OsmNode is long id)
+                    (byNode.TryGetValue(id, out var l) ? l : byNode[id] = []).Add(r);
+        bool changed = true;
+        while (changed)
+        {
+            changed = false;
+            foreach (var l in byNode.Values)
+                if (l.Any(r => !two.Contains(r)))
+                    foreach (var r in l) changed |= two.Remove(r);
+        }
+        two.ExceptWith(OneLane);
+        foreach (var r in two)
+            foreach (var x in r.Runs) x.Role = TwoLaneLinkRole;
+        return two.Count;
     }
 
     private static bool IsRamp(RoadEntry r) =>
@@ -572,13 +655,17 @@ public static class Interchanges
         if (atStart)
         {
             pts.RemoveRange(0, drop);
-            ramp.Runs = ramp.Runs.Select(x => { x.From = Math.Max(0, x.From - drop); x.To = Math.Max(1, x.To - drop); return x; }).Where(x => x.To > x.From).ToList();
+            // Läufe, die ganz in den entfernten Punkten liegen, fallen weg (früher blieben sie als
+            // Abschnitt 0–1 stehen und überlappten den nächsten Lauf)
+            ramp.Runs = ramp.Runs.Where(x => x.To - drop > 0).Select(x => { x.From = Math.Max(0, x.From - drop); x.To -= drop; return x; }).ToList();
+            if (ramp.Runs.Count > 0) ramp.Runs[0].From = 0;
         }
         else
         {
             pts.RemoveRange(pts.Count - drop, drop);
             int last = pts.Count - 1;
-            ramp.Runs = ramp.Runs.Select(x => { x.From = Math.Min(x.From, last - 1); x.To = Math.Min(x.To, last); return x; }).Where(x => x.To > x.From).ToList();
+            ramp.Runs = ramp.Runs.Where(x => x.From < last).Select(x => { x.To = Math.Min(x.To, last); return x; }).ToList();
+            if (ramp.Runs.Count > 0) ramp.Runs[^1].To = last;
         }
         Dropped += drop;
     }
@@ -607,7 +694,7 @@ public static class Interchanges
         // die Verschiebung des inneren Prefabs auf die andere Seite des Knotens (meist 0).
         if (p.Kind == "exit")
         {
-            float lenNear = Length(src, Split, SplitIn, SplitMain), lenFar = Length(src, Widen, WidenIn, WidenOut);
+            float lenNear = Length(src, p.K.Split, SplitIn, SplitMain), lenFar = Length(src, p.K.Widen, WidenIn, WidenOut);
             float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack)) { p.Blocked = true; return false; }
             // Bauwerke stromauf vom Knoten (dort liegen die Prefabs) und stromab (Platz zum Verschieben)
@@ -641,7 +728,7 @@ public static class Interchanges
         }
         else
         {
-            float lenNear = Length(src, Join, JoinMain, JoinOut), lenFar = Length(src, Narrow, NarrowIn, NarrowOut);
+            float lenNear = Length(src, p.K.Join!, JoinMain, JoinOut), lenFar = Length(src, p.K.Narrow!, NarrowIn, NarrowOut);
             float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(p.MainOut.Points, p.MainOut.Runs, false, len + Slack)) { p.Blocked = true; return false; }
             // Bauwerke stromab vom Knoten (dort liegen die Prefabs) und stromauf (Platz zum Verschieben)
@@ -807,7 +894,7 @@ public static class Interchanges
                     }
             }
             var run = src.Span(k, k + 1);
-            run.Role = ExtRole;
+            run.Role = p.K.ExtRole;
             run.Bridge = structure && src.Bridge;
             run.Tunnel = structure && src.Tunnel;
             if (runs.Count > 0 && runs[^1].Bridge == run.Bridge && runs[^1].Tunnel == run.Tunnel && runs[^1].Layer == run.Layer)
@@ -882,29 +969,29 @@ public static class Interchanges
         if (p.Kind == "exit")
         {
             // Teilung so, dass ihr Hauptausgang auf dem OSM-Knoten liegt; Aufweitung davor
-            var split = Place(map, src, Split, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor, p.Grade);
+            var split = Place(map, src, p.K.Split, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor, p.Grade);
             if (p.ExtRoad is not null)
             {
                 // Aufweitung jenseits des Bauwerks; die Zusatzspur-Straße verbindet beide
-                var w = Place(map, src, Widen, WidenIn, WidenOut, p.FarDirection, WidenIn, p.FarAnchor, p.FarGrade);
+                var w = Place(map, src, p.K.Widen, WidenIn, WidenOut, p.FarDirection, WidenIn, p.FarAnchor, p.FarGrade);
                 return new Placed(p, w, WidenIn, split, SplitMain, split, SplitRamp) { ExtFrom = w, ExtFromNode = WidenOut, ExtTo = split, ExtToNode = SplitIn };
             }
             // Richtung an der Fuge aus dem gesetzten Nachbar-Prefab übernehmen (sonst Keil in der Fuge)
             var dSplit = Flat(InwardDirections[split][SplitIn], p.Direction);
-            var widen = Place(map, src, Widen, WidenIn, WidenOut, dSplit, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
+            var widen = Place(map, src, p.K.Widen, WidenIn, WidenOut, dSplit, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
             widen.Attach(WidenOut, split, SplitIn);
             return new Placed(p, widen, WidenIn, split, SplitMain, split, SplitRamp);
         }
         else
         {
-            var join = Place(map, src, Join, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
+            var join = Place(map, src, p.K.Join!, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
             if (p.ExtRoad is not null)
             {
-                var nw = Place(map, src, Narrow, NarrowIn, NarrowOut, p.FarDirection, NarrowOut, p.FarAnchor, p.FarGrade);
+                var nw = Place(map, src, p.K.Narrow!, NarrowIn, NarrowOut, p.FarDirection, NarrowOut, p.FarAnchor, p.FarGrade);
                 return new Placed(p, join, JoinMain, nw, NarrowOut, join, JoinRamp) { ExtFrom = join, ExtFromNode = JoinOut, ExtTo = nw, ExtToNode = NarrowIn };
             }
             var dJoin = Flat(-InwardDirections[join][JoinOut], p.Direction);
-            var narrow = Place(map, src, Narrow, NarrowIn, NarrowOut, dJoin, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
+            var narrow = Place(map, src, p.K.Narrow!, NarrowIn, NarrowOut, dJoin, NarrowIn, join.Nodes[JoinOut].Position, p.Grade);
             join.Attach(JoinOut, narrow, NarrowIn);
             return new Placed(p, join, JoinMain, narrow, NarrowOut, join, JoinRamp);
         }

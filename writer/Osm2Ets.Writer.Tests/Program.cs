@@ -34,6 +34,7 @@ var tests = new List<(string Name, Action Body)>
     ("Anschlussstelle: inneres Prefab rückt vom Bauwerk weg (Zusatzspur-Straße darüber)", InterchangeShiftAwayFromStructure),
     ("Anschlussstelle: kurze Endstücke der Zusatzspur-Straße gehören zur Brücke", ExtRoadAbsorbsStubs),
     ("Anschlussstelle: Autobahnbeginn aus zwei Anschlussästen wird Einfahrt", MotorwayStartFromTwoLinks),
+    ("Anschlussstelle: zweispurige Ausfahrt von 3 Spuren, zweispurige Rampen", Hw3DoubleExitAndTwoLaneLinks),
 };
 
 int failed = 0;
@@ -855,4 +856,24 @@ static void MotorwayStartFromTwoLinks()
     var b = MakeRoad("b", [[-300, 0, -60], [0, 0, 0]], R(0, 1, "motorway_link", 2)); b.End = new EndInfo { Kind = "node", OsmNode = 8 };
     var m2 = MakeRoad("m2", [[0, 0, 0], [600, 0, 0]], R(0, 1, "motorway", 2)); m2.Start = new EndInfo { Kind = "node", OsmNode = 8 };
     Check(Interchanges.Find([m2, a, b], []).Count == 0, "Gabel ohne Geradeaus-Ast als Einfahrt erkannt");
+}
+
+static void Hw3DoubleExitAndTwoLaneLinks()
+{
+    RunEntry R(int a, int b, string hw, int lanes) => new() { From = a, To = b, Highway = hw, Role = hw == "motorway" ? "core" : "link", Oneway = true, Lanes = lanes };
+    EndInfo N(long id) => new() { Kind = "node", OsmNode = id };
+    // 3 Spuren, 150 m vor dem Knoten 4 Spuren (Verzögerungsstreifen), Ausfahrt rechts (+z) zweispurig
+    var mi = MakeRoad("mi", [[-600, 0, 0], [-150, 0, 0], [0, 0, 0]], R(0, 1, "motorway", 3), R(1, 2, "motorway", 4)); mi.End = N(1);
+    var mo = MakeRoad("mo", [[0, 0, 0], [600, 0, 0]], R(0, 1, "motorway", 3)); mo.Start = N(1);
+    var ra = MakeRoad("ra", [[0, 0, 0], [150, 0, 12], [400, 0, 60]], R(0, 2, "motorway_link", 2)); ra.Start = N(1); ra.End = N(2);
+    // an der Rampe hängt am anderen Ende eine einspurige Rampe
+    var r1 = MakeRoad("r1", [[400, 0, 60], [600, 0, 100]], R(0, 1, "motorway_link", 1)); r1.Start = N(2);
+    var plans = Interchanges.Find([mi, mo, ra, r1], []);
+    Check(plans.Count == 1 && plans[0].Kind == "exit" && plans[0].K == Interchanges.Hw3Double, "keine zweispurige Ausfahrt erkannt");
+    Check(mi.Runs[1].Lanes == 3, "Verzögerungsstreifen nicht auf 3 Spuren gesetzt");
+    // Rampe hängt an einspuriger Rampe: bleibt einspurig
+    Check(Interchanges.NormalizeLinkLanes([mi, mo, ra, r1]) == 0 && ra.Runs[0].Role == "link", "Rampe trotz einspurigem Anschluss zweispurig");
+    // ohne die einspurige Nachbarin: zweispurig
+    ra.End = new EndInfo { Kind = "prefab" };
+    Check(Interchanges.NormalizeLinkLanes([mi, mo, ra]) == 1 && ra.Runs[0].Role == Interchanges.TwoLaneLinkRole, "Rampe nicht zweispurig");
 }

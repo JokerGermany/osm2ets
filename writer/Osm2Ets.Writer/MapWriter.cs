@@ -97,7 +97,10 @@ public static class MapWriter
         }
         if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
             foreach (var p in interchangePlans) Console.Error.WriteLine($"PRE {p.OsmNode} {p.Kind} anchor {p.Anchor} dir {p.Direction}");
+        // nach den Anschluss-Prefabs: deren Enden zählen nicht mehr als Knoten
+        int twoLaneLinks = Interchanges.NormalizeLinkLanes(valid);
         int icSep = Interchanges.SeparateOpposite(interchangePlans);
+        warnings.Add($"Info: zweispurige Rampen: {twoLaneLinks}");
         if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
             foreach (var p in interchangePlans) Console.Error.WriteLine($"SEP {p.OsmNode} {p.Kind} anchor {p.Anchor}");
         if (icSep > 0) warnings.Add($"Info: {icSep} gegenüberliegende Anschlussstellen-Prefabs seitlich auseinandergerückt");

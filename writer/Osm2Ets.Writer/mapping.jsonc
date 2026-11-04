@@ -54,11 +54,24 @@
       "road_type": "ger17", "width": 17, "model_center": -0.5, "offset": 0, "edge_left": 9, "terrain_left": 4, "terrain_right": 30,
       "railing_left": false,
       "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
+    // "ext3": dasselbe für 3 Spuren (zweispurige Ausfahrt, Prefab-Satz "hw3 double").
+    // ger18 = "ger hw3 exit one lane tmpl" (4 Spuren). Maße nicht vermessen – angenommen ger17
+    // plus eine Spur (4,5 m) rechts.
+    { "name": "Autobahn 3 Spuren mit Zusatzspur zwischen Anschluss-Prefabs", "match": { "role": ["ext3"] },
+      "road_type": "ger18", "width": 21.5, "model_center": 1.75, "offset": 0, "edge_left": 9, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
+      "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahn 3+ Spuren", "match": { "highway": ["motorway", "trunk"], "oneway": true, "lanes_min": 3 },
       "road_type": "ger16", "width": 17, "model_center": -0.5, "offset": 2.17, "edge_left": 6.83, "terrain_left": 4, "terrain_right": 30,
       "railing_left": false,
       "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahn / Kraftfahrstraße, Richtungsfahrbahn", "match": { "highway": ["motorway", "trunk"], "oneway": true },
+      "road_type": "ger13", "width": 12.5, "model_center": 1.75, "offset": 0, "edge_left": 4.5, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
+      "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
+    // Rolle "link2" setzt der Writer: Rampe mit durchgehend mindestens 2 Spuren (OSM lanes), ohne
+    // Anschluss an einspurige Rampen oder an Prefabs mit einspurigem Rampenknoten.
+    { "name": "Autobahnrampe zweispurig", "match": { "role": ["link2"] },
       "road_type": "ger13", "width": 12.5, "model_center": 1.75, "offset": 0, "edge_left": 4.5, "terrain_left": 4, "terrain_right": 30,
       "railing_left": false,
       "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },

@@ -44,7 +44,7 @@ public static class BridgeBodies
         var spans = new List<Span>();
         foreach (var r in roads)
             foreach (var run in r.Runs.Where(x => x.Bridge && !x.Tunnel && x.Oneway &&
-                         (x.Highway is "motorway" or "trunk" || x.Role == Interchanges.ExtRole)))
+                         (x.Highway is "motorway" or "trunk" || x.Role is Interchanges.ExtRole or "ext3")))
             {
                 var a = MapWriter.ToVector(r.Points[run.From]); var b = MapWriter.ToVector(r.Points[run.To]);
                 var sp = new Span(r, run, a, b);
