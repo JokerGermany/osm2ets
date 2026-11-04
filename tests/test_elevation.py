@@ -114,6 +114,30 @@ def test_parse_maxheight():
         assert parse_maxheight(v) is None
 
 
+def test_clamp_grade_one_way_points():
+    """Kreuzungspunkte dürfen beim Begrenzen der Steigung nur vom anderen Weg weg: zwei
+    abgesenkte Punkte (nur nach unten) mit zu steiler Kante zwischen sich – der höhere sinkt,
+    der tiefere bleibt; ganz festgehalten bliebe die Kante zu steil."""
+    from osm2ets.elevation import clamp_grade
+    ea, eb, elen = [0, 1, 2], [1, 2, 3], [10.0, 10.0, 10.0]
+    z = np.array([0.0, 0.0, 2.0, 2.0])
+    only = np.array([0, -1, -1, 0], np.int8)
+    clamp_grade(z, ea, eb, elen, 0.06, iterations=500, only=only)
+    g = np.abs(np.diff(z)) / 10.0
+    assert g.max() <= 0.0601
+    assert z[1] <= 1e-9, "Punkt 1 darf nur sinken"
+    assert z[2] < 2.0
+    # ganz festgehalten: Kante 1–2 bleibt bei 20 %
+    z2 = np.array([0.0, 0.0, 2.0, 2.0])
+    clamp_grade(z2, ea, eb, elen, 0.06, iterations=500, fixed=np.array([False, True, True, False]))
+    assert abs(z2[2] - z2[1]) == pytest.approx(2.0)
+    # nur nach oben: der tiefere steigt, der höhere bleibt
+    z3 = np.array([0.0, 0.0, 2.0, 2.0])
+    clamp_grade(z3, ea, eb, elen, 0.06, iterations=500, only=np.array([0, 1, 1, 0], np.int8))
+    assert np.abs(np.diff(z3)).max() / 10.0 <= 0.0601
+    assert z3[2] >= 2.0 - 1e-9 and z3[1] > 0.0
+
+
 def test_terrain_grid_no_cliff_between_roads():
     """Zwei parallele Straßen 50 m auseinander, 12 m Höhenunterschied: kein Sprung im Raster."""
     import numpy as np
@@ -128,3 +152,66 @@ def test_terrain_grid_no_cliff_between_roads():
     between = (zs >= 0) & (zs <= 50)
     assert np.abs(np.diff(h[between])).max() < 1.0      # früher: 12 m auf einen Schritt
     assert np.abs(np.diff(h)).max() < 1.0
+
+
+def _twin_slope_model(tmp_path, profile, monkeypatch):
+    """Zwei Richtungsfahrbahnen 16 m nebeneinander auf 4 % Gefälle, mit verschieden
+    dichten OSM-Knoten (190 m bzw. 160 m) – die verdichteten Punkte liegen versetzt.
+    Gibt das Modell und die verdichteten Höhenprofile (vor der Vereinfachung) zurück."""
+    rasterio = pytest.importorskip("rasterio")
+    from rasterio.transform import from_origin
+    import osm2ets.pipeline as pipeline
+
+    dense = {}
+    real_finalize = pipeline.finalize_piece
+
+    def capture(p, prof, part_run, runs):
+        dense[p.key] = (p.dense.xy.copy(), p.dense.z.copy())
+        return real_finalize(p, prof, part_run, runs)
+
+    monkeypatch.setattr(pipeline, "finalize_piece", capture)
+    pr = Projector(profile.crs, profile.origin_lonlat)
+    nodes, ways = {}, []
+    north = [_pt(16, y) for y in range(-950, 951, 190)]
+    south = [_pt(0, y) for y in range(960, -961, -160)]
+    for k, p in enumerate(north):
+        nodes[100 + k] = p
+    for k, p in enumerate(south):
+        nodes[200 + k] = p
+    ways.append((1, [100 + k for k in range(len(north))], {"highway": "motorway", "ref": "A 1", "lanes": "2"}))
+    ways.append((2, [200 + k for k in range(len(south))], {"highway": "motorway", "ref": "A 1", "lanes": "2"}))
+    osm = write_osm(tmp_path / "twin.osm", nodes, ways)
+    center = pr.forward(np.array([11.5]), np.array([LAT]))[0] + np.array(pr.origin)
+    x0, y1, cell = center[0] - 1500, center[1] + 1500, 5.0
+    n = int(3000 / cell)
+    ys = y1 - (np.arange(n) + 0.5) * cell
+    col = 300.0 + 0.04 * (ys - center[1])
+    data = np.tile(col[:, None], (1, n)).astype("float32")
+    dem = tmp_path / "slope.tif"
+    with rasterio.open(dem, "w", driver="GTiff", width=n, height=n, count=1, dtype="float32",
+                       crs=profile.crs, transform=from_origin(x0, y1, cell, cell)) as ds:
+        ds.write(data, 1)
+    model = build(str(osm), profile, "L1", dem_path=str(dem))
+    rel = pr.forward(np.array([11.5]), np.array([LAT]))[0]
+    return model, {k: (xy - rel, z) for k, (xy, z) in dense.items()}
+
+
+def test_twin_carriageways_have_no_height_steps(tmp_path, profile, monkeypatch):
+    model, dense = _twin_slope_model(tmp_path, profile, monkeypatch)
+    assert len(dense) == 2
+    lines = []
+    for key, (xy, z) in dense.items():
+        mid = np.abs(xy[:, 1]) < 700          # Enden (festgehaltene Höhen) auslassen
+        s = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))])
+        slope = np.diff(z[mid]) / np.diff(s[mid])
+        # keine Treppe: gleichmäßiges Gefälle zwischen den verdichteten Punkten. Vorher wurde
+        # jeder Punkt an den NÄCHSTEN Punkt der Gegenfahrbahn gebunden (bis ~10 m versetzt)
+        # und übernahm dessen Höhe – abwechselnd fast ebene und zu steile Abschnitte.
+        assert np.ptp(slope) < 0.01, f"{key}: Steigungen {np.round(slope, 3)}"
+        lines.append((xy[:, 1], z))
+    # beide Fahrbahnen auf gleicher Höhe quer zur Fahrtrichtung
+    (ya, za), (yb, zb) = lines
+    order = np.argsort(yb)
+    mid = np.abs(ya) < 700
+    assert np.max(np.abs(za[mid] - np.interp(ya[mid], yb[order], zb[order]))) < 0.1
+    assert model["stats"]["elevation"]["aligned_points"] > 0

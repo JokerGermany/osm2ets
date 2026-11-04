@@ -78,7 +78,7 @@ public static class LookLister
         IEnumerable<KeyValuePair<string, dynamic>> attrs = unit.Attributes;
         if (!all)
             attrs = attrs.Where(a => a.Key is "name" or "lanes_left" or "lanes_right" or "road_size" or "road_offset"
-                                     or "model_desc" or "category");
+                                     or "model_desc" or "category" or "model" or "model_name" or "dlc");
         return string.Join("; ", attrs.Select(a => $"{a.Key}={Format((object?)a.Value)}"));
     }
 

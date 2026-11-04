@@ -34,7 +34,11 @@ v1–v46 (see commits).
 | Heights from a terrain model, bridges, tunnels, `maxheight` | implemented, checked against Street View at one crossing |
 | Area-wide terrain between roads from the terrain model | implemented, gaps remain (see below) |
 | 3-lane interchanges, left-hand ramps, motorway interchanges/triangles | not yet |
-| Bridge models, vegetation/land use, cities, companies | not yet |
+| Underpasses: open terrain under bridges over roads, stone slopes, bridge railings | implemented, not yet checked in game |
+| Bridge bodies (deck, abutments, parapets) for all bridges: SCS bridge models per road type | implemented, not yet checked in game |
+| Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
+| Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
+| Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
 
 ### Area-wide terrain
@@ -44,6 +48,29 @@ at road height up to 24 m from a road, blended into the terrain up to 110 m). Th
 fills the space between roads with ETS2 terrain items in west–east rows (40 m, plus finer
 rows down to 1 m for leftovers next to roads). Vertex offsets follow the grid across each
 strip. The fill mask uses the real lanes of placed prefabs (nav curves from the `.ppd`).
+
+How fill and road terrain fit together:
+- Road terrain (up to 60 m per side) is the visible surface next to a road: flat for the first
+  3 m, then blending into the grid. Narrow sides use a compressed profile so that their outer
+  edge reaches the grid height (at most 45° from the flat strip).
+- The fill runs underneath. Under asphalt it stays at least 0.3 m, under road terrain 0.1 m
+  below the surface actually written (both quad diagonals checked). Beyond the edge of road
+  terrain it continues the edge with at most 0.7 slope up or down, so the edge meets the fill.
+- The fill quads are coarse (up to 16 m); after placing them every quad is checked against the
+  surface above and lowered where it would poke through.
+- Next to prefabs (which have no road terrain of their own) every grid query has an embankment as
+  lower bound: at lane height up to 5 m from the lane centre, then falling at 0.7. Where a prefab
+  lies at least 3 m above a road next to it, that road's terrain runs as a straight ramp up to the
+  prefab edge (not within an underpass). Before, e.g. the terrain next to the merge prefab in
+  front of the A 70 bridge ended 3–4 m below the prefab.
+- Underpasses (as in the SCS map): under a bridge that crosses a road of the network (or a
+  prefab) at least 3 m higher, the terrain lies at the level of the lower road; from both
+  bridge ends it falls as a slope (1 : 1.5, steeper if the span is short), beyond the deck edges
+  as a cone. This is an upper limit applied to every grid query, so road terrain and fill follow
+  it; embankments of at-grade roads next to it stay. The slope quads of the road terrain get the
+  stone material of the SCS map (token `175`). Bridges without a bridge body (see below) carry the
+  railing `railing_01_ger` (token `mod_ger_3`) at the model edges – motorway carriageways only on
+  the outer (right) side, as in the SCS map; other roads on both sides.
 
 Findings from editor tests that shaped this (useful if you work on it):
 - Terrain vertex offsets are **absolute** positions (row distances 1,1,1,2,6,6,10,10,10,20,40,50… m),
@@ -58,6 +85,49 @@ Findings from editor tests that shaped this (useful if you work on it):
 - Gaps (black areas in the editor) remain in narrow gores between ramp and main road and
   close to some prefabs; fill rows run west–east and cannot follow diagonal gaps exactly.
 - Where a minor road is lowered under a motorway, the terrain beside it has no cut slope yet.
+- Bridge bodies: every bridge gets an SCS bridge model per road type with deck, abutments and
+  parapets (`bridge_bodies` in `mapping.jsonc`; then without `mod_ger_3`): `ger13` → `dlc_no_5`
+  (`shared_2lanes_x_1way`), `ger16`/`ger17` → `dlc_no_4` (`shared_3lanes_x_1way`), both on the
+  left with offset 0; `ger2` → `dlc_no_14` (`shared_hw_exit`) on the right; all others up to 11 m
+  wide → `dlc_no_6` (`shared_simple`, also used by the SCS editor tutorial for its bridge). Side and
+  offset are derived from the model dimensions (the parapets then lie 1.2–1.4 m outside the model
+  edge), not checked in game. Whether the `dlc_no_` models belong to the base game is unverified;
+  base-game models of the same size: `92`, `128`, `13`. Straight bridges become one road item;
+  bridges with a crest or curve stay several items – whether the game then also puts abutments at
+  the item joints is unverified. Without a body: bridges over 200 m and bridges covered by an
+  interchange prefab (see below). The deck is 1.6 m deep; with 5.8–6.0 m between the road surfaces
+  4.2–4.4 m remain below. The abutments are always square to the bridge – a railing follows the
+  road and cannot be skewed. Where the lower road crosses at an angle, it shifts sideways towards
+  the bridge edges (half the body width · cot α, `half_width`); the writer then lengthens the
+  bridge at its ends (at most 15 m per end, keeping at least 8 m of embankment before/after) until
+  the lower road has 3 m to the abutment at all four corners. Test area L1: 9 bridges, 61 m in
+  total. The flat floor below is widened by the same shift; the slopes stay parallel to the
+  abutments (and get steeper there).
+- One body for both carriageways of a bridge pair (`bridge_body`: railing `dlc_it_8`,
+  `/model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd`, **Italia DLC**, offset towards the
+  other carriageway by half the distance + 2 m as in the SCS map) is off since v89: under the
+  two-lane pairs of the A 70 (lines 12–15 m apart, the model is about 44 m wide) it only fitted
+  from one side. The line is commented out in `mapping.jsonc`.
+- Railing offset (1 m outside the model edge) and the model width of `ger17` are estimates.
+- Visible pieces next to the route: where a track or minor road runs close to the motorway at a
+  clearly different height, the road terrains meet with steps (test area L1: 577 instead of 41
+  edge points with a step above 1 m, 11 instead of 4 walls). The worst places (no 1 : 1.5 slope
+  fits between the edges) are left out by the pipeline; the ways end open there (bridges plus 60 m
+  before and after them stay).
+- A way that OSM maps as a short tunnel under a road (up to 80 m) becomes an open underpass: the
+  upper road gets a bridge section there (with railing). Longer tunnels stay tunnels without a
+  portal (the road disappears into the terrain).
+- Where a structure lies under the outer prefab of an interchange (widening or lane end), that
+  prefab moves beyond the structure; a road with an extra lane (`ger17`) with bridge body runs in
+  between. Where it lies under the inner prefab (split or merge), that prefab moves up to 30 m away
+  from the structure to the other side of the OSM node (entry upstream, exit downstream) – in the
+  test area the entry on the A 70 bridge at x = −3270, z = −3143: 15 m. If that is not possible
+  (structure too close to the node, another structure on the other side, roads too short), the
+  prefab stays on the structure: terrain open below, but no railing and no body. End pieces of
+  the extra-lane road up to 5.5 m between prefab and bridge become part of the bridge – as a road
+  of their own, their terrain stood as a narrow tongue next to the underpass.
+- Where road terrain of two roads at clearly different heights meets (busy interchanges), steps
+  of 1–3 m remain in a few places.
 - Junctions without a prefab: road piece between two junctions too short, or angle more
   than 40° off T/X. There the roads still overlap.
 - Node clusters at motorway triangles are not yet handled as a whole.
@@ -108,7 +178,10 @@ largest positional deviation from OSM and all grade-separated crossings with too
 clearance.
 
 Terrain model: e.g. the free Copernicus DEM GLO-30 tiles (1° × 1°, GeoTIFF). Attribution
-is required for distributed maps (see the Copernicus licence).
+is required for distributed maps (see the Copernicus licence). GLO-30 is a surface model
+(DSM): forest and buildings raise it by several metres, which the pipeline only partly
+compensates (low percentile, smoothing). A bare-earth model (DTM) such as the Bavarian DGM1
+(free since 2023; check the licence before use) is better suited.
 
 ### 3. Choose road types
 
@@ -186,6 +259,23 @@ In addition, in every level (`extras` and `industry` in the profile):
 4. **Road ends continued**: where the selection ends but the road continues in OSM, the
    adjoining roads are included for 50 m (game metres), going straight on at further
    junctions. The road then ends open (`extras.end_extension_m`).
+5. **Visible pieces** (role `visible`): roads of higher levels that can be seen from the route –
+   so that e.g. in L1 the way a motorway bridge crosses lies under it, instead of a railing on
+   flat ground. Higher levels continue these roads.
+   - If such a road crosses a road of the level grade-separated (under a bridge, on a bridge
+     above, through a tunnel), 200 m on both sides of the crossing are included
+     (`extras.visible_crossing_m`), going straight on at junctions.
+   - Sections at most 60 m next to a road of the level (`extras.visible_near_m`): parallel ways,
+     branches at nodes of the network. Gaps up to 40 m are closed, isolated remains below 30 m
+     dropped, as are sections so much higher or lower that no 1 : 1.5 slope fits in between –
+     except around a grade-separated crossing (30 m along the way, 30 m / sin α at a skewed
+     crossing), at bridges including 60 m before and after, and for gaps up to 40 m within a piece
+     (otherwise e.g. 16 m of the St 2183 next to the A 70 bridge went missing). Whole edges stay
+     even when short: they connect two nodes (e.g. 6 m of track between a bridge end and a
+     junction).
+   - Classes: everything L5 shows (`extras.visible_highway`). At motorway carriageways the pieces
+     end 15 m before (no at-grade junction). In the game: road type as usual, but not on the
+     map/GPS, GPS avoids; AI traffic as usual (`visible` in `mapping.jsonc`).
 
 L5 adds all ways. Ways without truck traffic get their own flags in the game
 (`mapping.jsonc`):
@@ -230,14 +320,18 @@ Computed on a shared graph of all roads; at an OSM node all roads have the same 
    network-wide to `terrain_max_grade` (6 %). Without a model everything is at height 0.
 2. Parallel carriageways of motorways/trunk roads within 25 m are tied to the same height
    (no step in the median).
-3. Bridges of at least `min_bridge_length_m` (8 m) are raised by `bridge_clearance_m × layer`
-   (6.0 m) – except motorway/trunk bridges. The lift falls off at no more than
-   `max_ramp_grade` (5 %).
+3. Bridges of at least `min_bridge_length_m` (8 m) that do not cross a road of the network
+   are raised by `bridge_clearance_m × layer` (6.0 m) – except motorway/trunk bridges. The
+   lift falls off at no more than `max_ramp_grade` (5 %). Bridges over a road of the network
+   are only raised as far as step 5 requires.
 4. Each structure is interpolated as a whole between its abutments or portals.
 5. Grade-separated crossings need `maxheight` (from OSM, lower road first, then the bridge)
-   + 1.2 m deck, otherwise 6.0 m. A tunnel below is lowered; a minor road under a
+   + 1.2 m deck, otherwise 6.0 m (with a terrain model 0.2 m reserve for the grade limits
+   applied afterwards). A tunnel below is lowered; a minor road under a
    motorway/trunk road is **lowered** (the motorway stays on the terrain, as in reality,
-   e.g. B 85 under A 70); otherwise the upper road is raised.
+   e.g. B 85 under A 70); otherwise the upper road is raised. After the grade limits the
+   clearance is checked again and any shortfall corrected at the crossing; crossing points then
+   only move away from the other road.
 
 This is an approximation from OSM tags, not a survey.
 
@@ -273,6 +367,11 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 
 - Exit: widening 2→3 + split 3→2+1; entry mirrored. The second prefab takes its direction
   from the joint of the first. Opposite exit/entry pairs are moved apart to ≥ 19 m.
+- If a bridge or tunnel lies under the outer prefab (widening or lane end), that prefab moves
+  beyond the structure and a road of type `ger17` ("ger hw2 ext one lane tmpl", 2 lanes plus the
+  extra lane) runs over the structure between the two prefabs – as in the SCS map. A prefab is
+  solid ground: on a bridge over a road the terrain underneath rose to the deck. A structure
+  under the inner prefab (split/join) is still covered by it.
   Ramp points closer to the main road than the prefab's ramp node are dropped (otherwise
   the ramp swings back across the main road). Road terrain is cleared only on the gore side.
 - Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits. Arms
@@ -287,6 +386,11 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 3. 3-lane interchanges, left-hand ramps, motorway interchanges.
 4. Bridge models, terrain material/vegetation from OSM land use, higher-resolution DGM1.
 5. Larger areas: measure run time and memory for a federal state or all of Germany.
+6. Levels that build on each other: download L1, add L2 etc. for a denser network. For that,
+   L(n+1) must take over the roads of L(n) unchanged (same UIDs, heights, prefabs) and only
+   continue them; the visible pieces are the first step. Untested: how the game loads two map mods
+   with the same sector files (presumably the higher one replaces the lower one completely – then
+   an L2 package would have to bring the L1 content of its sectors along).
 
 ## Licences
 

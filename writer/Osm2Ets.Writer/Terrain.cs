@@ -7,8 +7,9 @@ namespace Osm2Ets.Writer;
 /// Begrenzt das Gelände neben einer Straße, damit es nicht in benachbarte
 /// Fahrbahnen (Gegenfahrbahn, Rampen) hineinragt und dort "durch den Asphalt
 /// schaut". Je Abschnitt und Seite wird der Abstand zur nächsten anderen Straße
-/// gemessen; Gelände = min(Wunsch, Abstand − halbe eigene Breite − halbe fremde
-/// Breite − Rand).
+/// gemessen; Gelände = min(Wunsch, Abstand − eigener Modellrand − fremder Modellrand − Rand).
+/// Die Modellränder sind je Seite verschieden (Einbahn-Vorlagen sind asymmetrisch, z. B.
+/// ger16 −9,0…+8,0 m); gemessen wird jeweils der Rand, der zur anderen Straße zeigt.
 /// </summary>
 public static class TerrainClearance
 {
@@ -17,7 +18,14 @@ public static class TerrainClearance
     private const float Cell = 100f;
     /// <summary>Lücken zwischen zwei Straßen teilen (je Straße bis zur Mitte) – bei breitem Gelände.</summary>
     public static bool Share = false;
+    /// <summary>Nur mit symmetrischen Rändern (OSM2ETS_RT_SYMMETRIC): Modell schmaler als die Vorlage angenommen.</summary>
     public const float MedianExtra = 1.5f;
+    /// <summary>Beim Teilen reicht jedes Gelände so weit über die Mitte (keine Fuge zwischen beiden).</summary>
+    public const float ShareOverlap = 0.5f;
+    /// <summary>So weit bleibt das Gelände vor dem Modellrand einer anderen Straße (nie über fremden Asphalt).</summary>
+    public const float EdgeClear = 0.1f;
+    /// <summary>Gezählt: Seiten, die wegen eines fremden Modellrands schmaler als MinSide blieben.</summary>
+    public static int HardLimited;
     /// <summary>Wunschbreite je Seite, wenn flächiges Gelände aus dem Höhenraster kommt.</summary>
     public const float WideTerrain = 60f;
 
@@ -62,7 +70,15 @@ public static class TerrainClearance
         SearchRadius = WideTerrain * 2 + 40;
     }
 
-    private readonly record struct Seg(RoadEntry Road, int Index, Vector2 A, Vector2 B, float HalfWidth);
+    /// <summary>EdgeL/EdgeR: Abstand der Straßenlinie vom linken/rechten Modellrand.</summary>
+    private readonly record struct Seg(RoadEntry Road, int Index, Vector2 A, Vector2 B, float EdgeL, float EdgeR);
+
+    /// <summary>Modellränder eines Stils (links, rechts) relativ zur Straßenlinie.</summary>
+    public static (float L, float R) Edges(ResolvedStyle st)
+    {
+        float hw = st.Width / 2, mc = MapWriter.UseModelEdges ? st.ModelCenter : 0f;
+        return (MathF.Max(0, hw - mc), MathF.Max(0, hw + mc));
+    }
 
     public static int Apply(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles,
                             List<(Vector3[] Nodes, float HalfWidth)>? obstacles = null)
@@ -87,7 +103,7 @@ public static class TerrainClearance
         {
             var c = nodes.Aggregate(Vector3.Zero, (a, b) => a + b) / nodes.Length;
             foreach (var n in nodes)
-                AddSeg(new Seg(null!, -1, new Vector2(n.X, n.Z), new Vector2(c.X, c.Z), hw));
+                AddSeg(new Seg(null!, -1, new Vector2(n.X, n.Z), new Vector2(c.X, c.Z), hw, hw));
         }
         int firstRoadSeg = segs.Count;
         foreach (var r in roads)
@@ -97,15 +113,24 @@ public static class TerrainClearance
             {
                 var a = new Vector2((float)r.Points[i][0], (float)r.Points[i][2]);
                 var b = new Vector2((float)r.Points[i + 1][0], (float)r.Points[i + 1][2]);
-                AddSeg(new Seg(r, i, a, b, st[i].Width / 2));
+                var (el, er) = Edges(st[i]);
+                AddSeg(new Seg(r, i, a, b, el, er));
             }
         }
 
         int clamped = 0;
+        float MinSide = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_RT_MIN"), System.Globalization.CultureInfo.InvariantCulture, out var ms) ? ms : 2f;
         foreach (var s in segs.Skip(firstRoadSeg))
         {
             var style = styles[s.Road][s.Index];
             float left = style.TerrainLeft, right = style.TerrainRight;
+            // höchstens bis kurz vor den Modellrand einer anderen Straße (auch nicht für MinSide)
+            float hardL = float.MaxValue, hardR = float.MaxValue;
+            bool exact = MapWriter.UseModelEdges;
+            // je Spalte begrenzt (TerrainFill.ClampColumns): Breite nach der breitesten Stelle des
+            // Abschnitts, die engeren Stellen kürzt das Straßengelände selbst je Spalte
+            bool perColumn = exact && Share && TerrainFill.ClampColumns && TerrainFill.GapRamp;
+            float maxL = 0, maxR = 0, maxHardL = 0, maxHardR = 0;
             var dir = s.B - s.A;
             if (dir.LengthSquared() == 0) continue;
             dir = Vector2.Normalize(dir);
@@ -120,6 +145,7 @@ public static class TerrainClearance
             }
             foreach (var t in new[] { 0.05f, 0.25f, 0.5f, 0.75f, 0.95f })
             {
+                if (perColumn) { left = style.TerrainLeft; right = style.TerrainRight; hardL = hardR = float.MaxValue; }
                 var p = Vector2.Lerp(s.A, s.B, t);
                 foreach (var k in cand)
                 {
@@ -135,17 +161,33 @@ public static class TerrainClearance
                     if ((o.B - o.A).LengthSquared() < 1e-4f) continue;
                     var odir = Vector2.Normalize(o.B - o.A);
                     float cos = MathF.Abs(Vector2.Dot(odir, dir));
+                    var oRight = new Vector2(-odir.Y, odir.X);
                     if (cos >= 0.7f)
                     {
                         // nur, wenn die Nachbarstraße wirklich seitlich liegt (nicht weit voraus)
                         if (MathF.Abs(Vector2.Dot(d, rightN)) < 0.5f * dist) continue;
-                        float free = MathF.Max(0, dist - s.HalfWidth - o.HalfWidth - Margin);
-                        // beide Straßen füllen die Lücke: jede bis zur Mitte
-                        if (Share && o.Road is not null) free = free / 2 + MedianExtra;
-                        // Mittelstreifen: das Fahrbahnmodell ist schmaler als die Vorlagenbreite,
-                        // deshalb etwas unter die Nachbarfahrbahn reichen (sonst bleibt ein Spalt)
+                        bool onRight = Vector2.Dot(d, rightN) >= 0;
+                        // zugewandte Modellränder: eigener auf der Seite der Nachbarstraße, fremder
+                        // auf der Seite, auf der diese Straße von ihr aus liegt
+                        float own = onRight ? s.EdgeR : s.EdgeL;
+                        float oth = Vector2.Dot(-d, oRight) >= 0 ? o.EdgeR : o.EdgeL;
+                        float gap = dist - own - oth - Margin;
+                        float free = MathF.Max(0, gap);
+                        if (exact)
+                        {
+                            // beide Straßen füllen die Lücke: jede bis knapp über die Mitte
+                            if (Share && o.Road is not null) free = free / 2 + ShareOverlap;
+                            if (o.Road is not null)
+                            {
+                                float hard = MathF.Max(0, gap - EdgeClear);
+                                free = MathF.Min(free, hard);
+                                if (onRight) hardR = MathF.Min(hardR, hard); else hardL = MathF.Min(hardL, hard);
+                            }
+                        }
+                        // alt (symmetrische Ränder): beide bis zur Mitte bzw. etwas unter die Nachbarfahrbahn
+                        else if (Share && o.Road is not null) free = free / 2 + MedianExtra;
                         else if (o.Road is not null) free += MedianExtra;
-                        if (Vector2.Dot(d, rightN) >= 0) right = MathF.Min(right, free);
+                        if (onRight) right = MathF.Min(right, free);
                         else left = MathF.Min(left, free);
                         continue;
                     }
@@ -153,19 +195,43 @@ public static class TerrainClearance
                     // wo der Geländestreifen sie trifft, endet er – sonst ragt er mit seiner
                     // eigenen Höhe über die fremde Fahrbahn
                     float sin = MathF.Max(MathF.Sqrt(1 - cos * cos), 0.3f);
+                    float othE = Vector2.Dot(p - o.A, oRight) >= 0 ? o.EdgeR : o.EdgeL;
                     foreach (var (n, isRight) in new[] { (rightN, true), (-rightN, false) })
                     {
                         float want = isRight ? right : left;
                         if (want <= 0) continue;
                         if (!RaySegment(p, n, o.A, o.B, out float u)) continue;
-                        float reach = s.HalfWidth + want + o.HalfWidth / sin + Margin;
+                        float own = isRight ? s.EdgeR : s.EdgeL;
+                        float reach = own + want + othE / sin + Margin;
                         if (u > reach) continue;
-                        float free = MathF.Max(0, u - s.HalfWidth - o.HalfWidth / sin - Margin);
-                        if (Share && o.Road is not null) free = free / 2 + MedianExtra;
+                        float gap = u - own - othE / sin - Margin;
+                        float free = MathF.Max(0, gap);
+                        if (Share && o.Road is not null) free = free / 2 + (exact ? ShareOverlap : MedianExtra);
+                        if (exact && o.Road is not null)
+                        {
+                            float hard = MathF.Max(0, gap - EdgeClear);
+                            free = MathF.Min(free, hard);
+                            if (isRight) hardR = MathF.Min(hardR, hard); else hardL = MathF.Min(hardL, hard);
+                        }
                         if (isRight) right = MathF.Min(right, free); else left = MathF.Min(left, free);
                     }
                 }
+                if (perColumn)
+                {
+                    maxL = MathF.Max(maxL, left); maxR = MathF.Max(maxR, right);
+                    maxHardL = MathF.Max(maxHardL, hardL); maxHardR = MathF.Max(maxHardR, hardR);
+                }
             }
+            if (perColumn) { left = maxL; right = maxR; hardL = maxHardL; hardR = maxHardR; }
+            // Mindestbreite wie in der SCS-Karte (1,5–2,2 m an der Zwickel-/Mittelstreifenseite):
+            // ohne Straßengelände stößt der Asphaltrand direkt an das tiefer liegende Füllgelände,
+            // im Editor als schwarzer Streifen entlang der Fahrbahn
+            left = MathF.Max(left, MathF.Min(style.TerrainLeft, MinSide));
+            right = MathF.Max(right, MathF.Min(style.TerrainRight, MinSide));
+            // nie über den Asphalt einer anderen Straße (dort läge das Gelände auf eigener Höhe
+            // über der fremden Fahrbahn bzw. flimmerte mit ihr)
+            if (left > hardL) { left = hardL; if (hardL < MinSide) HardLimited++; }
+            if (right > hardR) { right = hardR; if (hardR < MinSide) HardLimited++; }
             if (left < style.TerrainLeft - 0.01f || right < style.TerrainRight - 0.01f)
             {
                 styles[s.Road][s.Index] = style with { TerrainLeft = MathF.Floor(left * 2) / 2, TerrainRight = MathF.Floor(right * 2) / 2 };

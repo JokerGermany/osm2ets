@@ -3,11 +3,14 @@
 // Straßentypen aus /def/world/road_look.template.sii (ETS2 1.61, Ausgabe von
 // "osm2ets-writer looks"). Name laut Spieldaten in Klammern:
 //   ger13 (ger hw 2 lanes one way tmpl)   ger16 (ger hw 3 lanes one way tmpl)
+//   ger17 (ger hw2 ext one lane tmpl)
 //   ger2  (ger hw exit one lane)          ger5  (ger road 1 one way)
 //   ger9  (ger road 2 narrow one way)     ger1  (ger road 1 tmpl)
 //   ger29 (ger road 2 no offset tmpl)
 // ger4 = "ger road 1 minim" hat Spuren "no_vehicles" – nur für Wege ohne Lkw-/KI-Verkehr.
-// Fahrbahnvariante und Look der Vorlagen werden noch nicht gesetzt (Standardwerte
+// Autobahn/Rampen: Look ger_1 und Randstücke ger_sh_15 wie in der SCS-Karte (Ausschnitt
+// einer deutschen Anschlussstelle, ETS2 1.61); Rampen zusätzlich Variante it_lin.
+// Übrige Fahrbahnvarianten und Looks werden noch nicht gesetzt (Standardwerte
 // des Spiels) – das ist ungeprüft.
 //
 // Regeln werden von oben nach unten geprüft; die erste passende gewinnt.
@@ -43,12 +46,25 @@
       "match": { "highway": ["service"], "service": ["parking_aisle", "driveway", "drive-through", "emergency_access"] },
       "road_type": "ger4", "width": 4.5, "terrain_left": 6, "terrain_right": 6,
       "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
+    // Rolle "ext" setzt der Writer: Straße zwischen Aufweitung und Teilung (bzw. Einmündung und
+    // Spurende) einer Anschlussstelle, wenn dort ein Bauwerk liegt – wie in der SCS-Karte über
+    // Brücken. ger17 = "ger hw2 ext one lane tmpl". Ihre Linie liegt am dreispurigen Prefab-Knoten
+    // 4,5 m rechts der zweispurigen; Modell angenommen wie ger16 (nicht vermessen).
+    { "name": "Autobahn mit Zusatzspur zwischen Anschluss-Prefabs", "match": { "role": ["ext"] },
+      "road_type": "ger17", "width": 17, "model_center": -0.5, "offset": 0, "edge_left": 9, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
+      "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahn 3+ Spuren", "match": { "highway": ["motorway", "trunk"], "oneway": true, "lanes_min": 3 },
-      "road_type": "ger16", "width": 17, "model_center": -0.5, "offset": 2.17, "edge_left": 6.83, "terrain_left": 4, "terrain_right": 30 },
+      "road_type": "ger16", "width": 17, "model_center": -0.5, "offset": 2.17, "edge_left": 6.83, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
+      "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahn / Kraftfahrstraße, Richtungsfahrbahn", "match": { "highway": ["motorway", "trunk"], "oneway": true },
-      "road_type": "ger13", "width": 12.5, "model_center": 1.75, "offset": 0, "edge_left": 4.5, "terrain_left": 4, "terrain_right": 30 },
+      "road_type": "ger13", "width": 12.5, "model_center": 1.75, "offset": 0, "edge_left": 4.5, "terrain_left": 4, "terrain_right": 30,
+      "railing_left": false,
+      "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "Autobahnrampe", "match": { "highway": ["motorway_link", "trunk_link"], "oneway": true },
-      "road_type": "ger2", "width": 8, "model_center": -1.5, "offset": 2.2, "edge_left": 3.3, "terrain_left": 10, "terrain_right": 10 },
+      "road_type": "ger2", "width": 8, "model_center": -1.5, "offset": 2.2, "edge_left": 3.3, "terrain_left": 10, "terrain_right": 10,
+      "right": { "look": "ger_1", "variant": "it_lin", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     { "name": "sonstige Rampe, einspurig", "match": { "highway": ["primary_link", "secondary_link", "tertiary_link"], "oneway": true },
       "road_type": "ger5", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
     { "name": "Einbahn zweispurig", "match": { "oneway": true, "lanes_min": 2 }, "road_type": "ger9", "width": 9 },
@@ -59,10 +75,45 @@
   ],
   // Brücken/Tunnel: kein Geländestreifen auf Fahrbahnhöhe – Gelände nur darunter
   // (flächiges Gelände auf Bodenhöhe). Dämme entstehen nur an den Zufahrten.
-  "bridge": { "terrain_left": 0, "terrain_right": 0 },
+  // Geländer an den Brückenrändern: railing_01_ger (Token mod_ger_3) wie an Autobahnbrücken der
+  // SCS-Karte (dort 9 m neben der Linie von ger17 – angenommen 1 m außerhalb des Modellrands).
+  // Richtungsfahrbahnen (railing_left: false in ihren Regeln) nur außen, wie in der SCS-Karte.
+  "bridge": { "terrain_left": 0, "terrain_right": 0, "railing": "mod_ger_3", "railing_offset": 1 },
   "tunnel": { "terrain_left": 0, "terrain_right": 0 },
+  // Ein Brückenkörper für beide Richtungsfahrbahnen eines Paars paralleler Autobahnbrücken, wie in
+  // der SCS-Karte: Railing dlc_it_8 = /model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd aus
+  // dem ITALIA-DLC, an einer Richtungsfahrbahn, zur Gegenfahrbahn hin um den halben Abstand der
+  // Linien + 2 m versetzt (SCS: 11 + 2 = 13 m). Seit v89 aus: unter den zweispurigen Paaren der
+  // A 70 (Linien 12–15 m auseinander, das Modell ist rund 44 m breit) passte er nur von einer Seite;
+  // jetzt bekommt jede Fahrbahn ihren Körper aus "bridge_bodies" (und die Karte braucht kein Italia).
+  // Zum Einschalten die Zeile wieder aufnehmen; min_gap: kleinster Abstand der Linien (m).
+  // "bridge_body": { "railing": "dlc_it_8", "extra_offset": 2, "min_gap": 18 },
+  // Brückenkörper für alle Brücken, je Straßentyp ("*" = andere Typen). Railings mit Überbau,
+  // Widerlagern (16 m tief) und Brüstung aus /def/world/railing.sii (bridge: true); Breiten aus den
+  // .pmg-Modellen gemessen. Das Modell ist zur Außenseite der gewählten Straßenseite gespiegelt (so
+  // passt dlc_it_8 der SCS-Karte: links, 13 m). Mit Versatz 0 liegen die Brüstungen bei allen drei
+  // Autobahn-/Rampentypen 1,2–1,4 m außerhalb des Modellrands – so sind sie offenbar gedacht.
+  //   dlc_no_5  shared_2lanes_x_1way  x −9,37…5,87   (ger13 links: −5,87…9,37 um −4,5…8,0)
+  //   dlc_no_4  shared_3lanes_x_1way  x −9,25…10,23  (ger16 links: −10,23…9,25 um −9,0…8,0)
+  //   dlc_no_14 shared_hw_exit        x −6,88…3,88   (ger2 rechts: −6,88…3,88 um −5,5…2,5)
+  //   dlc_no_6  shared_simple         x −6,58…6,58   (Straße mittig auf der Linie, bis 11 m breit)
+  // half_width: weiteste Ausdehnung ab der Linie; kreuzt eine Straße schräg darunter, wird die
+  // Brücke so weit verlängert, dass sie an allen vier Ecken 3 m Platz bis zu den Widerlagern hat.
+  // Ob diese Modelle zum Grundspiel gehören, ist ungeprüft (Token-Präfix dlc_no_); Ersatz aus dem
+  // Grundspiel mit gleichen Maßen: 92 (2lanes_x_1way), 128 (3lanes_x_1way), 13 (simple).
+  "bridge_bodies": {
+    "ger13": { "railing": "dlc_no_5", "side": "left", "offset": 0, "half_width": 9.4 },
+    "ger16": { "railing": "dlc_no_4", "side": "left", "offset": 0, "half_width": 10.3 },
+    "ger17": { "railing": "dlc_no_4", "side": "left", "offset": 0, "half_width": 10.3 },
+    "ger2": { "railing": "dlc_no_14", "side": "right", "offset": 0, "half_width": 6.9 },
+    "*": { "railing": "dlc_no_6", "side": "right", "offset": 0, "max_width": 11, "half_width": 6.6 }
+  },
   // Wege ohne Kfz-Zugang (access=private|no, nur in L5): Straßentyp wie sonst, aber nicht
   // auf Karte/Navi, Navi meidet, kein KI-Verkehr (z. B. Firmengelände, Privatstraßen).
   "restricted": { "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": false },
+  // Sichtstücke (Rolle "visible"): Straßen höherer Stufen, die man von der Strecke aus sieht – unter
+  // oder über einer Brücke, unmittelbar daneben. Nur ein Stück davon mit offenem Ende: Straßentyp
+  // wie sonst (KI-Verkehr wie dort), aber nicht auf Karte/Navi, Navi meidet.
+  "visible": { "show_in_ui_map": false, "gps_avoid": true },
   "map": { "normal_scale": null, "city_scale": null }
 }

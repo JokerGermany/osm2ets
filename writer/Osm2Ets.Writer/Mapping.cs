@@ -20,6 +20,13 @@ public sealed class MappingConfig
     public StyleSpec? Tunnel { get; set; }
     /// <summary>Überschreibt Werte auf Wegen ohne Kfz-Zugang (access=private|no), zusätzlich zur Regel.</summary>
     public StyleSpec? Restricted { get; set; }
+    /// <summary>Überschreibt Werte auf Sichtstücken (Rolle "visible": Straßen höherer Stufen, die man von der
+    /// Strecke aus sieht – nur ein Stück davon, mit offenem Ende), zusätzlich zur Regel.</summary>
+    public StyleSpec? Visible { get; set; }
+    /// <summary>Brückenkörper für Paare paralleler Autobahnbrücken über Straßen (siehe BridgeBodies).</summary>
+    public BridgeBodySpec? BridgeBody { get; set; }
+    /// <summary>Brückenkörper je Straßentyp für alle übrigen Brücken ("*" = alle anderen Typen).</summary>
+    public Dictionary<string, BridgeBodyType>? BridgeBodies { get; set; }
     public MapSpec Map { get; set; } = new();
 
     // Strenger als beim Zwischenformat: unbekannte Felder (Tippfehler) sind Fehler.
@@ -59,8 +66,24 @@ public sealed class MappingConfig
         Bridge?.Validate("bridge", errors);
         Tunnel?.Validate("tunnel", errors);
         Restricted?.Validate("restricted", errors);
+        Visible?.Validate("visible", errors);
+        BridgeBody?.Validate("bridge_body", errors);
+        foreach (var (type, b) in BridgeBodies ?? [])
+            b.Validate($"bridge_bodies.{type}", errors);
         if (errors.Count > 0)
             throw new InvalidDataException($"{source}:\n  " + string.Join("\n  ", errors));
+    }
+
+    public const string VisibleRole = "visible";
+
+    /// <summary>Brückenkörper für ein Brückenstück dieses Stils (Typ, sonst "*"), oder null.</summary>
+    public BridgeBodyType? BodyFor(ResolvedStyle style)
+    {
+        if (BridgeBodies is null) return null;
+        if (!BridgeBodies.TryGetValue(style.RoadType, out var b) && !BridgeBodies.TryGetValue("*", out b)) return null;
+        if (b.Railing.Length == 0) return null;
+        if (b.MaxWidth is float w && style.Width > w) return null;
+        return b;
     }
 
     /// <summary>Bestimmt den Stil für ein Straßenstück mit den Attributen des Laufs.</summary>
@@ -81,7 +104,59 @@ public sealed class MappingConfig
             style = Tunnel.ToResolved(style);
         if (run.Access is not null && Restricted is not null)
             style = Restricted.ToResolved(style);
+        if (run.Role == VisibleRole && Visible is not null)
+            style = Visible.ToResolved(style);
         return style;
+    }
+}
+
+/// <summary>Brückenkörper (Railing mit Überbau, Widerlagern, Brüstung) für einen Straßentyp.</summary>
+public sealed class BridgeBodyType
+{
+    /// <summary>Railing-Token; leer = ohne Körper.</summary>
+    public string Railing { get; set; } = "";
+    /// <summary>Straßenseite, an der das Railing sitzt (das Modell ist zur Außenseite hin gespiegelt).</summary>
+    public string Side { get; set; } = "left";
+    /// <summary>Versatz ab der Straßenlinie (m).</summary>
+    public float Offset { get; set; }
+    /// <summary>Nur für Straßen bis zu dieser Modellbreite (m), z. B. weil die Brüstungen sonst auf der Fahrbahn stünden.</summary>
+    public float? MaxWidth { get; set; }
+    /// <summary>Das Modell hat eigene Brüstungen: kein zusätzliches Geländer.</summary>
+    public bool Parapet { get; set; } = true;
+    /// <summary>Weiteste seitliche Ausdehnung des Modells ab der Straßenlinie (m); bestimmt, wie weit
+    /// eine schräg unterquerende Straße an den Brückenkanten seitlich wandert. Fehlt sie: Modellrand
+    /// der Straße + 1,5 m.</summary>
+    public float? HalfWidth { get; set; }
+
+    internal void Validate(string name, List<string> errors)
+    {
+        if (Railing.Length > 0) StyleSpec.CheckToken(Railing, $"{name}.railing", errors);
+        if (HalfWidth is < 0 or > 40) errors.Add($"{name}.half_width: 0–40 erwartet");
+        if (Side is not ("left" or "right")) errors.Add($"{name}.side: left oder right erwartet");
+        if (Offset is < -30 or > 30) errors.Add($"{name}.offset: −30–30 erwartet");
+    }
+}
+
+public sealed class BridgeBodySpec
+{
+    /// <summary>Railing-Token des Brückenkörpers (SCS-Karte: dlc_it_8, Italia-DLC).</summary>
+    public string Railing { get; set; } = "";
+    /// <summary>Versatz über den halben Abstand der Fahrbahnlinien hinaus zur Gegenfahrbahn (m).</summary>
+    public float ExtraOffset { get; set; } = 2f;
+    /// <summary>Abstand der Fahrbahnlinien (m), in dem zwei Brücken als Paar gelten.</summary>
+    public float MinGap { get; set; } = 12f;
+    public float MaxGap { get; set; } = 30f;
+    /// <summary>Längere Brücken bekommen keinen Körper (m).</summary>
+    public float MaxLength { get; set; } = 200f;
+    /// <summary>So weit dürfen Anfang und Ende der beiden Brücken längs auseinanderliegen (m).</summary>
+    public float MaxEndOffset { get; set; } = 8f;
+
+    internal void Validate(string name, List<string> errors)
+    {
+        if (Railing.Length == 0) errors.Add($"{name}.railing fehlt");
+        StyleSpec.CheckToken(Railing, $"{name}.railing", errors);
+        if (MinGap < 0 || MaxGap < MinGap) errors.Add($"{name}: min_gap ≤ max_gap erwartet");
+        if (ExtraOffset is < -20 or > 20) errors.Add($"{name}.extra_offset: −20–20 erwartet");
     }
 }
 
@@ -120,10 +195,19 @@ public class StyleSpec
     public string? Resolution { get; set; }
     public SideSpec? Left { get; set; }
     public SideSpec? Right { get; set; }
+    /// <summary>Geländer an beiden Modellrändern (Railing-Token, z. B. für Brücken), "" = keins.</summary>
+    public string? Railing { get; set; }
+    /// <summary>Abstand des Geländers vom Modellrand nach außen (m).</summary>
+    public float? RailingOffset { get; set; }
+    /// <summary>Geländer auch am linken Rand (false für Richtungsfahrbahnen: links liegt der
+    /// Mittelstreifen bzw. der Brückenkörper – in der SCS-Karte nur außen).</summary>
+    public bool? RailingLeft { get; set; }
 
     internal void Validate(string name, List<string> errors)
     {
         CheckToken(RoadType, $"{name}.road_type", errors);
+        if (Railing is { Length: > 0 }) CheckToken(Railing, $"{name}.railing", errors);
+        if (RailingOffset is < -5 or > 10) errors.Add($"{name}.railing_offset: −5–10 erwartet");
         if (TerrainLeft is < 0 or > 1000) errors.Add($"{name}.terrain_left: 0–1000 erwartet");
         if (TerrainRight is < 0 or > 1000) errors.Add($"{name}.terrain_right: 0–1000 erwartet");
         if (Width is <= 0 or > 60) errors.Add($"{name}.width: 0–60 erwartet");
@@ -159,7 +243,10 @@ public class StyleSpec
             ShowInUiMap ?? baseStyle?.ShowInUiMap,
             GpsAvoid ?? baseStyle?.GpsAvoid,
             Secret ?? baseStyle?.Secret,
-            AiVehicles ?? baseStyle?.AiVehicles);
+            AiVehicles ?? baseStyle?.AiVehicles,
+            Railing is not null ? (Railing.Length > 0 ? Railing : null) : baseStyle?.Railing,
+            RailingOffset ?? baseStyle?.RailingOffset ?? 1f,
+            RailingLeft: RailingLeft ?? baseStyle?.RailingLeft ?? true);
     }
 }
 
@@ -269,7 +356,14 @@ public sealed record ResolvedStyle(
     bool? ShowInUiMap = null,
     bool? GpsAvoid = null,
     bool? Secret = null,
-    bool? AiVehicles = null)
+    bool? AiVehicles = null,
+    string? Railing = null,
+    float RailingOffset = 1f,
+    string? Body = null,
+    float BodyOffset = 0f,
+    bool RailingLeft = true,
+    bool BodyRight = false,
+    bool BodyParapet = false)
 {
     /// <summary>Linker Modellrand ab OSM-Linie; ohne Angabe halbe Breite.</summary>
     public float EdgeLeft => EdgeLeftRaw >= 0 ? EdgeLeftRaw : Width / 2;

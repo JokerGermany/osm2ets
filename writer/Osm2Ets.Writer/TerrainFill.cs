@@ -23,11 +23,49 @@ public static class TerrainFill
     public static bool FillUnderRoads = Environment.GetEnvironmentVariable("OSM2ETS_FILL_MASKROADS") is null;
     /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
     public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
+    public static float NearFlat = EnvF("OSM2ETS_RT_FLAT", 3f), NearBlend = EnvF("OSM2ETS_RT_BLEND", 10f);
+    /// <summary>Schmale Seiten mit gestauchtem Verlauf (aus: OSM2ETS_RT_NOCOMPRESS).</summary>
+    public static bool CompressNarrow = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOCOMPRESS") is null;
+    /// <summary>Größte mittlere Neigung des Straßengeländes ab dem flachen Streifen (0 = aus).</summary>
+    public static float MaxSlope = EnvF("OSM2ETS_RT_MAXSLOPE", 1.0f);
+    public static int SlopeLimited;
+    /// <summary>In Zwickeln (andere Straße näher als GoreDist): kurzer Übergang.</summary>
+    public static float GoreFlat = 1.5f, GoreBlend = 2.5f, GoreDist = 14f, GoreFull = 8f;
+    /// <summary>Nur bei kleinem Höhenunterschied Raster–Fahrbahn (Zwickel auf einer Ebene);
+    /// sonst (Damm, Einschnitt, Brückenrampe) entstünde eine Kante.</summary>
+    public static float GoreMaxDh = 1.0f;
+    /// <summary>Zwischen zwei Straßen: Gelände als gerade Rampe von der eigenen zur fremden Fahrbahnhöhe,
+    /// wenn sich beide höchstens so viel unterscheiden (sonst Raster). Aus: OSM2ETS_RT_NOGAP.</summary>
+    public static float GapMaxDh = 3f;
+    public static bool GapRamp = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOGAP") is null;
+    public static int GapRamped;
+    /// <summary>Straßengelände-Punkte, die als Rampe an ein höheres bzw. tieferes Prefab laufen.</summary>
+    public static int PrefabRamped;
+    public static bool PrefabRamp = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOPREFABRAMP") is null;
+    /// <summary>Je Spalte kürzen: Reihen enden kurz vor dem Modell einer anderen Straße (an
+    /// zusammenlaufenden Fahrbahnen ist die Lücke je Spalte verschieden). Aus: OSM2ETS_RT_NOCLAMP.</summary>
+    public static bool ClampColumns = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOCLAMP") is null;
+    public static int ColumnsClamped;
+    private static float EnvF(string n, float d) =>
+        float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
     /// <summary>Füllstücke verketten (alt, OSM2ETS_FILL_CHAIN=1) – siehe Emit.</summary>
     /// <summary>Füllgelände nahe Fahrbahnen nicht höher als die Fahrbahn (aus: OSM2ETS_FILL_NOCAP).</summary>
     public static bool UseCap = Environment.GetEnvironmentVariable("OSM2ETS_FILL_NOCAP") is null;
     private static RoadCap? Cap;
-    private static float FH(TerrainGridEntry grid, float x, float z) => Cap is null ? grid.HeightAt(x, z) : Cap.Height(grid, x, z);
+    /// <summary>Obergrenze aus den geschriebenen Fahrbahnen und dem Straßengelände (siehe <see cref="CoverCap"/>).</summary>
+    private static CoverCap? CoverLimit;
+    private static float FH(TerrainGridEntry grid, float x, float z)
+    {
+        if (CoverLimit is null) return Cap is null ? grid.HeightAt(x, z) : Cap.Height(grid, x, z);
+        // Raster (Prefab-Boden), dann Fahrbahnen/Straßengelände (CoverCap), zuletzt Brücken- und
+        // Prefab-Decke – die darf eine Böschung nach unten nicht überstimmen
+        float h = Cap is null ? grid.HeightAt(x, z) : Cap.Base(grid, x, z);
+        if (float.IsNaN(h)) return h;
+        h = CoverLimit.Limit(x, z, h - FillDrop) + FillDrop;
+        return Cap is null ? h : Cap.Ceil(x, z, h);
+    }
+    /// <summary>Alle gesetzten Füllstücke (für <see cref="CoverCap.Settle"/>).</summary>
+    private static readonly List<Terrain> placedFill = [];
     public static bool Chain = Environment.GetEnvironmentVariable("OSM2ETS_FILL_CHAIN") is not null;
     /// <summary>Mittellinie (Zeile 0) mit eigenen Höhenpunkten belegen, wie in der SCS-Karte
     /// (dort ~7,5 % aller Offsets in Zeile 0). Aus: OSM2ETS_FILL_NOROW0.</summary>
@@ -55,10 +93,15 @@ public static class TerrainFill
     public static Result Build(Map map, TerrainGridEntry grid, List<RoadEntry> roads,
                                Dictionary<RoadEntry, ResolvedStyle[]> styles,
                                List<(Vector3[] Nodes, float HalfWidth)> prefabs,
-                               List<Vector2>? prefabLanes = null)
+                               List<Vector2>? prefabLanes = null, CoverCap? cover = null)
     {
-        Cap = UseCap ? RoadCap.Build(roads, styles, prefabs) : null;
-        RoadCap.Lowered = 0;
+        CoverLimit = cover;
+        placedFill.Clear();
+        CoverCap.ConeLowered = 0; CoverCap.ConeRaised = 0; CoverCap.CoverLowered = 0;
+        // mit CoverCap begrenzen Fahrbahnen das Füllgelände über ihre tatsächliche Oberfläche;
+        // RoadCap nur noch für Brücken (Überbau) und Prefabs
+        Cap = UseCap ? RoadCap.Build(roads, styles, prefabs, roadsToo: cover is null) : null;
+        RoadCap.Lowered = 0; RoadCap.Raised = 0;
         float x0 = (float)grid.Origin[0], z0 = (float)grid.Origin[1];
         float x1 = x0 + (float)grid.Cell * (grid.Nx - 1), z1 = z0 + (float)grid.Cell * (grid.Nz - 1);
         int mw = (int)((x1 - x0) / MaskCell) + 1, mh = (int)((z1 - z0) / MaskCell) + 1;
@@ -284,6 +327,7 @@ public static class TerrainFill
                 w.Write("\n");
             }
         }
+        cover?.Settle(placedFill);
         int free = 0, open = 0;
         for (int k = 0; k < mask.Length; k++) if (!mask[k]) { free++; if (!full[k]) open++; }
         Uncovered = free > 0 ? open / (double)free : 0;
@@ -295,7 +339,9 @@ public static class TerrainFill
     {
         // Knoten gierig so weit wie möglich setzen: Höhe linear (±0,4 m), Breiten fast gleich,
         // höchstens MaxPiece m – spart viele Items auf flachem, freiem Feld
-        float H(int i) => FH(grid, run[i].X, z);
+        var hs = new float[run.Count];
+        for (int i = 0; i < run.Count; i++) hs[i] = FH(grid, run[i].X, z);
+        float H(int i) => hs[i];
         var idx = new List<int> { 0 };
         int start = 0;
         while (start < run.Count - 1)
@@ -328,8 +374,8 @@ public static class TerrainFill
             float l = float.MaxValue, r = float.MaxValue;
             for (int i = a; i <= b; i++) { l = MathF.Min(l, run[i].L); r = MathF.Min(r, run[i].R); }
             placed(run[a].X, run[b].X, l, r);
-            var pa = new Vector3(run[a].X, FH(grid, run[a].X, z) - FillDrop, z);
-            var pb = new Vector3(run[b].X, FH(grid, run[b].X, z) - FillDrop, z);
+            var pa = new Vector3(run[a].X, H(a) - FillDrop, z);
+            var pb = new Vector3(run[b].X, H(b) - FillDrop, z);
             // Jedes Stück eigenständig (nicht per Append verkettet): TruckLib mittelt an einem
             // gemeinsamen Knoten die Richtung beider Nachbarstücke. Wechselt die Steigung dort
             // stark (Böschung neben Straße), wölbt sich die Mittellinie des Stücks als Hermite-
@@ -342,6 +388,7 @@ public static class TerrainFill
             t.ViewDistance = 1000;
             t.Left.Terrain.Noise = TerrainNoise.Percent0;
             t.Right.Terrain.Noise = TerrainNoise.Percent0;
+            placedFill.Add(t);
             // gröberes Raster (16 m statt 4 m): flaches Feld braucht keine feinen Quads
             // kurze Stücke brauchen feinere Schritte, sonst nur eine Rasterspalte (= unsichtbar)
             float plen = pb.X - pa.X;
@@ -415,7 +462,8 @@ public static class TerrainFill
     /// Annahme (ungeprüft): Offsets im lokalen System des Stücks (x entlang der Sehne,
     /// z quer, links negativ). Höhe wird am Weltpunkt neben der Straße abgefragt.
     /// </summary>
-    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null)
+    internal static int ShapeRoadSide(RoadTerrain side, TerrainGridEntry grid, Vector3 pa, Vector3 pb, float size, float zSign, float edge, Vector2? tA = null, Vector2? tB = null, Func<float, float, float, (float Dist, float Height, bool Bridge)>? other = null, Vector3? dA = null, Vector3? dB = null, Func<Vector2, Vector2, float, float>? rayFree = null,
+                                       Func<float, float, (float Dist, float Height)>? prefabNear = null)
     {
         var q = side.QuadData;
         q.Offsets.Clear();
@@ -439,21 +487,146 @@ public static class TerrainFill
             return d.LengthSquared() > 1e-8f ? Vector2.Normalize(d) : f;
         }
         bool world = Mode is 'C' or 'D';
+        // Fahrbahn wie im Spiel als 3D-Hermite-Kurve (Knotendrehung samt Neigung, Tangentenlänge =
+        // Knotenabstand): Höhe und Lage. Mit der Sehnenhöhe lag das Gelände dort, wo die Kurve
+        // durchhängt (Gefällewechsel), bis über 10 cm zu hoch – am Rand über dem Asphalt.
+        bool curve3 = world && dA is not null && dB is not null && UseHermiteHeight;
+        float len3 = Vector3.Distance(pa, pb);
+        Vector3 C3(float t)
+        {
+            float t2 = t * t, t3 = t2 * t;
+            return (2*t3-3*t2+1)*pa + (t3-2*t2+t)*len3*dA!.Value + (-2*t3+3*t2)*pb + (t3-t2)*len3*dB!.Value;
+        }
+        Vector2 D3(float t)
+        {
+            float t2 = t * t;
+            var d = (6*t2-6*t)*pa + (3*t2-4*t+1)*len3*dA!.Value + (-6*t2+6*t)*pb + (3*t2-2*t)*len3*dB!.Value;
+            var d2 = new Vector2(d.X, d.Z);
+            return d2.LengthSquared() > 1e-8f ? Vector2.Normalize(d2) : f;
+        }
         int n = 0;
+        // je Spalte: freie Breite bis zum Modell einer anderen Straße (Strahl vom eigenen Rand nach außen)
+        var free = new float[cols + 1];
+        for (int i = 0; i <= cols; i++)
+        {
+            free[i] = float.MaxValue;
+            if (rayFree is null || !world) continue;
+            float u = (float)i / cols;
+            Vector2 c, nrm;
+            if (curve3) { var c3 = C3(u); c = new Vector2(c3.X, c3.Z); var tg = D3(u); nrm = new Vector2(-tg.Y, tg.X); }
+            else { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); }
+            var dir = nrm * zSign;
+            float g = rayFree(c + dir * edge, dir, size);
+            if (g < size) { free[i] = MathF.Max(0, g - TerrainClearance.EdgeClear); ColumnsClamped++; }
+        }
+        // Schmale Seiten (unter NearFlat + NearBlend): Verlauf gestaucht, damit der Außenrand die
+        // Rasterhöhe erreicht. Sonst endete das Straßengelände auf Fahrbahnhöhe – bei einem Damm
+        // über, im Einschnitt unter dem anschließenden Füllgelände (Kante bis einige Meter).
+        float flat = NearFlat, blend = NearBlend;
+        if (CompressNarrow && size < NearFlat + NearBlend)
+        {
+            float sc = size / (NearFlat + NearBlend);
+            flat *= sc; blend *= sc;
+        }
+        // Höhe der ersten gekürzten Reihe je Spalte: alle weiteren gekürzten Reihen bekommen dieselbe
+        // (sie liegen nur 1 cm auseinander – verschiedene Höhen wären eine senkrechte Wand)
+        var clampH = new float[cols + 1];
+        Array.Fill(clampH, float.NaN);
         for (int j = 1; j < rowsD.Count; j++)
             for (int i = 0; i <= cols; i++)
             {
                 float u = (float)i / cols;
-                float d = edge + rowsD[j];
+                // gekürzte Reihen nicht exakt aufeinander (Fläche 0, Normale unbestimmt), sondern je 1 cm
+                // versetzt – bei höchstens 10 Reihen reicht das bis an den fremden Rand (EdgeClear 0,1 m)
+                float dd = rowsD[j];
+                bool clamped = dd > free[i];
+                if (clamped)
+                {
+                    int first = j; while (first > 1 && rowsD[first - 1] > free[i]) first--;
+                    dd = free[i] + 0.01f * (j - first);
+                }
+                float d = edge + dd;
                 Vector2 c, nrm; float x;
-                if (world) { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
+                float roadY = pa.Y + (pb.Y - pa.Y) * u;
+                if (curve3) { var c3 = C3(u); c = new Vector2(c3.X, c3.Z); roadY = c3.Y; var tg = D3(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
+                else if (world) { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); x = 0; }
                 else { x = len * u; c = a + f * x; nrm = new Vector2(-f.Y, f.X); }
                 var w = c + nrm * (zSign * d);
                 float h = grid.HeightAt(w.X, w.Y);
                 if (float.IsNaN(h)) continue;
-                float roadY = pa.Y + (pb.Y - pa.Y) * u;
-                float tt = Math.Clamp((rowsD[j] - 3f) / 10f, 0, 1);   // erste 3 m auf Straßenhöhe
-                h = roadY + (h - roadY) * tt - RoadTerrainDrop;
+                // erste NearFlat m auf Straßenhöhe, bis NearFlat+NearBlend m ins Raster übergehen.
+                // Kurz halten: in Zwickeln zwischen zwei Straßen (Gabelung) zieht sonst jedes
+                // Straßengelände zur eigenen Fahrbahnhöhe – dort, wo sich beide überlappen,
+                // entsteht eine Stufe (dunkler Keil). Das Raster hält die Straßenhöhe nahe der
+                // Straße ohnehin (terrain.py: core 6 m).
+                // Abstand vom eigenen Rand nach dem Kürzen (dd): gekürzte Reihen liegen 1 cm auseinander
+                // und müssen gleich hoch sein – mit der ungekürzten Reihenlage bekamen die äußeren
+                // Reihen die Rasterhöhe, die inneren die Fahrbahnhöhe: senkrechte Wand (v79)
+                float tt = Math.Clamp((dd - flat) / blend, 0, 1);
+                // Prefab deutlich höher daneben (auf einem Damm, ohne eigenes Straßengelände): gerade
+                // Rampe bis an seinen Rand. Sonst endete das Gelände dort 3–4 m unter dem Prefab (an der
+                // Zusammenführung vor der A-70-Brücke über die Gemeindeverbindung: Mulde mit Wänden
+                // neben dem Prefab). Nicht unter Brücken (prefabNear liefert dort nichts) und nicht zu
+                // tieferen Prefabs (eine Kreuzung unter der A 70 zog sonst den Damm daneben herunter).
+                if (prefabNear is not null && PrefabRamp)
+                {
+                    var (pd, ph) = prefabNear(w.X, w.Y);
+                    if (!float.IsNaN(ph) && pd < GoreDist && ph - roadY >= GapMaxDh)
+                    {
+                        float k = Math.Clamp((GoreDist - pd) / (GoreDist - GoreFull), 0, 1);
+                        float hr = roadY + (h - roadY) * tt;
+                        float rj = d - edge;
+                        float hg = roadY + (ph - roadY) * (rj / MathF.Max(rj + pd, 1e-3f));
+                        h = hr + (hg - hr) * k;
+                        PrefabRamped++;
+                        goto shaped;
+                    }
+                }
+                if (other is not null)
+                {
+                    var (od, oh, ob) = other(w.X, w.Y, roadY);
+                    if (od < GoreDist)
+                    {
+                        float k = Math.Clamp((GoreDist - od) / (GoreDist - GoreFull), 0, 1);
+                        if (GapRamp && !ob && !float.IsNaN(oh) && MathF.Abs(oh - roadY) < GapMaxDh)
+                        {
+                            // zwischen zwei Fahrbahnen: gerade Rampe von der eigenen zur fremden Höhe.
+                            // Das Gelände der anderen Straße liegt von ihrer Seite her auf derselben
+                            // Ebene – keine Stufe in der Mitte (Mittelstreifen, Rampe neben der
+                            // Hauptfahrbahn) und kein sichtbares Füllgelände dazwischen.
+                            float hr = roadY + (h - roadY) * tt;
+                            float rj = d - edge;
+                            float hg = roadY + (oh - roadY) * (rj / MathF.Max(rj + od, 1e-3f));
+                            h = hr + (hg - hr) * k;
+                            GapRamped++;
+                            goto shaped;
+                        }
+                        if (MathF.Abs(h - roadY) < GoreMaxDh)
+                        {
+                            // Zwickel: nahe einer anderen Straße schneller ins Raster (das beide Straßen
+                            // stetig verbindet), sonst Stufe zwischen zwei Straßengeländen
+                            float tg = Math.Clamp((dd - GoreFlat) / GoreBlend, 0, 1);
+                            float t2 = tt + (MathF.Max(tt, tg) - tt) * k;
+                            if (t2 > tt) RoadCap.RoadTerrainLowered++;
+                            tt = t2;
+                        }
+                    }
+                }
+                h = roadY + (h - roadY) * tt;
+                // nie steiler als MaxSlope ab dem flachen Streifen (Rest übernimmt das Füllgelände)
+                if (MaxSlope > 0)
+                {
+                    float lim = MaxSlope * MathF.Max(0, dd - flat);
+                    float dh0 = Math.Clamp(h - roadY, -lim, lim);
+                    if (dh0 != h - roadY) SlopeLimited++;
+                    h = roadY + dh0;
+                }
+            shaped:
+                if (clamped)
+                {
+                    if (float.IsNaN(clampH[i])) clampH[i] = h; else h = clampH[i];
+                }
+                h -= RoadTerrainDrop;
                 var off = world
                     ? new Vector3(w.X - pa.X, h - pa.Y, w.Y - pa.Z)        // Weltachsen ab Anfangsknoten
                     : new Vector3(x, h - pa.Y, zSign * d);                 // lokal
@@ -464,7 +637,7 @@ public static class TerrainFill
     }
 
     /// <summary>Größte Breite, bis zu der keine Quad-Zeile umklappt (Kreuzprodukt wechselt Vorzeichen).</summary>
-    internal static float FoldFreeSize(Road rd, RoadTerrain side, float zSign, float edge, Vector2? tA, Vector2? tB)
+    internal static float FoldFreeSize(Road rd, RoadTerrain side, float zSign, float edge, Vector2? tA, Vector2? tB, Vector3? dA = null, Vector3? dB = null)
     {
         var q = side.QuadData;
         if (q.Offsets.Count == 0 || side.Size <= 0) return side.Size;
@@ -476,11 +649,23 @@ public static class TerrainFill
         var a = p0; var b = new Vector2(rd.ForwardNode.Position.X, rd.ForwardNode.Position.Z);
         float len = Vector2.Distance(a, b); if (len < 1e-3f) return side.Size;
         var f = (b - a) / len; var ta = tA ?? f; var tb = tB ?? f;
+        var pa3 = rd.Node.Position; var pb3 = rd.ForwardNode.Position; float len3 = Vector3.Distance(pa3, pb3);
+        bool curve3 = dA is not null && dB is not null && UseHermiteHeight;
         for (int i = 0; i <= q.Cols; i++)
         {
             float t = (float)i / q.Cols, t2 = t * t, t3 = t2 * t;
-            var c = (2*t3-3*t2+1)*a + (t3-2*t2+t)*len*ta + (-2*t3+3*t2)*b + (t3-t2)*len*tb;
-            var d = (6*t2-6*t)*a + (3*t2-4*t+1)*len*ta + (-6*t2+6*t)*b + (3*t2-2*t)*len*tb;
+            Vector2 c, d;
+            if (curve3)
+            {
+                var c3 = (2*t3-3*t2+1)*pa3 + (t3-2*t2+t)*len3*dA!.Value + (-2*t3+3*t2)*pb3 + (t3-t2)*len3*dB!.Value;
+                var d3 = (6*t2-6*t)*pa3 + (3*t2-4*t+1)*len3*dA!.Value + (-6*t2+6*t)*pb3 + (3*t2-2*t)*len3*dB!.Value;
+                c = new Vector2(c3.X, c3.Z); d = new Vector2(d3.X, d3.Z);
+            }
+            else
+            {
+                c = (2*t3-3*t2+1)*a + (t3-2*t2+t)*len*ta + (-2*t3+3*t2)*b + (t3-t2)*len*tb;
+                d = (6*t2-6*t)*a + (3*t2-4*t+1)*len*ta + (-6*t2+6*t)*b + (3*t2-2*t)*len*tb;
+            }
             d = d.LengthSquared() > 1e-8f ? Vector2.Normalize(d) : f;
             v[(i, 0)] = c + new Vector2(-d.Y, d.X) * (zSign * edge);
         }
@@ -494,11 +679,17 @@ public static class TerrainFill
                 float s1 = (e1.X * e2.Y - e1.Y * e2.X) * zSign;
                 float s2 = ((p11 - p10).X * (p10 - p00).Y - (p11 - p10).Y * (p10 - p00).X) * -zSign;
                 float s3 = ((p11 - p01).X * (p01 - p00).Y - (p11 - p01).Y * (p01 - p00).X) * zSign;
+                // je Spalte gekürzte Reihen fallen zusammen (Fläche 0) – das ist kein Umklappen
+                bool collapsed = ClampColumns && ((p01 - p00).LengthSquared() < 4e-4f || (p11 - p10).LengthSquared() < 4e-4f);
+                if (collapsed) continue;
                 if (s1 <= 0 || s2 <= 0 || (p11 - p01).LengthSquared() < 1e-4f || Vector2.Dot(p10 - p00, p11 - p01) <= 0)
                     return MathF.Max(0, MathF.Floor(rowsD[j]));
             }
         return side.Size;
     }
+
+    /// <summary>Straßengelände folgt der Hermite-Höhe der Fahrbahn (aus: OSM2ETS_RT_CHORD).</summary>
+    public static bool UseHermiteHeight = Environment.GetEnvironmentVariable("OSM2ETS_RT_CHORD") is null;
 
     /// <summary>Testvariante: A lokal ab Geländebeginn, B lokal ab Straßenmitte, C Weltachsen.</summary>
     [ThreadStatic] public static char Mode;

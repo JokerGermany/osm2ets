@@ -101,6 +101,23 @@ extras:
   end_extension_m: 50
   # Straßenklassen, über die Verbindungen (2.) und Zufahrten (1.) führen dürfen
   via_highway: *drivable
+  # 5. Straßen, die man von der Strecke aus sieht, auch wenn sie erst zu einer höheren Stufe
+  #    gehören (Spielmeter; bei 1:1 = Echtmeter). Im Spiel nicht auf der Karte, nicht im Navi,
+  #    ohne KI-Verkehr (Writer: "visible" in mapping.jsonc); höhere Stufen setzen sie fort.
+  #    a) Kreuzt eine solche Straße eine Straße der Stufe höhenfrei (unter einer Brücke
+  #       hindurch, auf einer Brücke darüber, durch einen Tunnel), beiderseits der Kreuzung so
+  #       weit – an Abzweigen nur geradeaus, an Straßen der Stufe ist Schluss. So liegt z. B.
+  #       unter einer Autobahnbrücke auch in L1 der Weg, über den sie führt. 0 = aus.
+  visible_crossing_m: 200
+  #    b) Abschnitte, die höchstens so weit neben einer Straße der Stufe liegen (Parallelwege,
+  #       Abzweige an Knoten des Netzes, Wege bis an die Strecke heran). Etwa die Breite von
+  #       Fahrbahn und Straßengelände einer Autobahn. 0 = aus.
+  visible_near_m: 60
+  #    Straßenklassen dafür: alles, was L5 zeigt
+  visible_highway: [motorway, trunk, primary, secondary, tertiary,
+                    motorway_link, trunk_link, primary_link, secondary_link, tertiary_link,
+                    unclassified, residential, living_street, service, road,
+                    track, path, footway, cycleway, bridleway, pedestrian]
 
 # 1. Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen: Ziele höchstens
 #    max_distance_m (Weg entlang der Straße) von einer Kreuzung bzw. Abfahrt des Netzes;

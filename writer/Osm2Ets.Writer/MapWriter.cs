@@ -60,6 +60,8 @@ public static class MapWriter
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
+        // Brückenläufe vor den Prefabs: Unterführungen auch unter Prefabs, die auf einer Brücke liegen
+        var bridgeShots = Underpasses.Snapshot(valid);
         var interchangePlans = new List<Interchanges.Plan>();
         Interchanges.OffsetOf = run => mapping.Resolve(run).Offset;
         if (prefabs is not null)
@@ -80,6 +82,16 @@ public static class MapWriter
                 plan.MainOut.Start = new EndInfo { Kind = "prefab" };
                 if (plan.Kind == "exit") plan.Ramp.Start = new EndInfo { Kind = "prefab" };
                 else plan.Ramp.End = new EndInfo { Kind = "prefab" };
+                // Bauwerk unter dem äußeren Prefab: Straße mit Zusatzspur dazwischen
+                if (plan.ExtRoad is not null)
+                {
+                    valid.Add(plan.ExtRoad);
+                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): Bauwerk im Prefab-Bereich – {plan.Ext:0} m Zusatzspur-Straße zwischen den Prefabs"
+                                 + (plan.Shift > 0 ? $", {(plan.Kind == "exit" ? "Teilung" : "Zusammenführung")} {plan.Shift:0} m vom Bauwerk weggerückt" : ""));
+                    if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                        Console.Error.WriteLine($"EXT {plan.ExtRoad.Id} pts " + string.Join(" ", plan.ExtRoad.Points.Select(q => $"({q[0]:0.0},{q[1]:0.0},{q[2]:0.0})")) +
+                            " runs " + string.Join(" ", plan.ExtRoad.Runs.Select(x => $"{x.From}-{x.To}{(x.Bridge ? "B" : "")}{(x.Tunnel ? "T" : "")} {x.Role}")));
+                }
                 interchangePlans.Add(plan);
             }
         }
@@ -167,6 +179,39 @@ public static class MapWriter
             styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
         }
         int separated = CarriagewaySeparation.Apply(valid, styles);
+        // Brückenkörper (Railing mit Widerlagern) für Paare paralleler Autobahnbrücken über Straßen:
+        // nach dem Auseinanderrücken (Abstand der Linien), Brücke des Trägers als ein Stück
+        {
+            var bodies = mapping.BridgeBody is { } bb0 ? BridgeBodies.Plan(valid, bb0, warnings) : [];
+            // alle übrigen Brücken: Körper je Straßentyp (Brücke als ein Stück)
+            var covered = new HashSet<RunEntry>(bodies.SelectMany(b => new[] { b.Run, b.PartnerRun }).OfType<RunEntry>());
+            var singles = mapping.BridgeBodies is { Count: > 0 }
+                ? BridgeBodies.PlanSingle(valid, mapping.Resolve, mapping.BodyFor, covered,
+                                          mapping.BridgeBody?.MaxLength ?? 200f, warnings)
+                : [];
+            foreach (var r in bodies.Select(x => x.Road).Concat(singles.Select(x => x.Road)).Distinct())
+            {
+                Validate(r, out var pts2, out var ros2);
+                styles[r] = Enumerable.Range(0, pts2.Count - 1).Select(i => mapping.Resolve(r.Runs[ros2[i]])).ToArray();
+            }
+            foreach (var b in bodies)
+            {
+                int seg = b.Run?.From ?? b.Segment;
+                styles[b.Road][seg] = styles[b.Road][seg] with { Body = mapping.BridgeBody!.Railing, BodyOffset = b.Offset };
+            }
+            foreach (var s in singles)
+                for (int k = s.Run.From; k < s.Run.To; k++)
+                    styles[s.Road][k] = styles[s.Road][k] with
+                    {
+                        Body = s.Type.Railing, BodyOffset = s.Type.Offset, BodyRight = s.Type.Side == "right", BodyParapet = s.Type.Parapet,
+                    };
+            if (bodies.Count > 0)
+                warnings.Add($"Info: Brückenkörper ({mapping.BridgeBody!.Railing}) an {bodies.Count} Brückenpaaren über Straßen: " +
+                             string.Join(", ", bodies.Select(b => $"{b.Road.Id}/{b.Partner} {b.Offset:0.0} m")));
+            if (singles.Count > 0)
+                warnings.Add($"Info: Brückenkörper an {singles.Count} einzelnen Brücken ({singles.Count(s => !s.Merged)} aus mehreren Stücken): " +
+                             string.Join(", ", singles.GroupBy(s => s.Type.Railing).Select(g => $"{g.Key} {g.Count()}×")));
+        }
         // An Anschluss-Prefabs kein Straßengelände auf den ersten 30 m: die Geländestreifen von
         // Rampe und Hauptfahrbahn kreuzen sich dort im spitzen Winkel und falten sich ins Prefab
         foreach (var pl in TerrainFill.WideRoadTerrain ? [] : interchangePlans)
@@ -198,9 +243,12 @@ public static class MapWriter
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } && TerrainFill.WideRoadTerrain) TerrainClearance.Widen(styles);
         string Stat(string n) { var all = styles.Values.SelectMany(x => x).ToList(); return $"{n}: L {all.Average(x => x.TerrainLeft):0.0} R {all.Average(x => x.TerrainRight):0.0} L0 {all.Count(x => x.TerrainLeft <= 0)} R0 {all.Count(x => x.TerrainRight <= 0)}"; }
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("vor"));
+        TerrainClearance.HardLimited = 0;
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        if (TerrainClearance.HardLimited > 0) warnings.Add($"Info: Straßengelände an {TerrainClearance.HardLimited} Seiten schmaler als 2 m (fremder Fahrbahnrand näher)");
         if (TerrainClearance.Share) terrainClamped += TerrainClearance.ClampCurves(valid, styles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
+        Overlaps.ExactRoads = TerrainClearance.Share && UseModelEdges && TerrainFill.GapRamp;
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("enforce"));
         if (Environment.GetEnvironmentVariable("OSM2ETS_PROBE") is { } probe)
@@ -301,6 +349,11 @@ public static class MapWriter
                 pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
                 if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
                 else pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
+                if (plan.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
+                {
+                    pl.ExtFrom.Attach(pl.ExtFromNode, firstItem[plan.ExtRoad].Node);
+                    pl.ExtTo.Attach(pl.ExtToNode, lastItem[plan.ExtRoad].ForwardNode);
+                }
                 Interchanges.FixRotations(pl);   // Attach übernimmt sonst die gekippte Prefab-Knotendrehung
                 foreach (var pf in new[] { pl.First, pl.Last })
                     RegisterSector(map, pf.Nodes[0].Position);
@@ -351,6 +404,9 @@ public static class MapWriter
                 warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
             }
         }
+        // Neigung aller Prefab-Knoten aus der Prefab-Ebene (das Spiel setzt Prefabs nach dem Ursprungsknoten)
+        PrefabFootprint.FixPitch(map);
+        if (PrefabFootprint.PitchFixed > 0) warnings.Add($"Info: Neigung von {PrefabFootprint.PitchFixed} Prefab-Knoten an die Prefab-Lage angepasst");
         if (prefabs is not null)
             warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt");
         if (prefabs is not null)
@@ -359,20 +415,69 @@ public static class MapWriter
         // Füllgelände zuletzt: dann sind alle Prefabs gesetzt und ihre Fahrspuren bekannt
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg2 && Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null)
         {
+            // Unterführungen: unter Brücken über Straßen Gelände auf Höhe der unteren Straße,
+            // Böschungen von den Brückenenden (wie in der SCS-Karte) – als Obergrenze des Rasters
+            var underpasses = Underpasses.Enabled ? Underpasses.Build(valid, styles, PrefabFootprint.All3(map), bridgeShots, mapping.Resolve) : null;
+            Func<float, float, float, float>? post = underpasses is { Count: > 0 } ? underpasses.Cap : null;
+            // Böschung neben Prefabs als Untergrenze jeder Rasterabfrage – auch für das Straßengelände
+            // anderer Straßen. Bisher nur für das Füllgelände; das breite Straßengelände einer Straße
+            // daneben folgte dem tiefen Raster. An der Zusammenführung vor der A-70-Brücke über die
+            // Gemeindeverbindung lag das Gelände neben dem Prefab so 3–4 m tiefer (Mulde mit Wänden).
+            // Unter Brücken gilt weiter die Obergrenze der Unterführung (danach angewandt).
+            if (PrefabBanks && TerrainFill.WideRoadTerrain)
+            {
+                var banks = RoadCap.PrefabsOnly(PrefabFootprint.All3(map));
+                var cap = post;
+                post = (x, z, h) =>
+                {
+                    float f = banks.Floor(x, z);
+                    if (f > h) h = f;
+                    return cap is null ? h : cap(x, z, h);
+                };
+            }
+            tg2.Post = post;
+            if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null && underpasses is not null)
+                Console.Error.WriteLine("UNDERPASS " + string.Join(" ", underpasses.Ids));
             if (TerrainFill.WideRoadTerrain)
             {
                 int shaped = 0, bad = 0, folded = 0;
+                // Zwickel an Gabelungen: nahe anderer Straßen/Prefabs kürzerer Übergang ins Raster
+                RoadCap.PrefabLanes = PrefabFootprint.All3(map);
+                RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0; TerrainFill.SlopeLimited = 0;
+                TerrainFill.PrefabRamped = 0;
+                var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null
+                    ? RoadCap.Build(valid, styles, null) : null;
+                // nächste Prefab-Spur für die Rampe ans Prefab – nicht im Bereich einer Unterführung
+                // (dort liegt das Prefab womöglich über der Straße)
+                Func<float, float, (float, float)>? prefabNear = others is null ? null : (x, z) =>
+                    underpasses is { Count: > 0 } && underpasses.Inside(x, z) ? (TerrainFill.GoreDist, float.NaN)
+                                                                              : others.NearestPrefab(x, z, TerrainFill.GoreDist);
                 foreach (var entry in valid)
                 {
                     if (!firstItem.TryGetValue(entry, out var it)) continue;
-                    var hw = styles[entry][0].Width / 2;
                     var forced = Environment.GetEnvironmentVariable("OSM2ETS_ROADFRAME");
                     TerrainFill.Mode = forced is { Length: > 0 } ? (forced == "mixed" ? entry.Id[0] : forced[0]) : 'D';
                     TerrainFill.RoadEdgeInData = TerrainFill.Mode is 'B' or 'D';
-                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road)
+                    int seg = 0;
+                    for (var rd = it; rd is not null; rd = rd.ForwardNode.ForwardItem as Road, seg++)
                     {
                         rd.Recalculate();
-                        float e = TerrainFill.RoadEdgeInData ? MathF.Max(0, hw) : 0;
+                        // Geländebeginn je Seite = Rand des Straßenmodells. Die Einbahn-Vorlagen sind
+                        // asymmetrisch (ger13: −4,5…+8,0 m, ger2: −5,5…+2,5 m um die Straßenlinie);
+                        // mit der halben Breite (symmetrisch) lag die erste Geländereihe rechts bzw.
+                        // links INNERHALB des Modells – das Spiel setzt Reihe 0 an den Modellrand,
+                        // die Quads dazwischen klappten um (schwarzer Streifen entlang der Fahrbahn).
+                        var st = styles[entry][Math.Min(seg, styles[entry].Length - 1)];
+                        if (RtProbe is { } rp && Vector2.Distance(new Vector2(rd.Node.Position.X, rd.Node.Position.Z), rp) < 40)
+                        {
+                            var rr = entry.Runs.FirstOrDefault(x => x.From <= seg && seg < x.To);
+                            Console.Error.WriteLine($"RT {entry.Id}[{seg}] {rd.Uid:X} {rd.RoadType} L {rd.Left.Terrain.Size} R {rd.Right.Terrain.Size} style L {st.TerrainLeft} R {st.TerrainRight} bridge {rr?.Bridge} tunnel {rr?.Tunnel} hw {rr?.Highway} pts {entry.Points.Count}");
+                            if (seg == 0 || Environment.GetEnvironmentVariable("OSM2ETS_RTPROBE_ALL") is not null)
+                                Console.Error.WriteLine("   pts " + string.Join(" ", entry.Points.Select(p => $"({p[0]:0.0},{p[2]:0.0})")) + " runs " + string.Join(" ", entry.Runs.Select(x => $"{x.From}-{x.To}{(x.Bridge ? "B" : "")}")));
+                        }
+                        var (edL, edR) = TerrainClearance.Edges(st);
+                        float eL = TerrainFill.RoadEdgeInData ? edL : 0;
+                        float eR = TerrainFill.RoadEdgeInData ? edR : 0;
                         var pa = rd.Node.Position; var pb = rd.ForwardNode.Position;
                         Vector2 Tan(Quaternion q)
                         {
@@ -382,15 +487,25 @@ public static class MapWriter
                             t = Vector2.Normalize(t);
                             return Vector2.Dot(t, ch) < 0 ? -t : t;
                         }
+                        Vector3 Dir3(Quaternion q)
+                        {
+                            var v = Vector3.Transform(-Vector3.UnitZ, q);
+                            return Vector3.Dot(v, pb - pa) < 0 ? -v : v;
+                        }
                         Vector2? ta = null, tb = null;
-                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); }
+                        Vector3? da = null, db = null;
+                        if (TerrainFill.Mode is 'C' or 'D') { ta = Tan(rd.Node.Rotation); tb = Tan(rd.ForwardNode.Rotation); da = Dir3(rd.Node.Rotation); db = Dir3(rd.ForwardNode.Rotation); }
                         for (int tries = 0; tries < 4; tries++)
                         {
-                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, e, ta, tb) < 0) bad++;
-                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, e, ta, tb) < 0) bad++;
+                            Func<float, float, float, (float, float, bool)>? cap = others is null ? null : (x, z, y) => others.NearestOther(x, z, entry, TerrainFill.GoreDist, y);
+                            var sa2 = new Vector2(pa.X, pa.Z); var sb2 = new Vector2(pb.X, pb.Z);
+                            Func<Vector2, Vector2, float, float>? ray = others is null || !TerrainFill.ClampColumns || !Overlaps.ExactRoads ? null
+                                : (o, dir, maxD) => others.RayFree(o, dir, maxD, entry, sa2, sb2);
+                            if (TerrainFill.ShapeRoadSide(rd.Left.Terrain, tg2, pa, pb, rd.Left.Terrain.Size, -1, eL, ta, tb, cap, da, db, ray, prefabNear) < 0) bad++;
+                            if (TerrainFill.ShapeRoadSide(rd.Right.Terrain, tg2, pa, pb, rd.Right.Terrain.Size, +1, eR, ta, tb, cap, da, db, ray, prefabNear) < 0) bad++;
                             // gefaltete Quads (Innenseite enger Kurven/Knoten) → Seite schmaler machen
-                            float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, e, ta, tb);
-                            float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, e, ta, tb);
+                            float nl = TerrainFill.FoldFreeSize(rd, rd.Left.Terrain, -1, eL, ta, tb, da, db);
+                            float nr = TerrainFill.FoldFreeSize(rd, rd.Right.Terrain, +1, eR, ta, tb, da, db);
                             if (nl >= rd.Left.Terrain.Size && nr >= rd.Right.Terrain.Size) break;
                             rd.Left.Terrain.Size = nl; rd.Right.Terrain.Size = nr; folded++;
                             rd.Recalculate();
@@ -399,12 +514,20 @@ public static class MapWriter
                         if (rd == lastItem[entry]) break;
                     }
                 }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}");
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, als Rampe ans Prefab: {TerrainFill.PrefabRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}, Neigung begrenzt: {TerrainFill.SlopeLimited} Punkte");
+                if (underpasses is { Count: > 0 })
+                {
+                    int paved = underpasses.Pave(valid, firstItem, lastItem);
+                    warnings.Insert(0, $"Info: Unterführungen: {underpasses.Count} Brücken über Straßen – Gelände darunter auf Höhe der unteren Straße, Böschungen von den Brückenenden, {paved} Böschungsquads mit Steinmaterial");
+                }
             }
             var lanes = PrefabFootprint.All(map);
             RoadCap.PrefabLanes = PrefabFootprint.All3(map);
-            var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes);
-            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered} Punkte");
+            var cover = TerrainFill.WideRoadTerrain && CoverCap.Enabled ? CoverCap.Build(valid, firstItem, lastItem, styles) : null;
+            var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes, cover);
+            if (cover is not null)
+                warnings.Insert(0, $"Info: Füllgelände unter Fahrbahn/Straßengelände begrenzt: {CoverCap.CoverLowered} Punkte, am Rand per Böschung ({CoverCap.Slope:0.0}) gesenkt: {CoverCap.ConeLowered}, angehoben: {CoverCap.ConeRaised} Punkte, Durchstoßungen nachträglich abgesenkt: {CoverCap.SettledQuads} Quads ({CoverCap.Settled} Höhenpunkte, höchstens {CoverCap.SettledMax:0.00} m)");
+            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered}, angehoben: {RoadCap.Raised} Punkte");
         }
         if (Environment.GetEnvironmentVariable("OSM2ETS_ONLYBOX") is { } ob)
         {
@@ -466,6 +589,9 @@ public static class MapWriter
 
     public const float IcTerrainGap = 30f;
 
+    /// <summary>Böschung neben Prefabs auch im Straßengelände (aus: OSM2ETS_NO_PREFAB_BANKS).</summary>
+    public static bool PrefabBanks = Environment.GetEnvironmentVariable("OSM2ETS_NO_PREFAB_BANKS") is null;
+
     private static void ApplyStyle(Road road, ResolvedStyle style)
     {
         // flaches Gelände neben der Straße (Standard wäre 100 % Rauschen)
@@ -481,10 +607,30 @@ public static class MapWriter
         style.Right?.ApplyTo(road.Right);
         road.Boundary = style.Boundary;
         ApplyFlags(road, style);
+        // Geländer an beiden Modellrändern (Brücken), Brückenkörper links (zur Gegenfahrbahn); alle
+        // Plätze immer setzen – Append übernimmt die Einstellungen des vorigen Stücks
+        for (int k = 0; k < road.Left.Railings.Models.Length; k++) road.Left.Railings.Models[k] = default;
+        for (int k = 0; k < road.Right.Railings.Models.Length; k++) road.Right.Railings.Models[k] = default;
+        // Körper mit eigener Brüstung: kein zusätzliches Geländer
+        if (style.Railing is { } rail && !(style.Body is not null && style.BodyParapet))
+        {
+            if (style.RailingLeft)
+                road.Left.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 - style.ModelCenter + style.RailingOffset };
+            road.Right.Railings.Models[0] = new Railing { Model = new Token(rail), Offset = style.Width / 2 + style.ModelCenter + style.RailingOffset };
+        }
+        if (style.Body is { } body && style.BodyParapet)
+            (style.BodyRight ? road.Right : road.Left).Railings.Models[0] = new Railing { Model = new Token(body), Offset = style.BodyOffset };
+        else if (style.Body is { } body2)   // erster freier Platz links (wie in der SCS-Karte Platz 1 ohne Geländer)
+            road.Left.Railings.Models[style.Railing is not null && style.RailingLeft ? 1 : 0] = new Railing { Model = new Token(body2), Offset = style.BodyOffset };
         // Standard wären 400 m – bei langen Stücken verschwinden ferne Straßen,
         // während der Verkehr darauf sichtbar bleibt ("schwebende" Fahrzeuge)
         road.ViewDistance = 1400; // TruckLib KdopItem.ViewDistanceExtremelyFar
     }
+
+    /// <summary>Geländebeginn am asymmetrischen Modellrand (aus: OSM2ETS_RT_SYMMETRIC).</summary>
+    public static bool UseModelEdges = Environment.GetEnvironmentVariable("OSM2ETS_RT_SYMMETRIC") is null;
+    private static readonly Vector2? RtProbe = Environment.GetEnvironmentVariable("OSM2ETS_RTPROBE") is { } e
+        ? new Vector2(float.Parse(e.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(e.Split(',')[1], System.Globalization.CultureInfo.InvariantCulture)) : null;
 
     /// <summary>Navi-/Karten-Schalter aus der Zuordnung (nur gesetzte Werte).</summary>
     private static void ApplyFlags(Road road, ResolvedStyle style)

@@ -41,7 +41,10 @@ def test_short_link_between_two_ramps_in_l1(tmp_path, profile):
     model = build(str(write_osm(tmp_path / "a.osm", nodes, ways)), profile, "L1")
     w = _ways_in(model)
     assert w[11] == {"connector"}            # Bundesstraße zwischen den Rampen (300 m)
-    assert 10 not in w and 12 not in w       # darüber hinaus nicht
+    # darüber hinaus nur die 50-m-Verlängerung der Bundesstraße
+    for wid in (10, 12):
+        km = sum(r["length_m"] for r in model["roads"] if wid in r["runs"][0]["osm_ways"])
+        assert 49 <= km <= 51, (wid, km)
     assert model["stats"]["same_level_links"]["links"] == 1
 
 
@@ -60,7 +63,8 @@ def test_loop_at_same_road_is_rejected(tmp_path, profile):
     ways = [(1, [1, 2, 3, 4], {"highway": "primary", "ref": "B 1"}),
             (2, [2, 5, 6, 3], {"highway": "service"})]
     model = build(str(write_osm(tmp_path / "c.osm", nodes, ways)), profile, "L2")
-    assert 2 not in _ways_in(model)
+    # keine Verbindung der Stufe – nur als Sichtstück (unmittelbar neben der Straße)
+    assert _ways_in(model).get(2, set()) <= {"visible"}
     assert model["stats"]["same_level_links"]["rejected_loop"] == 1
 
 
@@ -98,7 +102,7 @@ def test_industry_near_exit_whole_area_but_not_without_exit(tmp_path, profile):
     w = _ways_in(model)
     assert 3 in w                          # Zufahrt zum nahen Gebiet
     assert 5 in w and 6 in w               # ganzes Gebiet
-    assert 8 not in w                      # Firma an der Autobahn ohne nahe Ausfahrt
+    assert w.get(8, set()) <= {"visible"}  # Firma an der Autobahn ohne nahe Ausfahrt: keine Zufahrt
 
 
 def test_rest_area_loop_on_motorway_is_kept(tmp_path, profile):

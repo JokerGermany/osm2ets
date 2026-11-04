@@ -250,6 +250,9 @@ public static class Overlaps
         return found.Values.OrderByDescending(v => v.Overlap).ToList();
     }
 
+    /// <summary>Straßen mit genauen Modellrändern (zugewandte Seite, bis kurz vor den fremden Rand), siehe MapWriter.</summary>
+    public static bool ExactRoads;
+
     /// <summary>
     /// Geländestreifen dürfen keine fremde Fahrbahn auf anderer Höhe überdecken (Regel wie
     /// bei Fahrbahnen; auch Brücken/Tunnel bekommen darüber/darunter kein Gelände).
@@ -307,6 +310,31 @@ public static class Overlaps
                 var o = segs[b];
                 if (o.Road is not null && o.Road == sg.Road && Math.Abs(o.Index - sg.Index) <= 1) continue;
                 var (d, pa, pb) = SegSeg(P2(sg.A), P2(sg.B), P2(o.A), P2(o.B));
+                // je Spalte gekürzt (TerrainFill.ClampColumns): Straßen und Prefab-Spuren regelt das
+                // Straßengelände selbst (die groben Prefab-Strecken Knoten → Mitte kürzten ganze Stücke)
+                if (ExactRoads && TerrainFill.ClampColumns) continue;
+                if (o.Road is not null && ExactRoads)
+                {
+                    // Mit genauen Modellrändern: nur die zugewandte Seite und nur bis knapp vor den
+                    // fremden Modellrand kürzen. Früher (halbe Breiten, 1 m Rand, bei Überdeckung beide
+                    // Seiten auf 0) blieb zwischen zwei unterschiedlich hohen Fahrbahnen ein Streifen
+                    // ohne Straßengelände – das tiefere Füllgelände wurde sichtbar (Wand am Fahrbahnrand).
+                    if (d < 0.01f) continue;   // Stoß an Stoß (gemeinsamer Knoten)
+                    var odv = P2(o.B) - P2(o.A);
+                    if (odv.LengthSquared() < 1e-6f) continue;
+                    var oRight = Vector2.Normalize(new Vector2(-odv.Y, odv.X));
+                    var sideV = pb - pa;
+                    bool onRight = (-dir.Y * sideV.X + dir.X * sideV.Y) >= 0;
+                    var (eLs, eRs) = TerrainClearance.Edges(st);
+                    var (eLo, eRo) = TerrainClearance.Edges(styles[o.Road][o.Index]);
+                    float ownE = onRight ? eRs : eLs;
+                    float othE = Vector2.Dot(pa - pb, oRight) >= 0 ? eRo : eLo;
+                    if (d >= ownE + MathF.Min(onRight ? right : left, 40f) + othE) continue;
+                    if (MathF.Abs(HeightAt(sg, pa) - HeightAt(o, pb)) < minDz) continue;
+                    float freeE = MathF.Max(0, d - ownE - othE - TerrainClearance.EdgeClear);
+                    if (onRight) right = MathF.Min(right, freeE); else left = MathF.Min(left, freeE);
+                    continue;
+                }
                 // weiter entfernte Straßen begrenzt schon TerrainClearance (Gelände endet dort)
                 float reach = sg.HalfWidth + MathF.Min(MathF.Max(left, right), 40f) + o.HalfWidth;
                 if (d >= reach) continue;

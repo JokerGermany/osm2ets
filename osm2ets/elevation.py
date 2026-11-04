@@ -8,10 +8,11 @@ haben alle Straßen an einer Kreuzung dieselbe Höhe.
 Ablauf:
   1. Gelände entlang jedes Stücks abtasten und glätten (ohne Geländemodell: 0).
      Stückenden werden auf den ungeglätteten Wert am OSM-Knoten festgehalten.
-  2. Brücken (Bauwerke ab `min_bridge_length_m`) werden um
-     `bridge_clearance_m × layer` angehoben. Die Anhebung fällt entlang des
-     Netzes mit höchstens `max_ramp_grade` ab – so entstehen Rampen, auch über
-     Kreuzungen hinweg.
+  2. Brücken (Bauwerke ab `min_bridge_length_m`), unter denen keine Straße des
+     Netzes liegt, werden um `bridge_clearance_m × layer` angehoben. Die Anhebung
+     fällt entlang des Netzes mit höchstens `max_ramp_grade` ab – so entstehen
+     Rampen, auch über Kreuzungen hinweg. Brücken über Straßen des Netzes hebt
+     erst Schritt 4 an, und nur so weit, wie der Lichtraum es verlangt.
   3. Bauwerke als Ganzes: Brückendecks hängen nicht ins Tal durch, Tunnel
      steigen nicht über den Berg. Dafür wird jedes zusammenhängende Bauwerk
      (auch über Kreuzungen im Bauwerk hinweg) harmonisch zwischen seinen
@@ -141,37 +142,44 @@ def low_percentile_along(s: np.ndarray, h: np.ndarray, window: float, q: float) 
 
 
 def clamp_grade(z: np.ndarray, ea, eb, elen, grade: float, iterations: int = 200,
-                fixed: Optional[np.ndarray] = None) -> int:
+                fixed: Optional[np.ndarray] = None, only: Optional[np.ndarray] = None) -> int:
     """Begrenzt die Steigung jeder Kante auf grade, indem beide Enden aufeinander zu
-    rücken (Relaxation über den gemeinsamen Graphen). Gibt die Zahl der Durchläufe zurück."""
+    rücken (Relaxation über den gemeinsamen Graphen). `fixed` hält Punkte fest; `only`
+    erlaubt je Punkt nur eine Richtung (+1 nur anheben, −1 nur absenken, 0 beide).
+    Gibt die Zahl der Durchläufe zurück."""
     a = np.asarray(ea, np.int64)
     b = np.asarray(eb, np.int64)
     w = np.maximum(np.asarray(elen, float), 1e-6)
     grade = np.broadcast_to(np.asarray(grade, float), w.shape)
     if not (grade > 0).any():
         return 0
+    fa = fixed[a] if fixed is not None else np.zeros(len(a), bool)
+    fb = fixed[b] if fixed is not None else np.zeros(len(b), bool)
+    oa = only[a] if only is not None else np.zeros(len(a), np.int8)
+    ob = only[b] if only is not None else np.zeros(len(b), np.int8)
     for it in range(iterations):
         dz = z[b] - z[a]
         excess = np.abs(dz) - grade * w
         bad = excess > 1e-3
         if not bad.any():
             return it
-        fa = fixed[a] if fixed is not None else np.zeros(len(a), bool)
-        fb = fixed[b] if fixed is not None else np.zeros(len(b), bool)
-        both = fa & fb
-        bad &= ~both
+        # a rückt in Richtung von dz, b entgegengesetzt – je Ende nur, wo das erlaubt ist
+        s = np.sign(dz)
+        ca = ~fa & ((oa == 0) | (oa == s))
+        cb = ~fb & ((ob == 0) | (ob == -s))
+        bad &= ca | cb
         if not bad.any():
             return it
-        # Anteil je Ende: fest = 0, sonst halb bzw. ganz
-        share_a = np.where(fa, 0.0, np.where(fb, 1.0, 0.5))
-        share_b = np.where(fb, 0.0, np.where(fa, 1.0, 0.5))
-        corr = np.where(bad, np.sign(dz) * excess, 0.0)
+        # Anteil je Ende: unbeweglich = 0, sonst halb bzw. ganz
+        share_a = np.where(ca, np.where(cb, 0.5, 1.0), 0.0)
+        share_b = np.where(cb, np.where(ca, 0.5, 1.0), 0.0)
+        corr = np.where(bad, s * excess, 0.0)
         delta = np.zeros_like(z)
         cnt = np.zeros_like(z)
         np.add.at(delta, a, corr * share_a)
         np.add.at(delta, b, -corr * share_b)
-        np.add.at(cnt, a, (bad & ~fa).astype(float))
-        np.add.at(cnt, b, (bad & ~fb).astype(float))
+        np.add.at(cnt, a, (bad & ca).astype(float))
+        np.add.at(cnt, b, (bad & cb).astype(float))
         z += np.where(cnt > 0, delta / np.maximum(cnt, 1), 0.0)
     return iterations
 
@@ -184,6 +192,9 @@ WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, 
 
 
 DECK_THICKNESS_M = 1.2
+# Reserve beim Anheben an Kreuzungen: mit Geländemodell verschieben Steigungsgrenzen und Hülle
+# danach die Höhen um einige Zentimeter (ohne pauschales Anheben fehlte sonst bis 0,11 m Lichtraum)
+CLEARANCE_MARGIN_M = 0.2
 
 
 def parse_maxheight(value) -> Optional[float]:
@@ -238,6 +249,127 @@ def _road_width(piece: Piece, seg: int) -> float:
     if hw.endswith("_link") or oneway:
         return 6.5
     return 8.0
+
+
+TWIN_HIGHWAYS = ("motorway", "trunk")
+
+
+def align_partner_points(pieces: list[Piece], scale_h: float, max_gap: float = 25.0,
+                         snap: float = 2.0, margin: float = 1.0) -> int:
+    """Setzt auf nebeneinanderliegende Straßen Punkte genau gegenüber.
+
+    Die Höhenbindung zwischen Richtungsfahrbahnen (`twin_ties`) und sich überdeckenden
+    Fahrbahnen (`overlap_ties`) verbindet je Punkt den nächsten Punkt der anderen
+    Straße. Liegen die verdichteten Punkte beider Straßen versetzt (z. B. alle 19 m
+    gegen alle 16 m), wird ein Punkt an einen bis zu halben Punktabstand entfernten
+    Partner gebunden und übernimmt dessen Höhe: Bei Gefälle entsteht eine Treppe
+    (abwechselnd ebene und steile Abschnitte, bis ~0,5 m daneben). Das Spiel zieht
+    die Fahrbahn als Hermite-Kurve durch diese Treppe; in den Mulden liegen Gelände
+    und Füllgelände dann über dem Asphalt.
+
+    Hier wird für jeden Punkt der Lotfußpunkt auf der Partnerstraße eingefügt (wenn
+    dort nicht schon ein Punkt liegt), so dass die Bindung quer zur Fahrbahn wirkt.
+    Gibt die Zahl der eingefügten Punkte zurück.
+    """
+    from scipy.spatial import cKDTree
+
+    pos, owner, local = [], [], []
+    for pi, p in enumerate(pieces):
+        d = p.dense
+        if len(d.xy) < 2:
+            continue
+        for j in range(len(d.xy)):
+            pos.append(d.xy_game[j]); owner.append(pi); local.append(j)
+    if not pos:
+        return 0
+    pos = np.asarray(pos, float)
+    owner = np.asarray(owner)
+    local = np.asarray(local)
+
+    def tangent(p: Piece, j: int) -> np.ndarray:
+        g = p.dense.xy_game
+        t = g[min(j + 1, len(g) - 1)] - g[max(j - 1, 0)]
+        n = float(np.hypot(*t))
+        return t / n if n > 1e-9 else np.array([1.0, 0.0])
+
+    tree = cKDTree(pos)
+    # je (Punkt, andere Straße) der nächste Lotfußpunkt: (Abstand, Segment, t)
+    best: dict[tuple[int, int], tuple[float, int, float]] = {}
+    for i, k in tree.query_pairs(r=max_gap):
+        if owner[i] == owner[k]:
+            continue
+        for a, b in ((i, k), (k, i)):
+            pa, pb = pieces[owner[a]], pieces[owner[b]]
+            g = pb.dense.xy_game
+            m = len(g)
+            P = pos[a]
+            for s in (local[b] - 1, local[b]):
+                if s < 0 or s >= m - 1:
+                    continue
+                A, B = g[s], g[s + 1]
+                AB = B - A
+                L2 = float(AB @ AB)
+                if L2 < 1e-12:
+                    continue
+                t = min(max(float((P - A) @ AB) / L2, 0.0), 1.0)
+                dist = float(np.hypot(*(P - (A + t * AB))))
+                key = (int(a), int(owner[b]))
+                if dist < best.get(key, (1e18, 0, 0.0))[0]:
+                    best[key] = (dist, int(s), t)
+
+    inserts: dict[int, list[tuple[int, float]]] = {}
+    for (a, pb_i), (dist, s, t) in best.items():
+        pa, pb = pieces[owner[a]], pieces[pb_i]
+        ja = int(local[a])
+        na = len(pa.dense.xy)
+        g = pb.dense.xy_game
+        seg_vec = g[s + 1] - g[s]
+        seg_len = float(np.hypot(*seg_vec))
+        if seg_len < 1e-9:
+            continue
+        cos = abs(float(tangent(pa, ja) @ (seg_vec / seg_len)))
+        sa = min(ja, na - 2)
+        twin = (_highway(pa, sa) in TWIN_HIGHWAYS and _highway(pb, s) in TWIN_HIGHWAYS
+                and cos >= 0.95 and dist <= max_gap)
+        wa = max(_road_width(pa, sa), _road_width(pa, max(ja - 1, 0)))
+        overlap = cos >= 0.9 and dist < (wa + _road_width(pb, s)) / 2 + margin
+        if not (twin or overlap):
+            continue
+        if t * seg_len < snap or (1 - t) * seg_len < snap:
+            continue   # dort liegt schon ein Punkt
+        inserts.setdefault(pb_i, []).append((s, t))
+
+    added = 0
+    for pi, lst in inserts.items():
+        added += _insert_dense(pieces[pi].dense, lst, scale_h, snap)
+    return added
+
+
+def _insert_dense(d, inserts: list[tuple[int, float]], scale_h: float, snap: float) -> int:
+    """Fügt Punkte (Segment, t) in eine verdichtete Linie ein (Abstand ≥ snap Spielmeter)."""
+    by_seg: dict[int, list[float]] = {}
+    for s, t in inserts:
+        by_seg.setdefault(s, []).append(t)
+    xy, ids, parts = [d.xy[0]], [d.node_ids[0]], []
+    added = 0
+    for s in range(len(d.xy) - 1):
+        a, b = d.xy[s], d.xy[s + 1]
+        seg_len = float(np.hypot(*(d.xy_game[s + 1] - d.xy_game[s])))
+        last = 0.0
+        for t in sorted(by_seg.get(s, ())):
+            if (t - last) * seg_len < snap or (1 - t) * seg_len < snap:
+                continue
+            xy.append(a + t * (b - a)); ids.append(NO_NODE); parts.append(d.seg_part[s])
+            last = t
+            added += 1
+        xy.append(b); ids.append(d.node_ids[s + 1]); parts.append(d.seg_part[s])
+    if added:
+        d.xy = np.asarray(xy, float)
+        d.node_ids = np.asarray(ids, np.int64)
+        d.seg_part = np.asarray(parts, np.int64)
+        d.s = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(d.xy, axis=0).T))])
+        d.set_scale(scale_h)
+    return added
 
 
 def overlap_ties(pieces, offsets, canon, movable: np.ndarray, margin: float = 1.0):
@@ -608,8 +740,20 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     for p in pieces:
         for j in range(len(p.dense.xy) - 1):
             major_edge.append(_highway(p, j) in MAJOR)
+    # Kreuzt eine Brücke eine Straße des Netzes, ergibt sich ihre Höhe aus deren Höhe plus
+    # Lichtraum (Schritt 4) – kein pauschales Anheben. Pauschal (+Lichtraum über die Linie
+    # zwischen den Widerlagern) lag z. B. die BT 46 über der A 9 gut 4 m höher als nötig,
+    # samt 120 m langen Dammrampen und Erdplateau neben der Anschlussrampe.
+    crossings = find_crossings([p.dense.xy_game for p in pieces])
+    eoff = np.cumsum([0] + [len(p.dense.xy) - 1 for p in pieces])
+    crossed = {int(eoff[la] + sa) for la, sa, _, _, _, _ in crossings} | \
+              {int(eoff[lb] + sb) for _, _, _, lb, sb, _ in crossings}
+    blanket_skipped = 0
     for st in bridges:
         if all(major_edge[e] for e in st.edges):
+            continue
+        if any(e in crossed for e in st.edges):
+            blanket_skipped += 1
             continue
         for e in st.edges:
             value = min(clearance * max(flags_l[e][2], 1), max_offset)
@@ -630,14 +774,17 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         return z
 
     # --- 4. höhenfreie Kreuzungen
-    crossings = find_crossings([p.dense.xy_game for p in pieces])
+    margin = CLEARANCE_MARGIN_M if dem is not None else 0.0   # nur mit Hülle/Steigungsgrenze danach
     raised = sunk = 0
     maxheight_used = 0
     iterations = 0
-    for iterations in range(1, max_iterations + 1):
-        z = heights()
-        lift_seeds, sink_seeds = [], []
-        for la, sa, t, lb, sb, u in crossings:
+    mh_crossings: set[int] = set()
+
+    def shortfalls(z: np.ndarray, extra: float, sides: Optional[list] = None):
+        """Je Kreuzung mit zu wenig Lichtraum: (Punkte, Fehlbetrag, absenken?).
+        `sides` sammelt für jede Kreuzung (Punkte oben, Punkte unten)."""
+        out = []
+        for k, (la, sa, t, lb, sb, u) in enumerate(crossings):
             a0, a1 = int(canon[offsets[la] + sa]), int(canon[offsets[la] + sa + 1])
             b0, b1 = int(canon[offsets[lb] + sb]), int(canon[offsets[lb] + sb + 1])
             ha = z[a0] + t * (z[a1] - z[a0])
@@ -649,25 +796,35 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
                 up, low, h_up, h_low, f_low = (a0, a1), (b0, b1), ha, hb, fb
             else:
                 up, low, h_up, h_low, f_low = (b0, b1), (a0, a1), hb, ha, fa
+            if sides is not None:
+                sides.append((up, low))
             # eingetragene Durchfahrtshöhe (untere Straße, sonst Brücke) + Bauwerksdicke
             mh = _maxheight(pieces[la], sa) if ra < rb else _maxheight(pieces[lb], sb)
             if mh is None:
                 mh = _maxheight(pieces[lb], sb) if ra < rb else _maxheight(pieces[la], sa)
-            need = mh + DECK_THICKNESS_M if mh is not None else clearance
+            need = (mh + DECK_THICKNESS_M if mh is not None else clearance) + extra
             if mh is not None:
-                maxheight_used += 1
+                mh_crossings.add(k)
             deficit = h_low + need - h_up
             if deficit <= 1e-6:
                 continue
             hw_up = _highway(pieces[la if ra >= rb else lb], sa if ra >= rb else sb)
             hw_low = _highway(pieces[lb if ra >= rb else la], sb if ra >= rb else sa)
-            if f_low[1] or (hw_up in MAJOR and hw_low not in MAJOR):
-                # Tunnel oder untergeordnete Straße unter Autobahn: unten absenken
-                target, values, seeds = low, sink, sink_seeds
-            else:          # sonst die obere Straße anheben
-                target, values, seeds = up, lift, lift_seeds
+            # Tunnel oder untergeordnete Straße unter Autobahn: unten absenken, sonst oben anheben
+            lower = f_low[1] or (hw_up in MAJOR and hw_low not in MAJOR)
+            out.append((low if lower else up, deficit, lower))
+        return out
+
+    for iterations in range(1, max_iterations + 1):
+        z = heights()
+        lift_seeds, sink_seeds = [], []
+        # Stand zu Beginn des Durchgangs: mehrere Kreuzungen an denselben Punkten (Brücke über
+        # beide Richtungsfahrbahnen) heben auf das Maximum ihrer Fehlbeträge, nicht auf die Summe
+        lift0, sink0 = lift.copy(), sink.copy()
+        for target, deficit, lower in shortfalls(z, margin):
+            values, before, seeds = (sink, sink0, sink_seeds) if lower else (lift, lift0, lift_seeds)
             for vid in target:
-                new = min(values[vid] + deficit, max_offset)
+                new = min(before[vid] + deficit, max_offset)
                 if new > values[vid] + 1e-6:
                     values[vid] = new
                     seeds.append(vid)
@@ -677,8 +834,10 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         sunk += len(set(sink_seeds))
         _propagate(lift, adj, lift_seeds, grade)
         _propagate(sink, adj, sink_seeds, grade)
+    maxheight_used = len(mh_crossings)
 
     z = heights()
+    clearance_repaired = 0
     if dem is not None:
         # Brückenrampen und Gelände zusammen dürfen nicht steiler werden als erlaubt;
         # Bauwerke selbst bleiben, wie sie sind.
@@ -709,11 +868,45 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         env = lipschitz_envelope(z, adj2, g)
         # Bauwerke nur festhalten, wo die Hülle sie absenken würde (Lichtraum bleibt);
         # anheben darf sie sie, damit kurze Brücken nicht steiler sind als ihre Rampen.
-        z = np.where(fixed, np.maximum(z, env), env)
+        # Ebenso an Kreuzungen angehobene Strecken (nicht absenken) und abgesenkte (nicht
+        # wieder anheben) – sonst glättete die Hülle den Lichtraum zum Teil wieder weg.
+        up_only = fixed | (lift > 0.05)
+        down_only = ~up_only & (sink > 0.05)
+        z = np.where(up_only, np.maximum(z, env), np.where(down_only, np.minimum(z, env), env))
         eg = [g if (f[0] or f[1]) else ge for f, ge in zip(flags_l, egrade_l)]
         clamp_grade(z, ea_l + [t[0] for t in ties], eb_l + [t[1] for t in ties],
                     elen_l + [t[2] for t in ties], np.array(eg + [g] * len(ties)), iterations=800)
         overlap_stats = (len(ties), before, sum(1 for a, b, _ in ties if abs(z[a] - z[b]) > 0.3))
+        # Hülle und Steigungsgrenze verschieben auch Punkte an Kreuzungen (eine abgesenkte
+        # Straße unter einer Autobahnbrücke hob die Hülle bis 0,75 m wieder an): Lichtraum
+        # nachprüfen und Fehlbetrag an den Kreuzungspunkten ausgleichen, während die
+        # Steigungsgrenze den Rest der Straßen nachzieht. Kreuzungspunkte bewegen sich dabei
+        # nur vom anderen Weg weg – die untere Straße nur nach unten, die obere nur nach oben.
+        # (Ganz festgehalten blieben Kanten zwischen zwei Kreuzungspunkten zu steil: 6,95 %
+        # unter der A 70.)
+        sides: list = []
+        shortfalls(z, 0.0, sides)
+        rise = np.zeros(total, bool)
+        fall = np.zeros(total, bool)
+        for up, low in sides:
+            rise[list(up)] = True
+            fall[list(low)] = True
+        crit_only = rise.astype(np.int8) - fall.astype(np.int8)
+        crit_fixed = rise & fall
+        for _ in range(4):
+            fix = np.zeros(total)
+            for target, deficit, lower in shortfalls(z, 0.0):
+                for vid in target:
+                    d = -deficit if lower else deficit
+                    if abs(d) > abs(fix[vid]):
+                        fix[vid] = d
+            if not fix.any():
+                break
+            clearance_repaired += int(np.count_nonzero(fix))
+            z = z + fix
+            clamp_grade(z, ea_l + [t[0] for t in ties], eb_l + [t[1] for t in ties],
+                        elen_l + [t[2] for t in ties], np.array(eg + [g] * len(ties)),
+                        iterations=800, fixed=crit_fixed, only=crit_only)
     else:
         overlap_stats = (0, 0, 0)
     for p, off in zip(pieces, offsets):
@@ -724,6 +917,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         "dem_missing_samples": dem.missing if dem else 0,
         "bridges": len(bridges),
         "bridges_ignored_short": len(bridges_all) - len(bridges),
+        "bridges_over_network": blanket_skipped,
         "tunnels": len(tunnels),
         "structures_not_interpolated": sum(1 for st in bridges + tunnels
                                            if st.operator is None and len(st.interior)),
@@ -731,6 +925,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         "crossing_raised_points": raised,
         "crossing_maxheight_used": maxheight_used,
         "crossing_sunk_points": sunk,
+        "crossing_repaired_points": clearance_repaired,
         "crossing_iterations": iterations,
         "overlap_ties": overlap_stats[0],
         "twin_ties": len(twins) if dem is not None else 0,
