@@ -148,6 +148,22 @@ public static class PrefabFootprint
         return pts;
     }
 
+    /// <summary>Spurpunkte nur der Anschluss-Prefabs (Autobahn-Ausfahrten/-Einfahrten).</summary>
+    public static List<Vector2> KitLanes(Map map)
+    {
+        var res = new List<Vector2>();
+        foreach (var (pf, ppd) in Ppd.ToList())
+        {
+            if (!map.MapItems.ContainsKey(pf.Uid)) continue;
+            float side = Interchanges.ShoulderOf(pf.Model);
+            if (side <= 0) continue;
+            var pts = LanesOf(pf, ppd, side);
+            if (pts is null) continue;
+            res.AddRange(pts.Select(p => p.P));
+        }
+        return res;
+    }
+
     public static List<Vector2> All(Map map)
     {
         var pts = new List<Vector2>();
