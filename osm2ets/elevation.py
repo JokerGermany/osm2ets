@@ -192,6 +192,8 @@ WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, 
 
 
 DECK_THICKNESS_M = 1.2
+SAG_WINDOW_M = 160.0      # Mulden in Autobahnprofilen auffüllen (Spielmeter)
+SAG_MAX_RAISE_M = 3.0
 # Reserve beim Anheben an Kreuzungen: mit Geländemodell verschieben Steigungsgrenzen und Hülle
 # danach die Höhen um einige Zentimeter (ohne pauschales Anheben fehlte sonst bis 0,11 m Lichtraum)
 CLEARANCE_MARGIN_M = 0.2
@@ -378,7 +380,7 @@ def overlap_ties(pieces, offsets, canon, movable: np.ndarray, margin: float = 1.
     dann praktisch auf gleicher Höhe."""
     from scipy.spatial import cKDTree
 
-    pos, width, owner, vid = [], [], [], []
+    pos, width, owner, vid, kind = [], [], [], [], []
     for pi, (p, off) in enumerate(zip(pieces, offsets)):
         d = p.dense
         n = len(d.xy)
@@ -388,6 +390,9 @@ def overlap_ties(pieces, offsets, canon, movable: np.ndarray, margin: float = 1.
                 continue
             w = max(_road_width(p, min(j, n - 2)), _road_width(p, max(j - 1, 0)))
             pos.append(d.xy_game[j]); width.append(w); owner.append(pi); vid.append(c)
+            seg = min(j, n - 2)
+            kind.append(2 if p.chain.parts[d.seg_part[seg]].edge.role == "visible"
+                        else 1 if _highway(p, seg) in ("motorway", "trunk") else 0)
     if not pos:
         return []
     pos = np.asarray(pos); width = np.asarray(width)
@@ -395,6 +400,10 @@ def overlap_ties(pieces, offsets, canon, movable: np.ndarray, margin: float = 1.
     ties = {}
     for i, j in tree.query_pairs(r=float(width.max()) + margin):
         if owner[i] == owner[j] or vid[i] == vid[j]:
+            continue
+        # Sichtstück unter/neben einer Autobahn zieht deren Fahrbahn nicht herunter (A 70 vor der
+        # Brücke über die St 2183: Weg schräg unter dem Brückenende, Fahrbahn sank 2 m ab)
+        if {kind[i], kind[j]} == {1, 2}:
             continue
         dist = float(np.linalg.norm(pos[i] - pos[j]))
         need = (width[i] + width[j]) / 2 + margin
@@ -669,8 +678,12 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
                 if f[0] and (j + 1 == len(fl) or not fl[j + 1][0]):
                     inner[j + 1] = False
             if inner.any():
-                ground = ground.copy()
-                ground[inner] = np.interp(d.s[inner], d.s[~inner], ground[~inner])
+                # Perzentil nur über Punkte außerhalb der Brücken: sonst zog das Fenster (± 30 m)
+                # das Tal unter der Brücke in die Zufahrten – die A 70 sank vor ihrer Brücke über
+                # die St 2183 um gut 2 m ab und stieg auf der Brücke wieder an
+                keep = ~inner
+                g2 = low_percentile_along(d.s[keep], raw[keep], profile.smoothing_window_m / 2, 25.0)
+                ground = np.interp(d.s, d.s[keep], g2)
         sm = smooth_along(d.s, ground, win)
 
         smoothed.append(sm)
@@ -776,6 +789,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     # --- 4. höhenfreie Kreuzungen
     margin = CLEARANCE_MARGIN_M if dem is not None else 0.0   # nur mit Hülle/Steigungsgrenze danach
     raised = sunk = 0
+    sag_filled = 0
     maxheight_used = 0
     iterations = 0
     mh_crossings: set[int] = set()
@@ -837,6 +851,21 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     maxheight_used = len(mh_crossings)
 
     z = heights()
+    # Autobahnen und Kraftfahrstraßen: keine Mulden. Das Geländemodell sinkt vor Brücken über ein
+    # Tal oft ab; die Fahrbahn folgte (A 70 vor der Brücke über die St 2183: 1,5 m runter, auf der
+    # Brücke 5 m hoch). Höhe je Stück höchstens auf die obere Hülle eines langen Mittels anheben.
+    if dem is not None:
+        for p, off in zip(pieces, offsets):
+            n = len(p.dense.xy)
+            if n < 3 or sum(_highway(p, j) in ("motorway", "trunk") for j in range(n - 1)) < 0.5 * (n - 1):
+                continue
+            idx = canon[off:off + n]
+            zz = z[idx]
+            sm = smooth_along(p.dense.s_game, zz, SAG_WINDOW_M)
+            up = np.clip(sm - zz, 0.0, SAG_MAX_RAISE_M)
+            if up.max() > 0.2:
+                z[idx] = zz + up
+                sag_filled += int((up > 0.2).sum())
     clearance_repaired = 0
     if dem is not None:
         # Brückenrampen und Gelände zusammen dürfen nicht steiler werden als erlaubt;
@@ -927,6 +956,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         "crossing_sunk_points": sunk,
         "crossing_repaired_points": clearance_repaired,
         "crossing_iterations": iterations,
+        "sag_filled_points": sag_filled,
         "overlap_ties": overlap_stats[0],
         "twin_ties": len(twins) if dem is not None else 0,
         "overlap_steps_before": overlap_stats[1],
