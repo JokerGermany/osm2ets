@@ -119,6 +119,18 @@ public static class Interchanges
             var out3 = list.Where(e => e.AtStart && IsMotorwayLanes(e.R, 3)).ToList();
             var r1 = list.Where(e => e.AtStart && IsRamp(e.R) && !IsLinkLanes(e.R, true, 2)).ToList();   // zweispurige: hw3 double
             if (in4.Count != 1 || out3.Count != 1 || r1.Count != 1) continue;
+            if (UseHw3Double && OneLaneStart.Contains(r1[0].R.Id))
+            {
+                // Ausfahrt wird nach wenigen Metern zweispurig (A 9 AS 40b/40a): hw3 double 4 → 3 + 2
+                var pd = MakePlan(node, "exit", Hw3Double, in4[0].R, out3[0].R, r1[0].R, warnings);
+                if (pd is null) continue;
+                plans.Add(pd); handled.Add(node);
+                NarrowAtNode(in4[0].R, false, 3);
+                NarrowAtNode(out3[0].R, true, 3);
+                r1[0].R.Runs[0].Lanes = 2;
+                TwoLane.Add(r1[0].R);
+                continue;
+            }
             var pl = MakePlan(node, "exit", Hw3Exit, in4[0].R, out3[0].R, r1[0].R, warnings);
             if (pl is null) continue;
             plans.Add(pl); handled.Add(node);
@@ -221,6 +233,8 @@ public static class Interchanges
     public static int PrepareLaneDrops(List<RoadEntry> roads)
     {
         PendingDrops.Clear();
+        // nicht leeren: ein zweiter Durchlauf sieht schon geglättete Spurzahlen
+        foreach (var r in roads) if (IsRamp(r) && ShortOneLaneStart(r)) OneLaneStart.Add(r.Id);
         if (UseLinkJoin) PendingDrops.AddRange(SplitLaneDrops(roads));
         return PendingDrops.Count;
     }
@@ -369,6 +383,8 @@ public static class Interchanges
         OneLane.Clear(); TwoLane.Clear();
         var drops = PendingDrops.Where(d => roads.Contains(d.A) && roads.Contains(d.B)).ToList();
         PendingDrops.Clear();
+        // nicht leeren: ein zweiter Durchlauf sieht schon geglättete Spurzahlen
+        foreach (var r in roads) if (IsRamp(r) && ShortOneLaneStart(r)) OneLaneStart.Add(r.Id);
         var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
         foreach (var r in roads)
             foreach (var atStart in new[] { true, false })
@@ -516,6 +532,23 @@ public static class Interchanges
         for (int i = run.From; i < run.To && i + 1 < r.Points.Count; i++)
             len += Vector2.Distance(P(r.Points[i]), P(r.Points[i + 1]));
         return len <= MaxAuxLane ? k : -1;
+    }
+
+    /// <summary>Rampen mit kurzem einspurigem Anfang, vor der Spurglättung erfasst.</summary>
+    private static readonly HashSet<string> OneLaneStart = [];
+
+    /// <summary>Höchstlänge eines einspurigen Anfangs, nach dem eine Ausfahrt zweispurig wird (m).</summary>
+    public const float MaxOneLaneStart = 100f;
+
+    /// <summary>Rampe beginnt mit einem kurzen einspurigen Lauf, danach mindestens 2 Spuren.</summary>
+    private static bool ShortOneLaneStart(RoadEntry r)
+    {
+        if (r.Runs.Count < 2 || r.Runs[0].Lanes != 1 || r.Runs[0].Bridge || r.Runs[0].Tunnel) return false;
+        if (!r.Runs.Skip(1).All(x => x.Lanes >= 2)) return false;
+        double len = 0;
+        for (int i = r.Runs[0].From; i < r.Runs[0].To && i + 1 < r.Points.Count; i++)
+            len += Vector2.Distance(P(r.Points[i]), P(r.Points[i + 1]));
+        return len <= MaxOneLaneStart;
     }
 
     /// <summary>Mindestens ein Lauf ist keine Zusatzspur (sonst wäre die ganze Straße „Zusatzspur“).</summary>
