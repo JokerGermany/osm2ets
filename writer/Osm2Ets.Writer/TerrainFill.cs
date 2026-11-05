@@ -22,7 +22,8 @@ public static class TerrainFill
     public const float FillOverlap = 8f;
     public static bool FillUnderRoads = Environment.GetEnvironmentVariable("OSM2ETS_FILL_MASKROADS") is null;
     /// <summary>Höhenstaffel: Straße &gt; Straßengelände (−5 cm) &gt; Füllgelände (−15 cm), kein Flimmern bei Überlappung.</summary>
-    public const float RoadTerrainDrop = 0.05f, FillDrop = 0.15f;
+    public const float RoadTerrainDrop = 0.05f;
+    public static float FillDrop = EnvF("OSM2ETS_FILL_DROP", 0.15f);
     public static float NearFlat = EnvF("OSM2ETS_RT_FLAT", 3f), NearBlend = EnvF("OSM2ETS_RT_BLEND", 10f);
     /// <summary>Schmale Seiten mit gestauchtem Verlauf (aus: OSM2ETS_RT_NOCOMPRESS).</summary>
     public static bool CompressNarrow = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOCOMPRESS") is null;
