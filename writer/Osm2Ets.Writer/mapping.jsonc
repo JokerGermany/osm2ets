@@ -49,14 +49,15 @@
     // Rolle "ext" setzt der Writer: Straße zwischen Aufweitung und Teilung (bzw. Einmündung und
     // Spurende) einer Anschlussstelle, wenn dort ein Bauwerk liegt – wie in der SCS-Karte über
     // Brücken. ger17 = "ger hw2 ext one lane tmpl". Ihre Linie liegt am dreispurigen Prefab-Knoten
-    // 4,5 m rechts der zweispurigen; Modell angenommen wie ger16 (nicht vermessen).
+    // 4,5 m rechts der zweispurigen; Modell gemessen (ger_hw2_exit_one_lane.pmd, ETS2 1.61):
+    // gesamt −9,0…8,0, Spuren −8,95…4,65 – wie ger16.
     { "name": "Autobahn mit Zusatzspur zwischen Anschluss-Prefabs", "match": { "role": ["ext"] },
       "road_type": "ger17", "width": 17, "model_center": -0.5, "offset": 0, "edge_left": 9, "terrain_left": 4, "terrain_right": 30,
       "railing_left": false,
       "right": { "look": "ger_1", "left_edge": "ger_sh_15", "right_edge": "ger_sh_15" } },
     // "ext3": dasselbe für 3 Spuren (zweispurige Ausfahrt, Prefab-Satz "hw3 double").
-    // ger18 = "ger hw3 exit one lane tmpl" (4 Spuren). Maße nicht vermessen – angenommen ger17
-    // plus eine Spur (4,5 m) rechts.
+    // ger18 = "ger hw3 exit one lane tmpl" (4 Spuren). Gemessen (ger_hw3_exit_one_lane.pmd,
+    // ETS2 1.61): gesamt −9,0…12,5, Spuren −8,95…9,15 (ger16 plus eine Spur rechts).
     { "name": "Autobahn 3 Spuren mit Zusatzspur zwischen Anschluss-Prefabs", "match": { "role": ["ext3"] },
       "road_type": "ger18", "width": 21.5, "model_center": 1.75, "offset": 0, "edge_left": 9, "terrain_left": 4, "terrain_right": 30,
       "railing_left": false,

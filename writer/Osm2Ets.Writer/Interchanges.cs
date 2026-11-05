@@ -1579,6 +1579,13 @@ public static class Interchanges
     // ------------------------------------------------------------------ tangentialer Anschluss
 
     public const float Lead = 20f;
+
+    /// <summary>
+    /// Hauptfahrbahn an Anschluss-Prefabs: so weit (m) vom Prefab-Knoten wird sie als weiche
+    /// Kurve aus der Prefab-Richtung auf die OSM-Linie zurückgeführt (statt nach einem
+    /// Straßenstück abzuknicken). OSM2ETS_MAIN_BLEND=0 schaltet ab.
+    /// </summary>
+    public static float MainBlend = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_MAIN_BLEND"), System.Globalization.CultureInfo.InvariantCulture, out var mb) ? mb : 40f;
     /// <summary>Einlauf der Rampe in <see cref="Hw3Merge2"/>: Der Rampenknoten steht 15° schräg; mit
     /// 20 m geradem Einlauf schwenkte die Rampe 5 m nach außen (A 9 bei Bayreuth: auf den Wirtschaftsweg
     /// daneben).</summary>
@@ -1739,8 +1746,8 @@ public static class Interchanges
         var outNode = pl.Last.Nodes[pl.LastOut];
         var rampNode = pl.RampPrefab.Nodes[pl.RampNode];
         // ppd-Richtungen zeigen in das Prefab hinein
-        SetTail(p.MainIn, inNode.Position, InwardDirections[pl.First][pl.FirstIn]);
-        SetHead(p.MainOut, outNode.Position, -InwardDirections[pl.Last][pl.LastOut]);
+        SetTail(p.MainIn, inNode.Position, InwardDirections[pl.First][pl.FirstIn], Lead, MainBlend);
+        SetHead(p.MainOut, outNode.Position, -InwardDirections[pl.Last][pl.LastOut], Lead, MainBlend);
         var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];
         // Das Prefab zweigt schneller ab als die OSM-Rampe: Rampenpunkte, die noch näher an der
         // Hauptfahrbahn liegen als der Rampenknoten, entfernen (sonst schwenkt die Rampe zurück
