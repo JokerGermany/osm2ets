@@ -9,5 +9,13 @@
   OSM, then 4): find or build a prefab 3 lanes + 2-lane ramp -> 5 lanes (both ramp lanes kept)
   and a lane end 5 -> 4. Road look for 5 lanes exists (ger28 "ger hw5 one lane tmpl"); no German
   prefab found so far. Currently ger_2i037 joins the two ramp lanes into one (3 + 2 -> 4).
+- **Lane end 4 -> 3 on the A 9** after the hw3 entries (ch_4202j): no prefab token known for
+  `ger_hw3-hw3_exit_tmpl_v02` (mod_ger_39 points to a non-existing non-v02 file). The 4-lane
+  acceleration lane currently ends abruptly at the change from ger18 to ger16.
+- **Entry 3 + 1 -> 3 for 3-lane motorways** (ramp merging into the right lane, like
+  `ger_hw3_r2_merge_double` but for a 1-lane ramp and without extra lane): find or build it.
+  Known German merges all end with 4 lanes (ch_4202j 3 + 1 -> 4, ger_2i037 3 + 2 -> 4); either
+  this entry or the 4 -> 3 lane end above would remove the abrupt lane end. Look in the editor's
+  prefab browser ("hw3", "merge") for names/tokens.
 - **B 85 slip lanes** (x -3700, z -3230): loops of chained T prefabs (mod_ger_67), node
   2166477040 without prefab – waiting for a decision.

@@ -285,9 +285,24 @@ public static class LaneSmoothing
         }
         if (weights.Count < 2) return;
         int best = weights.MaxBy(kv => kv.Value).Key;
-        foreach (var run in r.Runs)
-            if (run.Oneway) run.Lanes = best;
+        for (int k = 0; k < r.Runs.Count; k++)
+        {
+            var run = r.Runs[k];
+            if (!run.Oneway) continue;
+            // Zusatzspur am Anfang bzw. Ende (eine Spur mehr, bis 400 m) bleibt: die Anschluss-
+            // Prefabs brauchen sie (Beschleunigungs-/Verzögerungsstreifen) und setzen sie selbst zurück
+            if (KeepAux && (k == 0 || k == r.Runs.Count - 1) && r.Runs.Count > 1 && run.Lanes == best + 1)
+            {
+                double len = 0;
+                for (int i = run.From; i < run.To; i++) len += Dist(r.Points[i], r.Points[i + 1]);
+                if (len <= Interchanges.MaxAuxLane) continue;
+            }
+            run.Lanes = best;
+        }
     }
+
+    /// <summary>Zusatzspuren an den Enden behalten (aus: OSM2ETS_SMOOTH_AUX=1).</summary>
+    public static bool KeepAux = Environment.GetEnvironmentVariable("OSM2ETS_SMOOTH_AUX") != "1";
 
     private static double Dist(double[] a, double[] b) =>
         Math.Sqrt(Math.Pow(b[0] - a[0], 2) + Math.Pow(b[2] - a[2], 2));

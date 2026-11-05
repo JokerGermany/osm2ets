@@ -153,6 +153,8 @@ public static class BridgeBodies
     public const float MaxExtend = 15f;
     /// <summary>So viel Straße ohne Bauwerk bleibt vor bzw. hinter einer verlängerten Brücke mindestens (m).</summary>
     public const float MinApproach = 8f;
+    /// <summary>Kein neues Straßenstück kürzer als das (MapWriter.MinSegment 1,25 m + Reserve).</summary>
+    private const float MinPiece = 1.6f;
     /// <summary>Wie <see cref="MinApproach"/>, wenn die Zufahrt am Anfang bzw. Ende der Straße liegt
     /// (Wegbrücke über die A-70-Rampen: Zufahrt 10,7 m bis zur Kreuzung, die verbreiterte Rampe lag
     /// sonst unter dem Damm). Aus: OSM2ETS_BRIDGE_MINAPPROACH_END=8.</summary>
@@ -233,8 +235,8 @@ public static class BridgeBodies
         int j = run.From - 1;
         while (j > prev.From && acc + Dist2(r.Points[j], r.Points[j + 1]) < e) { acc += Dist2(r.Points[j], r.Points[j + 1]); j--; }
         float len = Dist2(r.Points[j], r.Points[j + 1]), back = e - acc;
-        if (back < 0.5f) { SetBoundary(prev, run, j + 1); return acc; }
-        if (len - back < 0.5f && j > prev.From) { SetBoundary(prev, run, j); return acc + len; }
+        if (back < MinPiece) { SetBoundary(prev, run, j + 1); return acc; }
+        if (len - back < MinPiece && j > prev.From) { SetBoundary(prev, run, j); return acc + len; }
         InsertPoint(r, j + 1, Lerp(r.Points[j], r.Points[j + 1], 1 - back / len));
         SetBoundary(prev, run, j + 1);
         return e;
@@ -255,8 +257,8 @@ public static class BridgeBodies
         int j = run.To;
         while (j < next.To - 1 && acc + Dist2(r.Points[j], r.Points[j + 1]) < e) { acc += Dist2(r.Points[j], r.Points[j + 1]); j++; }
         float len = Dist2(r.Points[j], r.Points[j + 1]), fwd = e - acc;
-        if (fwd < 0.5f) { SetBoundary(run, next, j); return acc; }
-        if (len - fwd < 0.5f && j + 1 < next.To) { SetBoundary(run, next, j + 1); return acc + len; }
+        if (fwd < MinPiece) { SetBoundary(run, next, j); return acc; }
+        if (len - fwd < MinPiece && j + 1 < next.To) { SetBoundary(run, next, j + 1); return acc + len; }
         InsertPoint(r, j + 1, Lerp(r.Points[j], r.Points[j + 1], fwd / len));
         SetBoundary(run, next, j + 1);
         return e;

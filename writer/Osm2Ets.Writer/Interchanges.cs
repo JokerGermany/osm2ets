@@ -81,6 +81,53 @@ public static class Interchanges
     public static readonly Kit Hw3Exit = new("hw3 exit", 3, 1, null,
         new("mod_ger_31", "/prefab2/fork_temp/ger/ger_hw3_exit_joint_mirrored_tmpl.ppd", "sh_ger", "ger_1"), null, null, "ext3");
 
+    /// <summary>
+    /// 3 Spuren + einspurige Rampe → 4 Spuren (ch_4202j „ger hw3 exit joint tmpl“, Grundspiel;
+    /// Varianten laut .pmd: default, no_lines, wall). Ein Spurende 4 → 3 dazu ist nicht bekannt
+    /// (ger_hw3-hw3_exit_tmpl_v02 ohne Token): Der Beschleunigungsstreifen läuft als vierspurige
+    /// Straße (ext3, ger18) so lang wie in OSM und endet am Wechsel auf ger16 ohne Übergang.
+    /// </summary>
+    public static readonly Kit Hw3Join = new("hw3 join", 3, 1, null, null,
+        new("ch_4202j", "/prefab2/fork_temp/ger/ger_hw3_exit_joint_tmpl_v02.ppd", "default", "ger_1"), null, "ext3");
+
+    /// <summary>Einfahrt 3 + 1 → 4 (aus: OSM2ETS_NO_HW3JOIN=1).</summary>
+    public static bool UseHw3Join = Environment.GetEnvironmentVariable("OSM2ETS_NO_HW3JOIN") != "1";
+
+    private static void FindHw3Join(Dictionary<long, List<(RoadEntry R, bool AtStart)>> ends, List<Plan> plans,
+                                    HashSet<long> handled, List<string> warnings)
+    {
+        foreach (var (node, list) in ends)
+        {
+            if (list.Count != 3 || handled.Contains(node)) continue;
+            var in3 = list.Where(e => !e.AtStart && IsMotorwayLanes(e.R, 3)).ToList();
+            var out3 = list.Where(e => e.AtStart && IsMotorwayN(e.R, true, 3) && AuxRun(e.R, true, 3) >= 0).ToList();
+            var r1 = list.Where(e => !e.AtStart && IsRamp(e.R) && e.R.Runs.All(x => x.Lanes is null or 1)).ToList();
+            if (in3.Count != 1 || out3.Count != 1 || r1.Count != 1) continue;
+            var pl = MakePlan(node, "entry", Hw3Join, in3[0].R, out3[0].R, r1[0].R, warnings);
+            if (pl is null) continue;
+            plans.Add(pl); handled.Add(node);
+            NarrowAtNode(in3[0].R, false, 3);
+            var aux = out3[0].R.Runs[AuxRun(out3[0].R, true, 3)];
+            aux.Role = Hw3Join.ExtRole;                      // Beschleunigungsstreifen vierspurig
+            OneLane.Add(r1[0].R);
+        }
+        // Gegenstück: Verzögerungsstreifen (4 Spuren am Knoten) → 3 Spuren + einspurige Ausfahrt
+        foreach (var (node, list) in ends)
+        {
+            if (list.Count != 3 || handled.Contains(node)) continue;
+            var in4 = list.Where(e => !e.AtStart && IsMotorwayN(e.R, false, 3) && AuxRun(e.R, false, 3) >= 0).ToList();
+            var out3 = list.Where(e => e.AtStart && IsMotorwayLanes(e.R, 3)).ToList();
+            var r1 = list.Where(e => e.AtStart && IsRamp(e.R) && !IsLinkLanes(e.R, true, 2)).ToList();   // zweispurige: hw3 double
+            if (in4.Count != 1 || out3.Count != 1 || r1.Count != 1) continue;
+            var pl = MakePlan(node, "exit", Hw3Exit, in4[0].R, out3[0].R, r1[0].R, warnings);
+            if (pl is null) continue;
+            plans.Add(pl); handled.Add(node);
+            NarrowAtNode(out3[0].R, true, 3);
+            in4[0].R.Runs[AuxRun(in4[0].R, false, 3)].Role = Hw3Exit.ExtRole;   // Verzögerungsstreifen vierspurig
+            OneLane.Add(r1[0].R);
+        }
+    }
+
     /// <summary>Vierspurige Strecke zwischen Einmündung 3 + 2 und Ausfahrt 4 → 3 + 1 (aus: OSM2ETS_NO_LANE4=1).</summary>
     public static bool UseLane4 = Environment.GetEnvironmentVariable("OSM2ETS_NO_LANE4") != "1";
 
@@ -88,10 +135,10 @@ public static class Interchanges
     internal static bool IsLinkLanes(RoadEntry r, bool atStart, int n)
     {
         if (!IsRamp(r)) return false;
-        int k = AuxRun(r, atStart, n);
+        int k = AuxRun(r, atStart, n), k2 = AuxRun(r, !atStart, n);
         for (int i = 0; i < r.Runs.Count; i++)
-            if (i != k && r.Runs[i].Lanes != n) return false;
-        return true;
+            if (i != k && i != k2 && r.Runs[i].Lanes != n) return false;
+        return HasCore(r, k, k2);
     }
 
     /// <summary>Autobahn mit n Spuren; am Anfang und am Ende darf je ein kurzer Lauf mit n+1 Spuren liegen.</summary>
@@ -101,7 +148,7 @@ public static class Interchanges
         int a = AuxRun(r, true, n), b = AuxRun(r, false, n);
         for (int i = 0; i < r.Runs.Count; i++)
             if (i != a && i != b && r.Runs[i].Lanes != n) return false;
-        return true;
+        return HasCore(r, a, b);
     }
 
     /// <summary>
@@ -118,7 +165,7 @@ public static class Interchanges
             if (list.Count != 3) continue;
             var in3 = list.Where(e => !e.AtStart && IsMotorwayLanes(e.R, 3)).ToList();
             var out4 = list.Where(e => e.AtStart && IsMotorwayLanes(e.R, 4)).ToList();
-            var r2 = list.Where(e => !e.AtStart && IsRamp(e.R) && e.R.Runs.All(x => x.Lanes == 2)).ToList();
+            var r2 = list.Where(e => !e.AtStart && IsLinkLanes(e.R, false, 2)).ToList();
             if (in3.Count == 1 && out4.Count == 1 && r2.Count == 1) entries[out4[0].R] = (node, in3[0].R, r2[0].R);
             var in4 = list.Where(e => !e.AtStart && IsMotorwayLanes(e.R, 4)).ToList();
             var out3 = list.Where(e => e.AtStart && IsMotorwayLanes(e.R, 3)).ToList();
@@ -222,7 +269,7 @@ public static class Interchanges
     /// <summary>Seitlicher Abstand zusätzlicher Spurpunkte unter dem Seitenstreifen (0 = keine).</summary>
     public static float ShoulderOf(TruckLib.Token model)
     {
-        foreach (var (k, off) in new[] { (Hw3Double, PrefabFootprint.ShoulderOffset3), (Hw3Merge2, PrefabFootprint.ShoulderOffset3), (Hw3Exit, PrefabFootprint.ShoulderOffset3), (Split22, PrefabFootprint.ShoulderOffset), (LaneDrop, PrefabFootprint.ShoulderOffset), (Hw2, PrefabFootprint.ShoulderOffset) })
+        foreach (var (k, off) in new[] { (Hw3Double, PrefabFootprint.ShoulderOffset3), (Hw3Merge2, PrefabFootprint.ShoulderOffset3), (Hw3Exit, PrefabFootprint.ShoulderOffset3), (Hw3Join, PrefabFootprint.ShoulderOffset3), (Split22, PrefabFootprint.ShoulderOffset), (LaneDrop, PrefabFootprint.ShoulderOffset), (Hw2, PrefabFootprint.ShoulderOffset) })
             foreach (var d in new[] { k.Widen0, k.Widen, k.Split, k.Join, k.Narrow })
                 if (d is not null && (TruckLib.Token)d.Unit == model) return off;
         return 0f;
@@ -337,6 +384,7 @@ public static class Interchanges
         var plans = new List<Plan>();
         var handled = new HashSet<long>();
         if (UseLane4) FindLane4(ends, plans, handled, warnings);
+        if (UseHw3Join) FindHw3Join(ends, plans, handled, warnings);
         foreach (var (node, a, b) in drops)
         {
             plans.Add(new Plan
@@ -353,7 +401,7 @@ public static class Interchanges
                 // zwei Rampen laufen zusammen: zweispurige + einspurige → zweispurig (Beschleunigungsstreifen)
                 if (list.Count != 3 || handled.Contains(node)) continue;
                 if (!list.All(e => IsRamp(e.R))) continue;
-                var in2 = list.Where(e => !e.AtStart && e.R.Runs.All(x => x.Lanes == 2)).ToList();
+                var in2 = list.Where(e => !e.AtStart && IsLinkLanes(e.R, false, 2)).ToList();
                 var in1 = list.Where(e => !e.AtStart && e.R.Runs.All(x => x.Lanes is null or 1)).ToList();
                 var out2 = list.Where(e => e.AtStart && IsLinkLanes(e.R, true, 2)).ToList();
                 if (in2.Count != 1 || in1.Count != 1 || out2.Count != 1) continue;
@@ -372,7 +420,7 @@ public static class Interchanges
             {
                 // 3-spurige Autobahn mit zweispuriger Ausfahrt
                 var m3 = list.Where(e => IsMotorwayN(e.R, e.AtStart, 3)).ToList();
-                var r2 = list.Where(e => IsRamp(e.R) && e.AtStart && e.R.Runs.All(x => x.Lanes == 2)).ToList();
+                var r2 = list.Where(e => e.AtStart && IsLinkLanes(e.R, true, 2)).ToList();
                 if (m3.Count == 2 && r2.Count == 1) { mains = m3; kit = Hw3Double; }
             }
             var ramps = list.Where(e => IsRamp(e.R)).ToList();
@@ -382,7 +430,7 @@ public static class Interchanges
             {
                 var m = mains[0];
                 var mAway = Away(m.R, m.AtStart);
-                var cand = ramps.Where(e => e.AtStart != m.AtStart && e.R.Runs.All(x => x.Lanes is null or 2))
+                var cand = ramps.Where(e => e.AtStart != m.AtStart && (e.R.Runs.All(x => x.Lanes is null) || IsLinkLanes(e.R, e.AtStart, 2)))
                                 .Select(e => (e, Dot: -Vector2.Dot(Away(e.R, e.AtStart), mAway)))
                                 .OrderByDescending(t => t.Dot).ToList();
                 if (cand.Count > 0 && cand[0].Dot > 0.97f && (cand.Count == 1 || cand[1].Dot < cand[0].Dot - 0.005f))
@@ -393,8 +441,8 @@ public static class Interchanges
             }
             if (mains.Count != 2 || ramps.Count != 1) continue;
             // Ausfahrt, bei der Rampe und weiterführender Ast zweispurige Rampen sind: Gabelung 2 + 2
-            if (UseSplit22 && kit == Hw2 && ramps[0].AtStart && ramps[0].R.Runs.All(x => x.Lanes == 2)
-                && mains.FirstOrDefault(e => e.AtStart).R is { } mo && IsRamp(mo) && mo.Runs.All(x => x.Lanes == 2))
+            if (UseSplit22 && kit == Hw2 && ramps[0].AtStart && IsLinkLanes(ramps[0].R, true, 2)
+                && mains.FirstOrDefault(e => e.AtStart).R is { } mo && IsLinkLanes(mo, true, 2))
                 kit = Split22;
             if (kit.Join is null && !ramps[0].AtStart) continue;
             var mainIn = mains.FirstOrDefault(e => !e.AtStart).R;
@@ -423,14 +471,15 @@ public static class Interchanges
                 if (IsRamp(mainOut)) TwoLane.Add(mainOut);
             }
         }
-        return plans;
+        // Spurenden zuerst vorbereiten: Einfahrten dahinter prüfen dann die schon gekürzte Rampe
+        return plans.OrderBy(p => p.Kind == "drop" ? 0 : 1).ToList();
     }
 
     /// <summary>Autobahnbeginn mit Anschlussast als Hauptfahrbahn zulassen (OSM2ETS_NO_LINKMAIN=1 schaltet ab).</summary>
     public static bool UseLinkMain = Environment.GetEnvironmentVariable("OSM2ETS_NO_LINKMAIN") != "1";
 
     /// <summary>Höchstlänge eines 3-spurigen Laufs am Knoten, der als Zusatzspur gilt (m).</summary>
-    public const float MaxAuxLane = 400f;
+    public const float MaxAuxLane = 650f;
 
     /// <summary>
     /// 2-spurige Autobahn. Ein 3-spuriger Lauf direkt am Knoten (bis MaxAuxLane lang,
@@ -439,20 +488,21 @@ public static class Interchanges
     internal static bool IsMotorway2(RoadEntry r, bool atStart)
     {
         if (!r.Runs.All(x => x.Oneway && x.Highway == "motorway")) return false;
-        int k = AuxRun(r, atStart, 2);
+        // Zusatzspur am Knoten und (seit LaneSmoothing.KeepAux) auch am anderen Ende erlaubt
+        int k = AuxRun(r, atStart, 2), k2 = AuxRun(r, !atStart, 2);
         for (int i = 0; i < r.Runs.Count; i++)
-            if (i != k && r.Runs[i].Lanes is not (null or 2)) return false;
-        return true;
+            if (i != k && i != k2 && r.Runs[i].Lanes is not (null or 2)) return false;
+        return HasCore(r, k, k2);
     }
 
     /// <summary>Autobahn mit genau n Spuren (ein Lauf mit n+1 Spuren am Knoten zählt als Zusatzspur).</summary>
     internal static bool IsMotorwayN(RoadEntry r, bool atStart, int n)
     {
         if (!r.Runs.All(x => x.Oneway && x.Highway == "motorway")) return false;
-        int k = AuxRun(r, atStart, n);
+        int k = AuxRun(r, atStart, n), k2 = AuxRun(r, !atStart, n);
         for (int i = 0; i < r.Runs.Count; i++)
-            if (i != k && r.Runs[i].Lanes != n) return false;
-        return true;
+            if (i != k && i != k2 && r.Runs[i].Lanes != n) return false;
+        return HasCore(r, k, k2);
     }
 
     /// <summary>Index des 3-spurigen Laufs am Knotenende, der als Zusatzspur gilt, sonst -1.</summary>
@@ -467,6 +517,9 @@ public static class Interchanges
             len += Vector2.Distance(P(r.Points[i]), P(r.Points[i + 1]));
         return len <= MaxAuxLane ? k : -1;
     }
+
+    /// <summary>Mindestens ein Lauf ist keine Zusatzspur (sonst wäre die ganze Straße „Zusatzspur“).</summary>
+    private static bool HasCore(RoadEntry r, int a, int b) => Enumerable.Range(0, r.Runs.Count).Any(i => i != a && i != b);
 
     internal static void NarrowAtNode(RoadEntry r, bool atStart, int n = 2)
     {
@@ -1041,6 +1094,10 @@ public static class Interchanges
         }
         float d = found - lon - 2;     // Prefab-Hauptknoten so, dass der Rampenknoten dort liegt
         if (found < 0 || d < 20) return;
+        // vor dem Rampenknoten muss genug Rampe bleiben (sonst z. B. Spurende-Prefab und Einfahrt
+        // fast aneinander, die Rampe dazwischen geknickt)
+        var qf = AxisAt(p.MainIn, false, found);
+        if (RampArcAt(p.Ramp, new Vector2(qf.X, qf.Z)) < (p.Ramp.Start?.Kind == "prefab" ? MinRampBefore * 3 : MinRampBefore)) return;
         // Hauptfahrbahn bei d teilen
         var pts = p.MainIn.Points; double acc = 0; int k = pts.Count - 1;
         while (k > 0 && acc + Dist(pts[k - 1], pts[k]) < d) { acc += Dist(pts[k - 1], pts[k]); k--; }
@@ -1104,6 +1161,25 @@ public static class Interchanges
 
     /// <summary>Zusatzspur-Straße in Kurven (aus: OSM2ETS_NO_CURVE_EXT=1).</summary>
     public static bool UseCurveExt = Environment.GetEnvironmentVariable("OSM2ETS_NO_CURVE_EXT") != "1";
+
+    /// <summary>So viel Rampe muss vor dem verschobenen Rampenknoten bleiben (m).</summary>
+    public const float MinRampBefore = 60f;
+
+    /// <summary>Bogenlänge vom Rampenanfang bis zum Punkt, der q am nächsten liegt.</summary>
+    private static float RampArcAt(RoadEntry r, Vector2 q)
+    {
+        float best = float.MaxValue, at = 0, acc = 0;
+        for (int i = 0; i < r.Points.Count - 1; i++)
+        {
+            var a = P(r.Points[i]); var ab = P(r.Points[i + 1]) - a;
+            float l2 = ab.LengthSquared(), l = MathF.Sqrt(l2);
+            float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1) : 0;
+            float dd = Vector2.Distance(a + ab * t, q);
+            if (dd < best) { best = dd; at = acc + t * l; }
+            acc += l;
+        }
+        return at;
+    }
 
     private static float RampDistance(RoadEntry r, Vector2 q)
     {
