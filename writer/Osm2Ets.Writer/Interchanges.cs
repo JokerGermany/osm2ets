@@ -111,6 +111,21 @@ public static class Interchanges
             aux.Role = Hw3Join.ExtRole;                      // Beschleunigungsstreifen vierspurig
             OneLane.Add(r1[0].R);
         }
+        // Gegenstück: Verzögerungsstreifen (4 Spuren am Knoten) → 3 Spuren + einspurige Ausfahrt
+        foreach (var (node, list) in ends)
+        {
+            if (list.Count != 3 || handled.Contains(node)) continue;
+            var in4 = list.Where(e => !e.AtStart && IsMotorwayN(e.R, false, 3) && AuxRun(e.R, false, 3) >= 0).ToList();
+            var out3 = list.Where(e => e.AtStart && IsMotorwayLanes(e.R, 3)).ToList();
+            var r1 = list.Where(e => e.AtStart && IsRamp(e.R) && !IsLinkLanes(e.R, true, 2)).ToList();   // zweispurige: hw3 double
+            if (in4.Count != 1 || out3.Count != 1 || r1.Count != 1) continue;
+            var pl = MakePlan(node, "exit", Hw3Exit, in4[0].R, out3[0].R, r1[0].R, warnings);
+            if (pl is null) continue;
+            plans.Add(pl); handled.Add(node);
+            NarrowAtNode(out3[0].R, true, 3);
+            in4[0].R.Runs[AuxRun(in4[0].R, false, 3)].Role = Hw3Exit.ExtRole;   // Verzögerungsstreifen vierspurig
+            OneLane.Add(r1[0].R);
+        }
     }
 
     /// <summary>Vierspurige Strecke zwischen Einmündung 3 + 2 und Ausfahrt 4 → 3 + 1 (aus: OSM2ETS_NO_LANE4=1).</summary>
@@ -123,7 +138,7 @@ public static class Interchanges
         int k = AuxRun(r, atStart, n), k2 = AuxRun(r, !atStart, n);
         for (int i = 0; i < r.Runs.Count; i++)
             if (i != k && i != k2 && r.Runs[i].Lanes != n) return false;
-        return true;
+        return HasCore(r, k, k2);
     }
 
     /// <summary>Autobahn mit n Spuren; am Anfang und am Ende darf je ein kurzer Lauf mit n+1 Spuren liegen.</summary>
@@ -133,7 +148,7 @@ public static class Interchanges
         int a = AuxRun(r, true, n), b = AuxRun(r, false, n);
         for (int i = 0; i < r.Runs.Count; i++)
             if (i != a && i != b && r.Runs[i].Lanes != n) return false;
-        return true;
+        return HasCore(r, a, b);
     }
 
     /// <summary>
@@ -464,7 +479,7 @@ public static class Interchanges
     public static bool UseLinkMain = Environment.GetEnvironmentVariable("OSM2ETS_NO_LINKMAIN") != "1";
 
     /// <summary>Höchstlänge eines 3-spurigen Laufs am Knoten, der als Zusatzspur gilt (m).</summary>
-    public const float MaxAuxLane = 400f;
+    public const float MaxAuxLane = 650f;
 
     /// <summary>
     /// 2-spurige Autobahn. Ein 3-spuriger Lauf direkt am Knoten (bis MaxAuxLane lang,
@@ -477,7 +492,7 @@ public static class Interchanges
         int k = AuxRun(r, atStart, 2), k2 = AuxRun(r, !atStart, 2);
         for (int i = 0; i < r.Runs.Count; i++)
             if (i != k && i != k2 && r.Runs[i].Lanes is not (null or 2)) return false;
-        return true;
+        return HasCore(r, k, k2);
     }
 
     /// <summary>Autobahn mit genau n Spuren (ein Lauf mit n+1 Spuren am Knoten zählt als Zusatzspur).</summary>
@@ -487,7 +502,7 @@ public static class Interchanges
         int k = AuxRun(r, atStart, n), k2 = AuxRun(r, !atStart, n);
         for (int i = 0; i < r.Runs.Count; i++)
             if (i != k && i != k2 && r.Runs[i].Lanes != n) return false;
-        return true;
+        return HasCore(r, k, k2);
     }
 
     /// <summary>Index des 3-spurigen Laufs am Knotenende, der als Zusatzspur gilt, sonst -1.</summary>
@@ -502,6 +517,9 @@ public static class Interchanges
             len += Vector2.Distance(P(r.Points[i]), P(r.Points[i + 1]));
         return len <= MaxAuxLane ? k : -1;
     }
+
+    /// <summary>Mindestens ein Lauf ist keine Zusatzspur (sonst wäre die ganze Straße „Zusatzspur“).</summary>
+    private static bool HasCore(RoadEntry r, int a, int b) => Enumerable.Range(0, r.Runs.Count).Any(i => i != a && i != b);
 
     internal static void NarrowAtNode(RoadEntry r, bool atStart, int n = 2)
     {

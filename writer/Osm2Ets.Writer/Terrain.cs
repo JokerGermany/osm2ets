@@ -295,7 +295,7 @@ public static class LaneSmoothing
             {
                 double len = 0;
                 for (int i = run.From; i < run.To; i++) len += Dist(r.Points[i], r.Points[i + 1]);
-                if (len <= 400) continue;
+                if (len <= Interchanges.MaxAuxLane) continue;
             }
             run.Lanes = best;
         }
