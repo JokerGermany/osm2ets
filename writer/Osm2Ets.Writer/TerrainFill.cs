@@ -246,22 +246,43 @@ public static class TerrainFill
             if (i < 0 || j < 0 || i >= mw || j >= mh) return false;
             return !mask[j * mw + i];
         }
-        // Umgebung der Anschluss-Prefabs: nur feine Reihen (siehe ZoneReach)
+        // Umgebung der Anschluss-Prefabs: grobe Reihen enden davor (zone), die Zonen-Reihen reichen
+        // ZoneMargin darüber hinaus (zoneFill) – sonst Lücken zwischen beiden
         var zone = new bool[mw * mh];
-        if (ZoneReach > 0 && FinePrefabLanes is not null)
-            foreach (var c in FinePrefabLanes)
+        var zoneFill = new bool[mw * mh];
+        bool useZone = ZoneReach > 0 && FinePrefabLanes is { Count: > 0 };
+        if (useZone)
+        {
+            float rf = ZoneReach + ZoneMargin;
+            foreach (var c in FinePrefabLanes!)
             {
-                int i0 = Math.Max(0, (int)((c.X - ZoneReach - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)((c.X + ZoneReach - x0) / MaskCell) + 1);
-                int j0 = Math.Max(0, (int)((c.Y - ZoneReach - z0) / MaskCell)), j1 = Math.Min(mh - 1, (int)((c.Y + ZoneReach - z0) / MaskCell) + 1);
+                int i0 = Math.Max(0, (int)((c.X - rf - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)((c.X + rf - x0) / MaskCell) + 1);
+                int j0 = Math.Max(0, (int)((c.Y - rf - z0) / MaskCell)), j1 = Math.Min(mh - 1, (int)((c.Y + rf - z0) / MaskCell) + 1);
                 for (int j = j0; j <= j1; j++)
                     for (int i = i0; i <= i1; i++)
-                        if (!zone[j * mw + i] && Vector2.DistanceSquared(new Vector2(x0 + i * MaskCell, z0 + j * MaskCell), c) <= ZoneReach * ZoneReach)
-                            zone[j * mw + i] = true;
+                    {
+                        float d2 = Vector2.DistanceSquared(new Vector2(x0 + i * MaskCell, z0 + j * MaskCell), c);
+                        if (d2 <= rf * rf) zoneFill[j * mw + i] = true;
+                        if (d2 <= ZoneReach * ZoneReach) zone[j * mw + i] = true;
+                    }
             }
+        }
         bool InZone(float x, float z)
         {
             int i = (int)MathF.Round((x - x0) / MaskCell), j = (int)MathF.Round((z - z0) / MaskCell);
             return i >= 0 && j >= 0 && i < mw && j < mh && zone[j * mw + i];
+        }
+        bool InZoneFill(float x, float z)
+        {
+            int i = (int)MathF.Round((x - x0) / MaskCell), j = (int)MathF.Round((z - z0) / MaskCell);
+            return i >= 0 && j >= 0 && i < mw && j < mh && zoneFill[j * mw + i];
+        }
+        // Breite einer Zonen-Reihe zur Seite: ZoneHalf, sonst so weit frei (mindestens 0,5 m)
+        float ZoneExtent(float x, float z, float sign)
+        {
+            foreach (var e in new[] { ZoneHalf, 1f, 0.5f })
+                if (e <= ZoneHalf && Free(x, z + sign * e) && Free(x, z + sign * MathF.Min(e, 0.5f))) return e;
+            return 0;
         }
         bool coarse = true;
         float half = RowSpacing / 2 + Overlap;
@@ -295,9 +316,46 @@ public static class TerrainFill
             int i = (int)MathF.Round((x - x0) / MaskCell), j = (int)MathF.Round((z - z0) / MaskCell);
             return i < 0 || j < 0 || i >= mw || j >= mh || full[j * mw + i];
         }
+        // streng: nur bedeckt, wenn auch die Nachbarzellen in z (abgerundet und aufgerundet) bedeckt
+        // sind – mit gerundeter Zelle galt eine Reihe 1 m hinter einem Stückrand schon als bedeckt
+        bool FullStrict(float x, float z)
+        {
+            int i = (int)MathF.Round((x - x0) / MaskCell);
+            int ja = (int)MathF.Floor((z - z0) / MaskCell), jb = (int)MathF.Ceiling((z - z0) / MaskCell);
+            if (i < 0 || ja < 0 || i >= mw || jb >= mh) return true;
+            return full[ja * mw + i] && full[jb * mw + i];
+        }
+        // feines Bedeckungsraster (FineCell, an Abtastung und Restreihen ausgerichtet): eine Zelle gilt
+        // nur als bedeckt, wenn sie ganz in einem gesetzten Stück liegt. Die 2-m-Zellen von full
+        // galten an Stückrändern als bedeckt, auch wenn bis 1 m fehlte – zwischen zwei Stücken
+        // (Rand bei −3158 und −3157,2) blieb so ein Streifen ohne Gelände (schwarz im Editor).
+        float fx0 = x0 + 10, fz0 = z0 + RowSpacing / 2 + 10 - FineSpacing / 2;
+        int fw = Math.Max(1, (int)((x1 - fx0) / FineCell) + 1), fh = Math.Max(1, (int)((z1 - fz0) / FineCell) + 1);
+        int fwords = (fw + 63) >> 6;
+        var fine = FineCoverage ? new ulong[(long)fwords * fh] : [];
+        void MarkFine(float xa, float xb, float zn, float zs)
+        {
+            if (!FineCoverage) return;
+            int i0 = Math.Max(0, (int)MathF.Ceiling((xa - fx0) / FineCell - 1e-3f)), i1 = Math.Min(fw, (int)MathF.Floor((xb - fx0) / FineCell + 1e-3f));
+            int j0 = Math.Max(0, (int)MathF.Ceiling((zn - fz0) / FineCell - 1e-3f)), j1 = Math.Min(fh, (int)MathF.Floor((zs - fz0) / FineCell + 1e-3f));
+            for (int j = j0; j < j1; j++)
+            {
+                long b = (long)j * fwords;
+                for (int i = i0; i < i1;)
+                {
+                    int w = i >> 6, s = i & 63, e = Math.Min(64, s + (i1 - i));
+                    ulong m = e == 64 ? ~0UL << s : ((1UL << e) - 1) & (~0UL << s);
+                    fine[b + w] |= m;
+                    i += e - s;
+                }
+            }
+        }
+        bool FineCovered(int i, int j) => i < 0 || j < 0 || i >= fw || j >= fh || (fine[(long)j * fwords + (i >> 6)] & (1UL << (i & 63))) != 0;
         void Cover(float xa, float xb, float zn, float zs)
         {
-            int i0 = Math.Max(0, (int)((xa - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)((xb - x0) / MaskCell));
+            // nur Zellen, deren Mitte im Stück liegt (abgerundeter Anfang zählte bis 2 m davor als
+            // bedeckt – an den vielen Stückenden um die Anschluss-Prefabs blieben so Lücken)
+            int i0 = Math.Max(0, (int)MathF.Ceiling((xa - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)((xb - x0) / MaskCell));
             int j0 = Math.Max(0, (int)((zn - z0) / MaskCell)), j1 = Math.Min(mh - 1, (int)((zs - z0) / MaskCell));
             for (int j = j0; j <= j1; j++) for (int i = i0; i <= i1; i++) covered[j * mw + i] = true;
         }
@@ -305,9 +363,15 @@ public static class TerrainFill
         // nur noch, was frei UND noch nicht bedeckt ist (z. B. neben Straßen, deren Mittellinie
         // eine Hauptreihe blockiert hat).
         // letzter Durchgang: feine Reihen (FineSpacing) für die Reste neben Straßen (Treppenstufen)
-        foreach (float offset in new[] { 0f, RowSpacing / 2, RowSpacing / 4, 3 * RowSpacing / 4, -1f })
+        // Durchgang −2 (nur mit Zone): Reihen im festen Abstand ZoneSpacing um die Anschluss-Prefabs,
+        // unabhängig von der Bedeckung (die 1-m-Restreihen ließen dort alle paar Meter 1 m frei)
+        foreach (float offset in new[] { 0f, RowSpacing / 2, RowSpacing / 4, 3 * RowSpacing / 4, -2f, -1f })
         {
-        if (offset < 0) { spacing = FineSpacing; half = FineSpacing / 2 + 1; coarse = false; }
+        bool zonePass = offset == -2f;
+        if (zonePass && !useZone) continue;
+        if (offset < 0) coarse = false;
+        if (zonePass) spacing = ZoneSpacing;
+        else if (offset < 0) { spacing = FineSpacing; half = FineSpacing / 2 + 1; }
         for (float z = z0 + RowSpacing / 2 + 10 + Math.Max(offset, 0); z < z1 - RowSpacing / 2 - 10; z += spacing)
         {
             var run = new List<(float X, float L, float R)>();
@@ -316,21 +380,78 @@ public static class TerrainFill
                 if (run.Count >= 2)
                 {
                     // Bedeckung nach den tatsächlich gesetzten Stücken (Breite = Minimum je Stück)
-                    ZonePiece = !coarse && run.Any(p => InZone(p.X, z));
+                    ZonePiece = zonePass;
+                    if (useZone && PadEnds)
+                    {
+                        // Stückenden um eine (Zone) bzw. eine halbe Abtastung verlängern, wo frei: ein
+                        // Stück endet an einer Abtaststelle, das der Nachbarreihe beginnt erst an der
+                        // nächsten – an den vielen Enden um die Anschluss-Prefabs blieben so Lücken
+                        // bis 2,5 m (schwarze Streifen im Editor)
+                        float pad = zonePass ? Sample : Sample / 2;
+                        var (fx, fl, fr) = run[0]; var (lx, ll, lr) = run[^1];
+                        if (Free(fx - pad, z)) run.Insert(0, (fx - pad, fl, fr));
+                        if (Free(lx + pad, z)) run.Add((lx + pad, ll, lr));
+                    }
                     items += Emit(map, grid, run, z, material, ref area, (xa, xb, l, r) =>
                     {
                         Cover(xa, xb, z - l + 2, z + r - 2);
                         Mark2(full, xa, xb, z - l, z + r);
+                        MarkFine(xa, xb, z - l, z + r);
                     });
                 }
                 run.Clear();
             }
             bool any = false;
+            if (offset == -1f && FineCoverage)
+            {
+                // Restreihe nach Bedarf: Abschnitt zwischen zwei Abtaststellen setzen, wenn darin eine
+                // freie Zelle der beiden Zellreihen dieser Reihe (±FineSpacing/2) noch nicht bedeckt
+                // ist und beide Abtaststellen ein Stück tragen (frei, je Seite ≥ 1 m)
+                var xs = new List<(float X, bool Ok, float L, float R)>();
+                for (float x = x0 + 10; x < x1 - 10; x += Sample)
+                {
+                    bool ok = Free(x, z);
+                    float l = ok ? Extent(x, z, -1) : -1, r = ok ? Extent(x, z, +1) : -1;
+                    xs.Add((x, ok && l >= 1 && r >= 1 && !float.IsNaN(grid.HeightAt(x, z)), l, r));
+                }
+                int jr = 2 * (int)MathF.Round((z - fz0 - FineSpacing / 2) / FineSpacing);
+                int per = (int)MathF.Round(Sample / FineCell);
+                for (int k = 0; k + 1 < xs.Count; k++)
+                {
+                    bool need = false;
+                    if (xs[k].Ok && xs[k + 1].Ok)
+                    {
+                        int ib = (int)MathF.Round((xs[k].X - fx0) / FineCell);
+                        for (int j = jr; j <= jr + 1 && !need; j++)
+                            for (int i = ib; i < ib + per && !need; i++)
+                                if (!FineCovered(i, j) && Free(fx0 + (i + 0.5f) * FineCell, fz0 + (j + 0.5f) * FineCell)) need = true;
+                    }
+                    if (!need) { Flush(); continue; }
+                    if (run.Count == 0) run.Add((xs[k].X, xs[k].L, xs[k].R));
+                    run.Add((xs[k + 1].X, xs[k + 1].L, xs[k + 1].R));
+                    any = true;
+                }
+                Flush();
+                if (any) rows++;
+                continue;
+            }
             for (float x = x0 + 10; x < x1 - 10; x += Sample)
             {
-                bool ok = Free(x, z) && (offset == 0 || !Covered(x, z)) && (offset >= 0 || !Full(x, z)) && (!coarse || !InZone(x, z));
-                float l = ok ? Extent(x, z, -1) : -1, r = ok ? Extent(x, z, +1) : -1;
-                if (l < 1 || r < 1 || float.IsNaN(grid.HeightAt(x, z))) { Flush(); continue; }
+                bool ok; float l, r;
+                if (ZoneProbe is { } zp && MathF.Abs(x - zp.X) < 1.3f && MathF.Abs(z - zp.Y) < 1.1f)
+                    Console.Error.WriteLine($"ZP pass {offset} x {x:0.0} z {z:0.0} free {Free(x, z)} zone {InZone(x, z)} zfill {InZoneFill(x, z)} cov {Covered(x, z)} full {Full(x, z)} zext {ZoneExtent(x, z, -1)}/{ZoneExtent(x, z, 1)} ext {Extent(x, z, -1)}/{Extent(x, z, 1)} h {grid.HeightAt(x, z)}");
+                if (zonePass)
+                {
+                    ok = InZoneFill(x, z) && Free(x, z);
+                    l = ok ? ZoneExtent(x, z, -1) : -1; r = ok ? ZoneExtent(x, z, +1) : -1;
+                    if (l < 0.5f || r < 0.5f || float.IsNaN(grid.HeightAt(x, z))) { Flush(); continue; }
+                }
+                else
+                {
+                    ok = Free(x, z) && (offset == 0 || !Covered(x, z)) && (offset >= 0 || !(useZone && PadEnds ? FullStrict(x, z) : Full(x, z))) && (!coarse || !InZone(x, z));
+                    l = ok ? Extent(x, z, -1) : -1; r = ok ? Extent(x, z, +1) : -1;
+                    if (l < 1 || r < 1 || float.IsNaN(grid.HeightAt(x, z))) { Flush(); continue; }
+                }
                 run.Add((x, l, r)); any = true;
             }
             Flush();
@@ -379,9 +500,18 @@ public static class TerrainFill
     /// (Dreieck A 70/A 9, Periode der 6-m-Reihen). 0 = aus (OSM2ETS_FILL_ZONE).
     /// </summary>
     public static float ZoneReach = EnvF("OSM2ETS_FILL_ZONE", 8f);
+    /// <summary>Zonen-Reihen: Abstand und halbe Breite (überlappen je 0,25 m), Überstand über die Zone.</summary>
+    public const float ZoneSpacing = 2f, ZoneHalf = 1.25f, ZoneMargin = 3f;
     /// <summary>Raster der Zonen-Stücke 2 m statt 4 m (aus: OSM2ETS_FILL_ZONE_STEP4=1).</summary>
     public static bool ZoneStep2 = Environment.GetEnvironmentVariable("OSM2ETS_FILL_ZONE_STEP4") != "1";
     private static bool ZonePiece;
+    /// <summary>Stückenden verlängern (nur mit Zone; aus: OSM2ETS_FILL_NOPAD=1).</summary>
+    public static bool PadEnds = Environment.GetEnvironmentVariable("OSM2ETS_FILL_NOPAD") != "1";
+    /// <summary>Restreihen nach feinem Bedeckungsraster statt nach den 2-m-Zellen (aus: OSM2ETS_FILL_FINECOV=0).</summary>
+    public static bool FineCoverage = Environment.GetEnvironmentVariable("OSM2ETS_FILL_FINECOV") != "0";
+    private const float FineCell = 0.5f;
+    private static readonly Vector2? ZoneProbe = Environment.GetEnvironmentVariable("OSM2ETS_ZONEPROBE") is { } zpv
+        ? new Vector2(float.Parse(zpv.Split(',')[0], System.Globalization.CultureInfo.InvariantCulture), float.Parse(zpv.Split(',')[1], System.Globalization.CultureInfo.InvariantCulture)) : null;
     public static int ZonePieces;
     private const float PrefabCell = 8f, PrefabReach = 10f;
     private static readonly HashSet<(int, int)> PrefabCells = [];
