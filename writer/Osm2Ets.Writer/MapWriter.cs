@@ -93,6 +93,8 @@ public static class MapWriter
                         Console.Error.WriteLine($"EXT {plan.ExtRoad.Id} pts " + string.Join(" ", plan.ExtRoad.Points.Select(q => $"({q[0]:0.0},{q[1]:0.0},{q[2]:0.0})")) +
                             " runs " + string.Join(" ", plan.ExtRoad.Runs.Select(x => $"{x.From}-{x.To}{(x.Bridge ? "B" : "")}{(x.Tunnel ? "T" : "")} {x.Role}")));
                 }
+                if (plan.Moved > 0)
+                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): Einmündung {plan.Moved:0} m stromauf (Rampe läuft in OSM getrennt nebenher)");
                 interchangePlans.Add(plan);
             }
         }

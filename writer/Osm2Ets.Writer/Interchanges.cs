@@ -258,6 +258,8 @@ public static class Interchanges
     {
         public required string Kind;        // "exit" | "entry"
         public Kit K = Hw2;
+        /// <summary>So weit wurde die Einmündung stromauf gerückt (siehe MoveMergeUpstream).</summary>
+        public float Moved;
         public required long OsmNode;
         public required RoadEntry MainIn, MainOut, Ramp;
         public required Vector3 Anchor;     // Lage des OSM-Knotens
@@ -961,6 +963,7 @@ public static class Interchanges
         }
         else
         {
+            if (UseParallelMerge) MoveMergeUpstream(p, src);
             float lenNear = Length(src, p.K.Join!, JoinMain, JoinOut), lenFar = p.K.Narrow is null ? 0f : Length(src, p.K.Narrow, NarrowIn, NarrowOut);
             float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(p.MainOut.Points, p.MainOut.Runs, false, len + Slack)) { p.Blocked = true; return false; }
@@ -992,6 +995,74 @@ public static class Interchanges
             }
             return TrimStart(p.MainOut, far + Slack) && TrimEnd(p.Ramp, RampTrim + d) && (d == 0 || TrimEnd(p.MainIn, d));
         }
+    }
+
+    /// <summary>Einmündungen dort, wo die Rampe wirklich an die Hauptfahrbahn kommt
+    /// (aus: OSM2ETS_NO_PARALLEL_MERGE=1).</summary>
+    public static bool UseParallelMerge = Environment.GetEnvironmentVariable("OSM2ETS_NO_PARALLEL_MERGE") != "1";
+    public const float MaxParallelShift = 200f;
+    public static int ParallelMoved;
+
+    /// <summary>
+    /// In OSM laufen Rampe und Hauptfahrbahn oft als getrennte Wege nebeneinander her, solange eine
+    /// durchgezogene Linie sie trennt; der gemeinsame Knoten liegt erst am Ende. Das Prefab braucht
+    /// die Rampe aber in seinem seitlichen Abstand (Rampenknoten, bei ch_4200c rund 15 m). Der
+    /// Einmündungspunkt wird deshalb stromauf an die Stelle gerückt, an der die Rampe diesen Abstand
+    /// hat: Hauptfahrbahn dort geteilt, ihr Rest bis zum OSM-Knoten wird Anfang der Fahrbahn danach.
+    /// Die Rampenpunkte daneben entfernt später DropInside.
+    /// </summary>
+    private static void MoveMergeUpstream(Plan p, PpdSource src)
+    {
+        var ppd = src.Get(p.K.Join!.PpdPath);
+        var loc = Calibrate(ppd, p.K.Join.Unit, Quaternion.Identity);
+        var fwd = loc[JoinOut] - loc[JoinMain]; fwd.Y = 0; fwd = Vector3.Normalize(fwd);
+        var rv = loc[JoinRamp] - loc[JoinMain]; rv.Y = 0;
+        float lat = MathF.Abs(fwd.X * rv.Z - fwd.Z * rv.X), lon = Vector3.Dot(rv, fwd);
+        float total = (float)ArcLength(p.MainIn);
+        float found = -1;
+        for (float D = 2; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
+        {
+            var q = AxisAt(p.MainIn, false, D);
+            if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
+        }
+        float d = found - lon - 2;     // Prefab-Hauptknoten so, dass der Rampenknoten dort liegt
+        if (found < 0 || d < 20) return;
+        // Hauptfahrbahn bei d teilen
+        var pts = p.MainIn.Points; double acc = 0; int k = pts.Count - 1;
+        while (k > 0 && acc + Dist(pts[k - 1], pts[k]) < d) { acc += Dist(pts[k - 1], pts[k]); k--; }
+        if (k < 1) return;
+        float rest = (float)(d - acc), seg = (float)Dist(pts[k - 1], pts[k]);
+        var a = pts[k - 1]; var b = pts[k];
+        double t = seg > 0 ? 1 - rest / seg : 0;
+        var cut = new[] { a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t };
+        var tail = new List<double[]> { cut };
+        tail.AddRange(pts.Skip(k));                       // bis zum OSM-Knoten (= Anfang MainOut)
+        p.MainIn.Points = pts.Take(k).Append(cut).ToList();
+        int last = p.MainIn.Points.Count - 1;
+        p.MainIn.Runs = p.MainIn.Runs.Where(x => x.From < last).Select(x => { x.To = Math.Min(x.To, last); return x; }).ToList();
+        p.MainIn.Runs[^1].To = last;
+        int add = tail.Count - 1;
+        var outPts = tail.Concat(p.MainOut.Points.Skip(1)).ToList();
+        foreach (var x in p.MainOut.Runs) { x.From += add; x.To += add; }
+        p.MainOut.Runs[0].From = 0;
+        p.MainOut.Points = outPts;
+        p.Anchor = MapWriter.ToVector(cut);
+        p.Direction = Direction(p.MainIn, p.MainOut);
+        p.Moved = d;
+        ParallelMoved++;
+    }
+
+    private static float RampDistance(RoadEntry r, Vector2 q)
+    {
+        float best = float.MaxValue;
+        for (int i = 0; i < r.Points.Count - 1; i++)
+        {
+            var a = P(r.Points[i]); var ab = P(r.Points[i + 1]) - a;
+            float l2 = ab.LengthSquared();
+            float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1) : 0;
+            best = MathF.Min(best, Vector2.Distance(a + ab * t, q));
+        }
+        return best;
     }
 
     /// <summary>
