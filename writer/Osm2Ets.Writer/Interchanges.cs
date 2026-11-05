@@ -235,6 +235,14 @@ public static class Interchanges
         PendingDrops.Clear();
         // nicht leeren: ein zweiter Durchlauf sieht schon geglättete Spurzahlen
         foreach (var r in roads) if (IsRamp(r) && ShortOneLaneStart(r)) OneLaneStart.Add(r.Id);
+        // zweispurig mit höchstens einem 3-spurigen Lauf am Ende (vor der Glättung erfasst)
+        foreach (var r in roads)
+        {
+            if (!IsRamp(r) || !r.Runs.Skip(1).Any()) { if (IsRamp(r) && r.Runs.All(x => x.Lanes == 2)) { Link2AtStart.Add(r.Id); Link2AtEnd.Add(r.Id); } continue; }
+            bool core(int skip) => r.Runs.Where((x, i) => i != skip).All(x => x.Lanes is 2 || (OneLaneStart.Contains(r.Id) && x == r.Runs[0]));
+            if (core(AuxRun(r, false, 2))) Link2AtEnd.Add(r.Id);
+            if (core(AuxRun(r, true, 2))) Link2AtStart.Add(r.Id);
+        }
         if (UseLinkJoin) PendingDrops.AddRange(SplitLaneDrops(roads));
         return PendingDrops.Count;
     }
@@ -385,6 +393,14 @@ public static class Interchanges
         PendingDrops.Clear();
         // nicht leeren: ein zweiter Durchlauf sieht schon geglättete Spurzahlen
         foreach (var r in roads) if (IsRamp(r) && ShortOneLaneStart(r)) OneLaneStart.Add(r.Id);
+        // zweispurig mit höchstens einem 3-spurigen Lauf am Ende (vor der Glättung erfasst)
+        foreach (var r in roads)
+        {
+            if (!IsRamp(r) || !r.Runs.Skip(1).Any()) { if (IsRamp(r) && r.Runs.All(x => x.Lanes == 2)) { Link2AtStart.Add(r.Id); Link2AtEnd.Add(r.Id); } continue; }
+            bool core(int skip) => r.Runs.Where((x, i) => i != skip).All(x => x.Lanes is 2 || (OneLaneStart.Contains(r.Id) && x == r.Runs[0]));
+            if (core(AuxRun(r, false, 2))) Link2AtEnd.Add(r.Id);
+            if (core(AuxRun(r, true, 2))) Link2AtStart.Add(r.Id);
+        }
         var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
         foreach (var r in roads)
             foreach (var atStart in new[] { true, false })
@@ -426,6 +442,23 @@ public static class Interchanges
                 plans.Add(pl); handled.Add(node);
                 NarrowAtNode(out2[0].R, true, 2);
                 TwoLane.Add(in2[0].R); TwoLane.Add(out2[0].R); OneLane.Add(in1[0].R);
+            }
+        if (UseLinkJoin)
+            foreach (var (node, list) in ends)
+            {
+                // zweispurige Rampe weitet sich auf 3 Spuren und teilt sich in 2 + 1 (A 9 AS 40b/40a)
+                if (list.Count != 3 || handled.Contains(node)) continue;
+                if (!list.All(e => IsRamp(e.R))) continue;
+                var in2 = list.Where(e => !e.AtStart && Link2AtEnd.Contains(e.R.Id)).ToList();
+                var out2 = list.Where(e => e.AtStart && Link2AtStart.Contains(e.R.Id)).ToList();
+                var r1 = list.Where(e => e.AtStart && !Link2AtStart.Contains(e.R.Id) && e.R.Runs.All(x => x.Lanes is null or 1)).ToList();
+                if (in2.Count != 1 || out2.Count != 1 || r1.Count != 1) continue;
+                var pl = MakePlan(node, "exit", Hw2, in2[0].R, out2[0].R, r1[0].R, warnings);
+                if (pl is null) continue;
+                plans.Add(pl); handled.Add(node);
+                foreach (var x in in2[0].R.Runs) x.Lanes = 2;
+                NarrowAtNode(out2[0].R, true, 2);
+                TwoLane.Add(in2[0].R); TwoLane.Add(out2[0].R); OneLane.Add(r1[0].R);
             }
         foreach (var (node, list) in ends)
         {
@@ -536,6 +569,9 @@ public static class Interchanges
 
     /// <summary>Rampen mit kurzem einspurigem Anfang, vor der Spurglättung erfasst.</summary>
     private static readonly HashSet<string> OneLaneStart = [];
+
+    /// <summary>Zweispurige Rampen (am Ende bzw. Anfang darf eine Zusatzspur liegen), vor der Glättung erfasst.</summary>
+    private static readonly HashSet<string> Link2AtEnd = [], Link2AtStart = [];
 
     /// <summary>Höchstlänge eines einspurigen Anfangs, nach dem eine Ausfahrt zweispurig wird (m).</summary>
     public const float MaxOneLaneStart = 100f;
