@@ -168,6 +168,15 @@ public static class MapWriter
             }
         }
 
+        // Nebenstraßen von Autobahnen, Rampen und Anschluss-Prefabs wegschieben, wo sie sich überdecken
+        {
+            var pfObs = new List<(Vector3[] Nodes, float HalfWidth)>();
+            foreach (var pl in placed)
+                foreach (var pf in new[] { pl.First, pl.Last }.Distinct())
+                    pfObs.Add((pf.Nodes.Select(n => n.Position).ToArray(), 8f));
+            MinorPush.Apply(valid, run => { var st = mapping.Resolve(run); return (st.Width / 2, st.ModelCenter); }, pfObs, warnings);
+        }
+
         // Abzweige ohne Prefab bis an den Fahrbahnrand der anderen Straße zurücknehmen
         Overlaps.CenterOf = run => mapping.Resolve(run).ModelCenter;
         int branchesTrimmed = Overlaps.TrimBranches(valid, pairs, run => mapping.Resolve(run).Width / 2, warnings);
