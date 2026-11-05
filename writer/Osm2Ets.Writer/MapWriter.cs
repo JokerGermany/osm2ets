@@ -59,6 +59,7 @@ public static class MapWriter
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
+        int laneDrops = prefabs is not null ? Interchanges.PrepareLaneDrops(valid) : 0;
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
         // Brückenläufe vor den Prefabs: Unterführungen auch unter Prefabs, die auf einer Brücke liegen
         var bridgeShots = Underpasses.Snapshot(valid);
@@ -81,17 +82,19 @@ public static class MapWriter
                 plan.MainIn.End = new EndInfo { Kind = "prefab" };
                 plan.MainOut.Start = new EndInfo { Kind = "prefab" };
                 if (plan.Kind == "exit") plan.Ramp.Start = new EndInfo { Kind = "prefab" };
-                else plan.Ramp.End = new EndInfo { Kind = "prefab" };
+                else if (plan.Kind == "entry") plan.Ramp.End = new EndInfo { Kind = "prefab" };
                 // Bauwerk unter dem äußeren Prefab: Straße mit Zusatzspur dazwischen
                 if (plan.ExtRoad is not null)
                 {
                     valid.Add(plan.ExtRoad);
-                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): Bauwerk im Prefab-Bereich – {plan.Ext:0} m Zusatzspur-Straße zwischen den Prefabs"
+                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): {(plan.ExtForCurve ? "Kurve" : "Bauwerk")} im Prefab-Bereich – {plan.Ext:0} m Zusatzspur-Straße zwischen den Prefabs"
                                  + (plan.Shift > 0 ? $", {(plan.Kind == "exit" ? "Teilung" : "Zusammenführung")} {plan.Shift:0} m vom Bauwerk weggerückt" : ""));
                     if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
                         Console.Error.WriteLine($"EXT {plan.ExtRoad.Id} pts " + string.Join(" ", plan.ExtRoad.Points.Select(q => $"({q[0]:0.0},{q[1]:0.0},{q[2]:0.0})")) +
                             " runs " + string.Join(" ", plan.ExtRoad.Runs.Select(x => $"{x.From}-{x.To}{(x.Bridge ? "B" : "")}{(x.Tunnel ? "T" : "")} {x.Role}")));
                 }
+                if (plan.Moved > 0)
+                    warnings.Add($"Info: Knoten {plan.OsmNode} ({plan.Kind}): Einmündung {plan.Moved:0} m stromauf (Rampe läuft in OSM getrennt nebenher)");
                 interchangePlans.Add(plan);
             }
         }
@@ -233,7 +236,7 @@ public static class MapWriter
             }
             // nur die Seite zum Zwickel: Hauptfahrbahn rechts, Rampe links (Rechtsverkehr)
             Clear(pl.MainIn, false, false); Clear(pl.MainOut, true, false);
-            Clear(pl.Ramp, pl.Kind == "exit", true);
+            if (pl.Kind != "drop") Clear(pl.Ramp, pl.Kind == "exit", true);
         }
         if (separated > 0) warnings.Add($"Info: {separated} Richtungsfahrbahnen seitlich verschoben (OSM-Abstand kleiner als Vorlagenbreite)");
         // Prefab-Flächen als Hindernisse: Strecken von jedem Knoten zur Prefab-Mitte
@@ -351,7 +354,7 @@ public static class MapWriter
                 pl.First.Attach(pl.FirstIn, lastItem[plan.MainIn].ForwardNode);
                 pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
                 if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
-                else pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
+                else if (plan.Kind == "entry") pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
                 if (plan.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
                 {
                     pl.ExtFrom.Attach(pl.ExtFromNode, firstItem[plan.ExtRoad].Node);
