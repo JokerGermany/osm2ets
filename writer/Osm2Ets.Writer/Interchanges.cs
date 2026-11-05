@@ -56,15 +56,14 @@ public static class Interchanges
 
     /// <summary>
     /// 2 Spuren, Gabelung in zwei zweispurige Äste (Autobahnende an zwei zweispurigen Rampen,
-    /// A 70 am Dreieck Bayreuth/Kulmbach): Aufweitung 2 → 3 (ch_4202r), 3 → 4 (mod_ger_38) und
-    /// Teilung 4 → 2 + 2 (ch_42009 „ger hw3 split mirrored tmpl“, Grundspiel). Variante von
-    /// ch_42009: .pmd lag nicht vor – angenommen "default" (OSM2ETS_SPLIT22_VARIANT).
-    /// Nur ohne Bauwerk im Prefab-Bereich (keine Zusatzspur-Straße).
+    /// A 70 am Dreieck Bayreuth/Kulmbach): Aufweitung 2 → 3 (ch_4202r) und Teilung 3 → 2 + 2
+    /// (ch_42007 „ger hw2 exit double“, Grundspiel; Varianten laut .pmd: default, no_lines,
+    /// lines_ch). Die rechte Spur führt in beide Äste.
     /// </summary>
-    public static readonly Kit Split22 = new("hw2 split 2+2", 2, 2, Hw3Double.Widen,
-        new("ch_42009", "/prefab2/fork_temp/ger/ger_hw3_split_mirrored_tmpl_v02.ppd",
+    public static readonly Kit Split22 = new("hw2 double", 2, 2, Widen,
+        new("ch_42007", "/prefab2/fork_temp/ger/ger_hw2_exit_double_v02.ppd",
             Environment.GetEnvironmentVariable("OSM2ETS_SPLIT22_VARIANT") ?? "default", "ger_1"),
-        null, null, "ext3") { Widen0 = Widen };
+        null, null, "ext");
 
     /// <summary>Gabelung in zwei zweispurige Äste (aus: OSM2ETS_NO_SPLIT22=1).</summary>
     public static bool UseSplit22 = Environment.GetEnvironmentVariable("OSM2ETS_NO_SPLIT22") != "1";
