@@ -777,6 +777,14 @@ public static class Interchanges
     /// Lage der zweispurigen Prefab-Achse im Abstand dist vom Knoten: Straßenpunkt, ohne den
     /// Versatz des Straßenmodells, also auf der OSM-Linie.
     /// </summary>
+    /// <summary>
+    /// Prefab-Achse auf der geschriebenen Straßenlinie (OSM-Linie + Modellversatz des Laufs) statt
+    /// auf der OSM-Linie. Sonst lagen die Prefab-Enden bis ~2 m näher an der Gegenfahrbahn als die
+    /// anschließenden Straßen, und Prefabs beider Richtungen überschnitten sich (A 9 bei z −450).
+    /// Aus: OSM2ETS_AXIS_OSM=1.
+    /// </summary>
+    public static bool AxisOnModelLine = Environment.GetEnvironmentVariable("OSM2ETS_AXIS_OSM") != "1";
+
     private static Vector3 AxisAt(RoadEntry r, bool fromStart, float dist)
     {
         // OSM-Lage vor dem Mittig-Setzen (sonst steckt der Modellversatz schon in den Punkten)
@@ -802,7 +810,7 @@ public static class Interchanges
                 // Nur auf die OSM-Linie zurück. Die durchgehenden Spuren lägen bei lanes=3 (Ver-
                 // zögerungsspur) eigentlich 2,25 m weiter innen – mit den 4,5 m breiten ETS2-
                 // Spuren überschnitten sich dann aber die Gegenfahrbahnen (A 70: 5 m statt 9 m).
-                float lat = raw ? 0 : -OffsetOf(run);
+                float lat = raw ? (AxisOnModelLine ? OffsetOf(run) : 0) : -OffsetOf(run);
                 if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
                     Console.Error.WriteLine($"AXIS {r.Id} seg {seg} lanes {run.Lanes} off {OffsetOf(run)} q {q} lat {lat}");
                 return q + right * lat;

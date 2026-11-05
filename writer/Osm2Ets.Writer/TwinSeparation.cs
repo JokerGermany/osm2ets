@@ -18,9 +18,12 @@ public static class TwinSeparation
     public const float Taper = 200f;      // Ein-/Auslauflänge der Verschiebung (m)
 
     public const float PrefabReach = 150f;  // Prefabs einer Anschlussstelle reichen so weit vom Knoten
-    public const float PrefabExtra = 0f;    // zusätzliche Spur im Prefab (m)
+    public static float PrefabExtra = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_TWIN_PREFAB_EXTRA"), System.Globalization.CultureInfo.InvariantCulture, out var pe) ? pe : 0f;    // zusätzlicher Abstand an Anschlussstellen (m)
 
     public static int Moved;
+
+    /// <summary>Verschiebung auch in LaneCentering.Original übernehmen (aus: OSM2ETS_TWIN_KEEP_ORIGINAL=1).</summary>
+    public static bool UpdateOriginal = Environment.GetEnvironmentVariable("OSM2ETS_TWIN_KEEP_ORIGINAL") != "1";
     public static float MaxShift;
 
     private static bool IsTwinCandidate(RoadEntry r) =>
@@ -193,6 +196,19 @@ public static class TwinSeparation
                 }
             }
         }
+        // Dieselbe Verschiebung in die gespeicherte Lage vor dem Mittig-Setzen übernehmen: die
+        // Anschluss-Prefabs richten sich nach ihr (Interchanges.AxisAt) und lägen sonst wieder so
+        // eng wie in OSM – ihre Enden überschnitten dann die Gegenfahrbahn.
+        if (UpdateOriginal)
+            foreach (var r in roads)
+            {
+                if (!LaneCentering.Original.TryGetValue(r, out var o) || o.Points.Count != r.Points.Count) continue;
+                for (int i = 0; i < r.Points.Count; i++)
+                {
+                    var dv = P(r.Points[i]) - orig[r][i];
+                    o.Points[i][0] += dv.X; o.Points[i][2] += dv.Y;
+                }
+            }
         warnings.Add($"Info: Richtungsfahrbahnen auseinandergerückt: {Moved} Straßen, höchstens {MaxShift:0.0} m");
     }
 
