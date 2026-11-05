@@ -35,6 +35,7 @@ var tests = new List<(string Name, Action Body)>
     ("Anschlussstelle: kurze Endstücke der Zusatzspur-Straße gehören zur Brücke", ExtRoadAbsorbsStubs),
     ("Anschlussstelle: Autobahnbeginn aus zwei Anschlussästen wird Einfahrt", MotorwayStartFromTwoLinks),
     ("Anschlussstelle: zweispurige Ausfahrt von 3 Spuren, zweispurige Rampen", Hw3DoubleExitAndTwoLaneLinks),
+    ("Anschlussstelle: Autobahnende an zwei zweispurigen Ästen wird Gabelung 2+2", Split22AtTwoTwoLaneLinks),
 };
 
 int failed = 0;
@@ -871,9 +872,26 @@ static void Hw3DoubleExitAndTwoLaneLinks()
     var plans = Interchanges.Find([mi, mo, ra, r1], []);
     Check(plans.Count == 1 && plans[0].Kind == "exit" && plans[0].K == Interchanges.Hw3Double, "keine zweispurige Ausfahrt erkannt");
     Check(mi.Runs[1].Lanes == 3, "Verzögerungsstreifen nicht auf 3 Spuren gesetzt");
-    // Rampe hängt an einspuriger Rampe: bleibt einspurig
-    Check(Interchanges.NormalizeLinkLanes([mi, mo, ra, r1]) == 0 && ra.Runs[0].Role == "link", "Rampe trotz einspurigem Anschluss zweispurig");
-    // ohne die einspurige Nachbarin: zweispurig
-    ra.End = new EndInfo { Kind = "prefab" };
-    Check(Interchanges.NormalizeLinkLanes([mi, mo, ra]) == 1 && ra.Runs[0].Role == Interchanges.TwoLaneLinkRole, "Rampe nicht zweispurig");
+    // Rampe am zweispurigen Rampenknoten: zweispurig, auch wenn am anderen Ende eine einspurige hängt
+    Check(Interchanges.NormalizeLinkLanes([mi, mo, ra, r1]) == 1 && ra.Runs[0].Role == Interchanges.TwoLaneLinkRole, "Rampe am zweispurigen Prefab-Knoten nicht zweispurig");
+    // ohne Prefab: zweispurige Rampe neben einspuriger bleibt einspurig
+    RunEntry R2(int a, int b, int lanes) => new() { From = a, To = b, Highway = "motorway_link", Role = "link", Oneway = true, Lanes = lanes };
+    var x2 = MakeRoad("x2", [[0, 0, 500], [300, 0, 500]], R2(0, 1, 2)); x2.End = N(9);
+    var x1 = MakeRoad("x1", [[300, 0, 500], [500, 0, 500]], R2(0, 1, 1)); x1.Start = N(9);
+    Interchanges.Find([x2, x1], []);
+    Check(Interchanges.NormalizeLinkLanes([x2, x1]) == 0 && x2.Runs[0].Role == "link", "Rampe trotz einspurigem Anschluss zweispurig");
+}
+
+static void Split22AtTwoTwoLaneLinks()
+{
+    RunEntry R(int a, int b, string hw, int lanes) => new() { From = a, To = b, Highway = hw, Role = hw == "motorway" ? "core" : "link", Oneway = true, Lanes = lanes };
+    EndInfo N(long id) => new() { Kind = "node", OsmNode = id };
+    // Autobahnende: 2 Spuren (vor dem Knoten 3), dann zwei zweispurige Äste, einer geradeaus, einer rechts
+    var mi = MakeRoad("mi", [[-600, 0, 0], [-150, 0, 0], [0, 0, 0]], R(0, 1, "motorway", 2), R(1, 2, "motorway", 3)); mi.End = N(1);
+    var st = MakeRoad("st", [[0, 0, 0], [500, 0, 0]], R(0, 1, "motorway_link", 2)); st.Start = N(1);
+    var ra = MakeRoad("ra", [[0, 0, 0], [100, 0, 25], [400, 0, 120]], R(0, 2, "motorway_link", 2)); ra.Start = N(1);
+    var plans = Interchanges.Find([mi, st, ra], []);
+    Check(plans.Count == 1 && plans[0].K == Interchanges.Split22 && plans[0].MainOut == st && plans[0].Ramp == ra,
+          $"keine Gabelung 2+2 erkannt ({plans.Count}, {(plans.Count > 0 ? plans[0].K.Name : "-")})");
+    Check(mi.Runs[1].Lanes == 2, "Zusatzspur vor der Gabelung nicht auf 2 Spuren gesetzt");
 }

@@ -153,8 +153,15 @@ public static class BridgeBodies
     public const float MaxExtend = 15f;
     /// <summary>So viel Straße ohne Bauwerk bleibt vor bzw. hinter einer verlängerten Brücke mindestens (m).</summary>
     public const float MinApproach = 8f;
+    /// <summary>Wie <see cref="MinApproach"/>, wenn die Zufahrt am Anfang bzw. Ende der Straße liegt
+    /// (Wegbrücke über die A-70-Rampen: Zufahrt 10,7 m bis zur Kreuzung, die verbreiterte Rampe lag
+    /// sonst unter dem Damm). Aus: OSM2ETS_BRIDGE_MINAPPROACH_END=8.</summary>
+    public static readonly float MinApproachAtEnd = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_BRIDGE_MINAPPROACH_END"),
+        System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var mae) ? mae : 2f;
     /// <summary>Verlängerung schräg unterquerter Brücken (aus: OSM2ETS_NO_BRIDGE_EXTEND).</summary>
     public static bool UseExtend = Environment.GetEnvironmentVariable("OSM2ETS_NO_BRIDGE_EXTEND") is null;
+    /// <summary>Auch untere Straßen knapp jenseits der Brückenenden zählen (aus: OSM2ETS_BRIDGE_EXTEND_INSIDE=1).</summary>
+    public static bool UseExtendBeyond = Environment.GetEnvironmentVariable("OSM2ETS_BRIDGE_EXTEND_INSIDE") != "1";
 
     /// <summary>
     /// Die Widerlager der Körper-Modelle stehen immer quer zur Brücke (ein Railing folgt der Straße und
@@ -168,6 +175,7 @@ public static class BridgeBodies
                                                    List<(RoadEntry R, RunEntry Run, Vector3 A, Vector3 B)> segs)
     {
         float lo = float.MaxValue, hi = float.MinValue, acc = 0;
+        int k0 = run.From, k1 = run.To - 1;
         for (int k = run.From; k < run.To; k++)
         {
             var p = MapWriter.ToVector(r.Points[k]); var q = MapWriter.ToVector(r.Points[k + 1]);
@@ -175,12 +183,21 @@ public static class BridgeBodies
             float sl = Vector2.Distance(p2, q2);
             if (sl < 1e-3f) continue;
             var d1 = (q2 - p2) / sl;
+            // erstes/letztes Stück: auch untere Straßen knapp VOR bzw. HINTER dem Brückenende (deren
+            // Linie kreuzt die Zufahrt, ihr Modell reicht aber unter die Brücke) – sonst steht die
+            // Zufahrt samt Damm auf der Fahrbahn (verbreiterte Rampe unter der Wegbrücke, A 70)
+            float tMin = UseExtendBeyond && k == k0 ? -MaxExtend / sl : 0f;
+            float tMax = UseExtendBeyond && k == k1 ? 1 + MaxExtend / sl : 1f;
             foreach (var (o, orun, a, b) in segs)
             {
                 if (ReferenceEquals(o, r) || orun.Tunnel) continue;
                 var a2 = new Vector2(a.X, a.Z); var b2 = new Vector2(b.X, b.Z);
                 if ((b2 - a2).LengthSquared() < 1e-6f) continue;
-                if (!Cross(p2, q2, a2, b2, out float t, out float u)) continue;
+                var ab2 = b2 - a2;
+                if (MathF.Abs(d1.X * ab2.Y - d1.Y * ab2.X) < 1e-4f * ab2.Length()) continue;   // parallel
+                Cross(p2, q2, a2, b2, out float t, out float u);
+                if (u < 0 || u > 1 || t < tMin || t > tMax || float.IsNaN(t)) continue;
+                if ((t < 0 || t > 1) && orun.Bridge) continue;   // jenseits des Endes: andere Brücke zählt nicht
                 float yb = p.Y + (q.Y - p.Y) * t, yl = a.Y + (b.Y - a.Y) * u;
                 if (yb - yl < Underpasses.MinClear) continue;
                 var d2 = Vector2.Normalize(b2 - a2);
@@ -208,7 +225,8 @@ public static class BridgeBodies
         if (prev is null || prev.Bridge || prev.Tunnel) return 0;
         float avail = 0;
         for (int k = prev.From; k < prev.To; k++) avail += Dist2(r.Points[k], r.Points[k + 1]);
-        e = MathF.Min(e, avail - MinApproach);
+        // am Straßenanfang (Knoten) genügt ein kurzes Stück – die Zufahrt endet dort ohnehin
+        e = MathF.Min(e, avail - (prev.From == 0 ? MinApproachAtEnd : MinApproach));
         if (e < 0.3f) return 0;
         // Abschnitt j..j+1, in dem die neue Grenze liegt (back = Abstand vor Punkt j+1)
         float acc = 0;
@@ -230,7 +248,7 @@ public static class BridgeBodies
         if (next is null || next.Bridge || next.Tunnel) return 0;
         float avail = 0;
         for (int k = next.From; k < next.To; k++) avail += Dist2(r.Points[k], r.Points[k + 1]);
-        e = MathF.Min(e, avail - MinApproach);
+        e = MathF.Min(e, avail - (next.To == r.Points.Count - 1 ? MinApproachAtEnd : MinApproach));
         if (e < 0.3f) return 0;
         // Abschnitt j..j+1, in dem die neue Grenze liegt (fwd = Abstand hinter Punkt j)
         float acc = 0;

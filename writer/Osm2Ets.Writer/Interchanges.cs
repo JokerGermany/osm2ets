@@ -32,7 +32,11 @@ public static class Interchanges
     /// <summary>Prefab-Satz einer Anschlussstelle: Aufweitung + Teilung (Ausfahrt) bzw.
     /// Zusammenführung + Spurende (Einfahrt), Spurzahlen von Hauptfahrbahn und Rampe.</summary>
     public sealed record Kit(string Name, int MainLanes, int RampLanes, PrefabDef Widen, PrefabDef Split,
-                             PrefabDef? Join, PrefabDef? Narrow, string ExtRole);
+                             PrefabDef? Join, PrefabDef? Narrow, string ExtRole)
+    {
+        /// <summary>Weitere Aufweitung VOR <see cref="Widen"/> (Ausfahrt mit drei Prefabs).</summary>
+        public PrefabDef? Widen0 { get; init; }
+    }
 
     /// <summary>2 Spuren, einspurige Rampe (Grundspiel-Vorlagen).</summary>
     public static readonly Kit Hw2 = new("hw2", 2, 1, Widen, Split, Join, Narrow, "ext");
@@ -50,11 +54,26 @@ public static class Interchanges
             Environment.GetEnvironmentVariable("OSM2ETS_HW3DOUBLE_VARIANT") ?? "default", "ger_1"),
         null, null, "ext3");
 
+    /// <summary>
+    /// 2 Spuren, Gabelung in zwei zweispurige Äste (Autobahnende an zwei zweispurigen Rampen,
+    /// A 70 am Dreieck Bayreuth/Kulmbach): Aufweitung 2 → 3 (ch_4202r), 3 → 4 (mod_ger_38) und
+    /// Teilung 4 → 2 + 2 (ch_42009 „ger hw3 split mirrored tmpl“, Grundspiel). Variante von
+    /// ch_42009: .pmd lag nicht vor – angenommen "default" (OSM2ETS_SPLIT22_VARIANT).
+    /// Nur ohne Bauwerk im Prefab-Bereich (keine Zusatzspur-Straße).
+    /// </summary>
+    public static readonly Kit Split22 = new("hw2 split 2+2", 2, 2, Hw3Double.Widen,
+        new("ch_42009", "/prefab2/fork_temp/ger/ger_hw3_split_mirrored_tmpl_v02.ppd",
+            Environment.GetEnvironmentVariable("OSM2ETS_SPLIT22_VARIANT") ?? "default", "ger_1"),
+        null, null, "ext3") { Widen0 = Widen };
+
+    /// <summary>Gabelung in zwei zweispurige Äste (aus: OSM2ETS_NO_SPLIT22=1).</summary>
+    public static bool UseSplit22 = Environment.GetEnvironmentVariable("OSM2ETS_NO_SPLIT22") != "1";
+
     /// <summary>Seitlicher Abstand zusätzlicher Spurpunkte unter dem Seitenstreifen (0 = keine).</summary>
     public static float ShoulderOf(TruckLib.Token model)
     {
-        foreach (var (k, off) in new[] { (Hw3Double, PrefabFootprint.ShoulderOffset3), (Hw2, PrefabFootprint.ShoulderOffset) })
-            foreach (var d in new[] { k.Widen, k.Split, k.Join, k.Narrow })
+        foreach (var (k, off) in new[] { (Hw3Double, PrefabFootprint.ShoulderOffset3), (Split22, PrefabFootprint.ShoulderOffset), (Hw2, PrefabFootprint.ShoulderOffset) })
+            foreach (var d in new[] { k.Widen0, k.Widen, k.Split, k.Join, k.Narrow })
                 if (d is not null && (TruckLib.Token)d.Unit == model) return off;
         return 0f;
     }
@@ -146,7 +165,7 @@ public static class Interchanges
 
     public static List<Plan> Find(List<RoadEntry> roads, List<string> warnings)
     {
-        OneLane.Clear();
+        OneLane.Clear(); TwoLane.Clear();
         var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
         foreach (var r in roads)
             foreach (var atStart in new[] { true, false })
@@ -189,6 +208,10 @@ public static class Interchanges
                 }
             }
             if (mains.Count != 2 || ramps.Count != 1) continue;
+            // Ausfahrt, bei der Rampe und weiterführender Ast zweispurige Rampen sind: Gabelung 2 + 2
+            if (UseSplit22 && kit == Hw2 && ramps[0].AtStart && ramps[0].R.Runs.All(x => x.Lanes == 2)
+                && mains.FirstOrDefault(e => e.AtStart).R is { } mo && IsRamp(mo) && mo.Runs.All(x => x.Lanes == 2))
+                kit = Split22;
             if (kit.Join is null && !ramps[0].AtStart) continue;
             var mainIn = mains.FirstOrDefault(e => !e.AtStart).R;
             var mainOut = mains.FirstOrDefault(e => e.AtStart).R;
@@ -209,6 +232,12 @@ public static class Interchanges
             });
             foreach (var m in mains) NarrowAtNode(m.R, m.AtStart, kit.MainLanes);
             if (kit.RampLanes == 1) OneLane.Add(ramp.R);
+            else
+            {
+                // zweispuriger Rampenknoten (bzw. Hauptausgang als Rampe): Rampe muss zweispurig sein
+                TwoLane.Add(ramp.R);
+                if (IsRamp(mainOut)) TwoLane.Add(mainOut);
+            }
         }
         return plans;
     }
@@ -272,6 +301,8 @@ public static class Interchanges
     public const string TwoLaneLinkRole = "link2";
     /// <summary>Rampen an Prefabs mit einspurigem Rampenknoten.</summary>
     public static readonly HashSet<RoadEntry> OneLane = [];
+    /// <summary>Rampen an zweispurigen Prefab-Knoten: zweispurig auch neben einspurigen Nachbarn.</summary>
+    public static readonly HashSet<RoadEntry> TwoLane = [];
 
     public static int NormalizeLinkLanes(List<RoadEntry> roads)
     {
@@ -292,6 +323,7 @@ public static class Interchanges
                 if (l.Any(r => !two.Contains(r)))
                     foreach (var r in l) changed |= two.Remove(r);
         }
+        two.UnionWith(TwoLane.Where(r => links.Contains(r) && r.Runs.All(x => x.Lanes >= 2)));
         two.ExceptWith(OneLane);
         foreach (var r in two)
             foreach (var x in r.Runs) x.Role = TwoLaneLinkRole;
@@ -704,6 +736,7 @@ public static class Interchanges
         if (p.Kind == "exit")
         {
             float lenNear = Length(src, p.K.Split, SplitIn, SplitMain), lenFar = Length(src, p.K.Widen, WidenIn, WidenOut);
+            if (p.K.Widen0 is not null) lenFar += Length(src, p.K.Widen0, WidenIn, WidenOut);
             float len = lenNear + lenFar;
             if (SkipAtStructures && HasStructure(Enumerable.Reverse(p.MainIn.Points).ToList(), p.MainIn.Runs, true, len + Slack)) { p.Blocked = true; return false; }
             // Bauwerke stromauf vom Knoten (dort liegen die Prefabs) und stromab (Platz zum Verschieben)
@@ -713,6 +746,8 @@ public static class Interchanges
                                (float)ArcLength(p.Ramp), out float ext);
             p.Shift = d;
             p.Ext = ext;
+            // drei Prefabs: ohne Zusatzspur-Straße und Verschiebung (sonst nicht umsetzbar)
+            if (p.K.Widen0 is not null && (d > 0 || ext > 0)) return false;
             float far = len + p.Ext - d;      // so weit reichen die Prefabs stromauf
             if (ArcLength(p.MainIn) < far + Slack + 20 || ArcLength(p.Ramp) < RampTrim + d + 20) return false;
             // Teilung stromab gerückt: ihr Hauptausgang liegt d hinter dem Knoten auf der OSM-Linie
@@ -989,6 +1024,13 @@ public static class Interchanges
             var dSplit = Flat(InwardDirections[split][SplitIn], p.Direction);
             var widen = Place(map, src, p.K.Widen, WidenIn, WidenOut, dSplit, WidenOut, split.Nodes[SplitIn].Position, p.Grade);
             widen.Attach(WidenOut, split, SplitIn);
+            if (p.K.Widen0 is { } w0def)
+            {
+                var dW = Flat(InwardDirections[widen][WidenIn], p.Direction);
+                var widen0 = Place(map, src, w0def, WidenIn, WidenOut, dW, WidenOut, widen.Nodes[WidenIn].Position, p.Grade);
+                widen0.Attach(WidenOut, widen, WidenIn);
+                return new Placed(p, widen0, WidenIn, split, SplitMain, split, SplitRamp);
+            }
             return new Placed(p, widen, WidenIn, split, SplitMain, split, SplitRamp);
         }
         else
