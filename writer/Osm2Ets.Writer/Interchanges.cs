@@ -19,6 +19,10 @@ public static class Interchanges
     public sealed record PrefabDef(string Unit, string PpdPath, string Variant, string Look);
 
     public static readonly PrefabDef Widen = new("ch_4202r", "/prefab2/fork_temp/ger/ger_hw2-hw2_exit_mirrored_tmpl_v02.ppd", "default", "ger_1");
+    /// <summary>Spurende 4 → 3 nach der Einfahrt 3 + 1 → 4 (ch_4202s „ger hw3-hw3 exit tmpl“,
+    /// Grundspiel, prefab.mod_switzerland_reskin.sii; aus: OSM2ETS_NO_HW3NARROW=1).</summary>
+    public static bool UseHw3Narrow = Environment.GetEnvironmentVariable("OSM2ETS_NO_HW3NARROW") != "1";
+
     public static readonly PrefabDef Split = new("ch_4202p", "/prefab2/fork_temp/ger/ger_hw2_exit_joint_mirrored_tmpl_v02.ppd", "default", "ger_1");
     public static readonly PrefabDef Join = new("ch_4200c", "/prefab2/fork_temp/ger/ger_hw2_exit_joint_tmpl_v02.ppd", "default", "ger_1");
     public static readonly PrefabDef Narrow = new("ch_4202q", "/prefab2/fork_temp/ger/ger_hw2-hw2_exit_tmpl_v02.ppd", "default", "ger_1");
@@ -88,7 +92,8 @@ public static class Interchanges
     /// Straße (ext3, ger18) so lang wie in OSM und endet am Wechsel auf ger16 ohne Übergang.
     /// </summary>
     public static readonly Kit Hw3Join = new("hw3 join", 3, 1, null, null,
-        new("ch_4202j", "/prefab2/fork_temp/ger/ger_hw3_exit_joint_tmpl_v02.ppd", "default", "ger_1"), null, "ext3");
+        new("ch_4202j", "/prefab2/fork_temp/ger/ger_hw3_exit_joint_tmpl_v02.ppd", "default", "ger_1"),
+        UseHw3Narrow ? new("ch_4202s", "/prefab2/fork_temp/ger/ger_hw3-hw3_exit_tmpl_v02.ppd", "default", "ger_1") : null, "ext3");
 
     /// <summary>Einfahrt 3 + 1 → 4 (aus: OSM2ETS_NO_HW3JOIN=1).</summary>
     public static bool UseHw3Join = Environment.GetEnvironmentVariable("OSM2ETS_NO_HW3JOIN") != "1";
@@ -107,7 +112,8 @@ public static class Interchanges
             if (pl is null) continue;
             plans.Add(pl); handled.Add(node);
             NarrowAtNode(in3[0].R, false, 3);
-            foreach (var aux in AuxRuns(out3[0].R, true, 3)) aux.Role = Hw3Join.ExtRole;                      // Beschleunigungsstreifen vierspurig
+            if (Hw3Join.Narrow is not null) NarrowAtNode(out3[0].R, true, 3);     // Spurende 4 → 3 im Prefab
+            else foreach (var aux in AuxRuns(out3[0].R, true, 3)) aux.Role = Hw3Join.ExtRole;   // vierspurig bis zum Wechsel                      // Beschleunigungsstreifen vierspurig
             OneLane.Add(r1[0].R);
         }
         // Gegenstück: Verzögerungsstreifen (4 Spuren am Knoten) → 3 Spuren + einspurige Ausfahrt
