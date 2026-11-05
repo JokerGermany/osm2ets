@@ -382,6 +382,7 @@ public static class Interchanges
 
     public static List<Plan> Find(List<RoadEntry> roads, List<string> warnings)
     {
+        AllRoads = roads;
         OneLane.Clear(); TwoLane.Clear();
         var drops = PendingDrops.Where(d => roads.Contains(d.A) && roads.Contains(d.B)).ToList();
         PendingDrops.Clear();
@@ -1114,6 +1115,7 @@ public static class Interchanges
         }
         if (p.Kind == "exit")
         {
+            if (UseParallelSplit) MoveSplitDownstream(p, src);
             float lenNear = Length(src, p.K.Split!, SplitIn, SplitMain), lenFar = p.K.Widen is null ? 0f : Length(src, p.K.Widen, WidenIn, WidenOut);
             if (p.K.Widen0 is not null) lenFar += Length(src, p.K.Widen0, WidenIn, WidenOut);
             float len = lenNear + lenFar;
@@ -1256,6 +1258,99 @@ public static class Interchanges
         p.Direction = Direction(p.MainIn, p.MainOut);
         p.Moved = d;
         ParallelMoved++;
+    }
+
+    /// <summary>Ausfahrten dort, wo die Rampe sich wirklich von der Hauptfahrbahn löst
+    /// (aus: OSM2ETS_NO_PARALLEL_SPLIT=1).</summary>
+    public static bool UseParallelSplit = Environment.GetEnvironmentVariable("OSM2ETS_NO_PARALLEL_SPLIT") != "1";
+    public static int SplitMoved;
+
+    /// <summary>
+    /// Gegenstück zu <see cref="MoveMergeUpstream"/> für Ausfahrten: In OSM trennt sich die Rampe
+    /// am Knoten oft noch ganz flach von der Hauptfahrbahn; der Rampenknoten des Prefabs liegt aber
+    /// gleich seitlich versetzt (ch_4202p rund 15 m). Die Rampe lag dann bis zu 17 m neben ihrer
+    /// OSM-Lage, etwa über einem Weg daneben. Die Teilung wird deshalb stromab an die Stelle
+    /// gerückt, an der die Rampe diesen Abstand hat: Hauptfahrbahn dort geteilt, ihr Anfang bis
+    /// dahin wird Ende der Fahrbahn davor.
+    /// </summary>
+    internal static List<RoadEntry> AllRoads = [];
+    public const float BlockRadius = 12f;   // Rampe (ger2 etwa 4 m bis Rand) + Weg + Luft
+
+    /// <summary>Liegt am unverschobenen Platz des Rampenknotens eine fremde Straße (≤ BlockRadius)?</summary>
+    private static bool RampNodeBlocked(Plan p, float lat, float lon)
+    {
+        var dir = Direction(p.MainIn, p.MainOut);
+        var right = new Vector3(-dir.Z, 0, dir.X);
+        var a = p.Anchor + right * lat + dir * lon;
+        var q = new Vector2(a.X, a.Z);
+        var own = new HashSet<RoadEntry> { p.MainIn, p.MainOut, p.Ramp };
+        var nodes = new[] { p.MainIn, p.MainOut, p.Ramp }.SelectMany(r => new[] { r.Start, r.End })
+                        .Where(e => e?.Kind == "node" && e.OsmNode is long).Select(e => e!.OsmNode!.Value).ToHashSet();
+        foreach (var r in AllRoads)
+        {
+            if (own.Contains(r)) continue;
+            if (new[] { r.Start, r.End }.Any(e => e?.Kind == "node" && e.OsmNode is long id && nodes.Contains(id))) continue;
+            for (int i = 0; i < r.Points.Count - 1; i++)
+            {
+                var u = P(r.Points[i]); var ab = P(r.Points[i + 1]) - u; float l2 = ab.LengthSquared();
+                float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - u, ab) / l2, 0, 1) : 0;
+                if (Vector2.Distance(q, u + ab * t) <= BlockRadius) return true;
+            }
+        }
+        return false;
+    }
+
+    private static void MoveSplitDownstream(Plan p, PpdSource src)
+    {
+        var ppd = src.Get(p.K.Split!.PpdPath);
+        var loc = Calibrate(ppd, p.K.Split.Unit, Quaternion.Identity);
+        var fwd = loc[SplitMain] - loc[SplitIn]; fwd.Y = 0; fwd = Vector3.Normalize(fwd);
+        var rv = loc[SplitRamp] - loc[SplitMain]; rv.Y = 0;
+        float lat = MathF.Abs(fwd.X * rv.Z - fwd.Z * rv.X), lon = Vector3.Dot(rv, fwd);
+        float total = (float)ArcLength(p.MainOut);
+        float found = -1;
+        for (float D = 2; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
+        {
+            var q = AxisAt(p.MainOut, true, D);
+            if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
+        }
+        float d = found - lon - 2;     // Prefab-Hauptausgang so, dass der Rampenknoten dort liegt
+        if (found < 0 || d < 20) return;
+        // Nur wo es nötig ist: am alten Platz läge der Rampenknoten auf einer fremden Straße
+        // (Weg, andere Straße). Sonst bleibt die Teilung am OSM-Knoten – das Verschieben ändert
+        // die Lage zu Nachbarn (Gelände, Brücken) und brachte an anderen Stellen neue Wände.
+        if (!RampNodeBlocked(p, lat, lon)) return;
+        // hinter dem Rampenknoten muss genug Rampe bleiben
+        var qf = AxisAt(p.MainOut, true, found);
+        float after = (float)ArcLength(p.Ramp) - RampArcAt(p.Ramp, new Vector2(qf.X, qf.Z));
+        if (after < (p.Ramp.End?.Kind == "prefab" ? MinRampBefore * 3 : MinRampBefore)) return;
+        // Hauptfahrbahn danach bei d teilen
+        var pts = p.MainOut.Points; double acc = 0; int k = 0;
+        while (k < pts.Count - 1 && acc + Dist(pts[k], pts[k + 1]) < d) { acc += Dist(pts[k], pts[k + 1]); k++; }
+        if (k >= pts.Count - 1) return;
+        float rest = (float)(d - acc), seg = (float)Dist(pts[k], pts[k + 1]);
+        var a = pts[k]; var b = pts[k + 1];
+        double t = seg > 0 ? rest / seg : 0;
+        var cut = new[] { a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t };
+        var head = pts.Take(k + 1).Skip(1).Append(cut).ToList();      // vom OSM-Knoten bis zum Schnitt
+        int add = head.Count;
+        int nIn = p.MainIn.Points.Count - 1;
+        p.MainIn.Points = p.MainIn.Points.Concat(head).ToList();
+        p.MainIn.Runs[^1].To = p.MainIn.Points.Count - 1;
+        var outPts = new List<double[]> { cut };
+        outPts.AddRange(pts.Skip(k + 1));
+        int drop = k;   // Abschnitte 0..k-1 und das Stück von k bis zum Schnitt fallen weg
+        p.MainOut.Runs = p.MainOut.Runs.Where(x => x.To > k).Select(x => { x.From = Math.Max(x.From - k, 0); x.To -= k; return x; }).ToList();
+        p.MainOut.Runs[0].From = 0;
+        p.MainOut.Points = outPts;
+        p.MainOut.Runs[^1].To = outPts.Count - 1;
+        LaneCentering.Original.Remove(p.MainIn);
+        LaneCentering.Original.Remove(p.MainOut);
+        p.Anchor = MapWriter.ToVector(cut);
+        p.Direction = Direction(p.MainIn, p.MainOut);
+        p.Moved = d;
+        SplitMoved++;
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine($"SPLITMOVE {p.OsmNode} {p.K.Name} d {d:0} lat {lat:0.0} lon {lon:0.0}");
     }
 
     /// <summary>Größte seitliche Abweichung der geraden Prefab-Kette von der Straße, ab der eine
