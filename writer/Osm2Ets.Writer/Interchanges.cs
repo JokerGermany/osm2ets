@@ -260,6 +260,8 @@ public static class Interchanges
         public Kit K = Hw2;
         /// <summary>So weit wurde die Einmündung stromauf gerückt (siehe MoveMergeUpstream).</summary>
         public float Moved;
+        /// <summary>Zusatzspur-Straße wegen Kurve (nicht wegen Bauwerk).</summary>
+        public bool ExtForCurve;
         public required long OsmNode;
         public required RoadEntry MainIn, MainOut, Ramp;
         public required Vector3 Anchor;     // Lage des OSM-Knotens
@@ -936,6 +938,11 @@ public static class Interchanges
             float d = ShiftFor(spans, behind, lenNear, lenFar, (float)ArcLength(p.MainIn), (float)ArcLength(p.MainOut),
                                (float)ArcLength(p.Ramp), out float ext);
             p.Shift = d;
+            if (ext == 0 && d == 0 && p.K.Widen is not null && p.K.Widen0 is null)
+            {
+                ext = CurveExt(Enumerable.Reverse(p.MainIn.Points).ToList(), p.Anchor, lenNear + lenFar);
+                p.ExtForCurve = ext > 0;
+            }
             p.Ext = ext;
             // drei Prefabs: ohne Zusatzspur-Straße und Verschiebung (sonst nicht umsetzbar)
             if ((p.K.Widen0 is not null || p.K.Widen is null) && (d > 0 || ext > 0)) return false;
@@ -973,6 +980,11 @@ public static class Interchanges
             float d = ShiftFor(spans, behind, lenNear, lenFar, (float)ArcLength(p.MainOut), (float)ArcLength(p.MainIn),
                                (float)ArcLength(p.Ramp), out float ext);
             p.Shift = d;
+            if (ext == 0 && d == 0 && p.K.Narrow is not null)
+            {
+                ext = CurveExt(p.MainOut.Points, p.Anchor, lenNear + lenFar);
+                p.ExtForCurve = ext > 0;
+            }
             p.Ext = ext;
             if (p.K.Narrow is null && (d > 0 || ext > 0)) return false;
             float far = len + p.Ext - d;      // so weit reichen die Prefabs stromab
@@ -1046,11 +1058,50 @@ public static class Interchanges
         foreach (var x in p.MainOut.Runs) { x.From += add; x.To += add; }
         p.MainOut.Runs[0].From = 0;
         p.MainOut.Points = outPts;
+        // gespeicherte OSM-Lage passt nicht mehr zu den geteilten Punkten: verwerfen (AxisAt rechnet
+        // dann aus den aktuellen Punkten und dem Modellversatz zurück)
+        LaneCentering.Original.Remove(p.MainIn);
+        LaneCentering.Original.Remove(p.MainOut);
         p.Anchor = MapWriter.ToVector(cut);
         p.Direction = Direction(p.MainIn, p.MainOut);
         p.Moved = d;
         ParallelMoved++;
     }
+
+    /// <summary>Größte seitliche Abweichung der geraden Prefab-Kette von der Straße, ab der eine
+    /// Zusatzspur-Straße zwischen die beiden Prefabs kommt (m).</summary>
+    public const float MaxChainSag = 2f;
+    /// <summary>Länge dieser Zusatzspur-Straße (m).</summary>
+    public const float CurveExtLength = 30f;
+    public static int CurveExts;
+
+    /// <summary>
+    /// Zwei direkt verbundene Anschluss-Prefabs sind zusammen gerade (rund 100 m). In einer Kurve
+    /// lag ihr Ende bis 17 m neben der Straße, die dann in einem S-Bogen zurück musste (Rampen
+    /// südlich des Dreiecks). Weicht die Gerade mehr als <see cref="MaxChainSag"/> ab, kommt eine
+    /// Zusatzspur-Straße dazwischen; jedes Prefab folgt dann der Sehne seines eigenen Stücks.
+    /// pts: Straßenpunkte ab dem Knoten in Richtung der Prefabs.
+    /// </summary>
+    private static float CurveExt(List<double[]> pts, Vector3 anchor, float len)
+    {
+        if (!UseCurveExt) return 0;
+        var end = PointAlong(pts, len);
+        var a = new Vector2(anchor.X, anchor.Z); var e = new Vector2(end.X, end.Z);
+        var ch = e - a; float cl = ch.Length();
+        if (cl < 1) return 0;
+        var u = ch / cl; float sag = 0;
+        for (float s = 5; s < len; s += 5)
+        {
+            var q = PointAlong(pts, s); var w = new Vector2(q.X, q.Z) - a;
+            sag = MathF.Max(sag, MathF.Abs(w.X * u.Y - w.Y * u.X));
+        }
+        if (sag <= MaxChainSag) return 0;
+        CurveExts++;
+        return CurveExtLength;
+    }
+
+    /// <summary>Zusatzspur-Straße in Kurven (aus: OSM2ETS_NO_CURVE_EXT=1).</summary>
+    public static bool UseCurveExt = Environment.GetEnvironmentVariable("OSM2ETS_NO_CURVE_EXT") != "1";
 
     private static float RampDistance(RoadEntry r, Vector2 q)
     {
