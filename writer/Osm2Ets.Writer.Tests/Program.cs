@@ -37,6 +37,7 @@ var tests = new List<(string Name, Action Body)>
     ("Anschlussstelle: zweispurige Ausfahrt von 3 Spuren, zweispurige Rampen", Hw3DoubleExitAndTwoLaneLinks),
     ("Anschlussstelle: Autobahnende an zwei zweispurigen Ästen wird Gabelung 2+2", Split22AtTwoTwoLaneLinks),
     ("Anschlussstelle: vierspurige Strecke zwischen Einmündung 3+2 und Ausfahrt 4→3+1", Lane4MergeAndExit),
+    ("Rampen: Zusammenführung 2+1 und Spurende 2→1", LinkJoinAndLaneDrop),
 };
 
 int failed = 0;
@@ -917,4 +918,19 @@ static void Lane4MergeAndExit()
     var a2 = MakeRoad("a2", [[-600, 0, 0], [0, 0, 0]], R(0, 1, "motorway", 3)); a2.End = N(1);
     var r2 = MakeRoad("r2", [[-400, 0, 120], [-100, 0, 25], [0, 0, 0]], R(0, 2, "motorway_link", 2)); r2.End = N(1);
     Check(Interchanges.Find([a2, r2, m2], []).Count == 0, "Einmündung ohne passende Ausfahrt gesetzt");
+}
+
+static void LinkJoinAndLaneDrop()
+{
+    RunEntry R(int a, int b, int lanes) => new() { From = a, To = b, Highway = "motorway_link", Role = "link", Oneway = true, Lanes = lanes };
+    EndInfo N(long id) => new() { Kind = "node", OsmNode = id };
+    var a = MakeRoad("a", [[-500, 0, 0], [0, 0, 0]], R(0, 1, 2)); a.End = N(1);
+    var b = MakeRoad("b", [[-400, 0, 120], [-100, 0, 25], [0, 0, 0]], R(0, 2, 1)); b.End = N(1);
+    var c = MakeRoad("c", [[0, 0, 0], [130, 0, 0], [400, 0, 0], [700, 0, 0]], R(0, 1, 3), R(1, 2, 2), R(2, 3, 1)); c.Start = N(1);
+    var roads = new List<RoadEntry> { a, b, c };
+    Check(Interchanges.PrepareLaneDrops(roads) == 1 && roads.Count == 4, "Rampe nicht am Spurende geteilt");
+    var plans = Interchanges.Find(roads, []);
+    Check(plans.Any(p => p.Kind == "drop" && p.MainIn == c) && plans.Any(p => p.Kind == "entry" && p.MainIn == a && p.Ramp == b && p.MainOut == c),
+          $"Zusammenführung/Spurende nicht erkannt ({string.Join(",", plans.Select(p => p.Kind))})");
+    Check(c.Runs.All(x => x.Lanes == 2) && roads[3].Runs.All(x => x.Lanes == 1), "Spurzahlen nach dem Teilen falsch");
 }

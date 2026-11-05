@@ -59,6 +59,7 @@ public static class MapWriter
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
+        int laneDrops = prefabs is not null ? Interchanges.PrepareLaneDrops(valid) : 0;
         foreach (var entry in valid) LaneSmoothing.Apply(entry);
         // Brückenläufe vor den Prefabs: Unterführungen auch unter Prefabs, die auf einer Brücke liegen
         var bridgeShots = Underpasses.Snapshot(valid);
@@ -81,7 +82,7 @@ public static class MapWriter
                 plan.MainIn.End = new EndInfo { Kind = "prefab" };
                 plan.MainOut.Start = new EndInfo { Kind = "prefab" };
                 if (plan.Kind == "exit") plan.Ramp.Start = new EndInfo { Kind = "prefab" };
-                else plan.Ramp.End = new EndInfo { Kind = "prefab" };
+                else if (plan.Kind == "entry") plan.Ramp.End = new EndInfo { Kind = "prefab" };
                 // Bauwerk unter dem äußeren Prefab: Straße mit Zusatzspur dazwischen
                 if (plan.ExtRoad is not null)
                 {
@@ -233,7 +234,7 @@ public static class MapWriter
             }
             // nur die Seite zum Zwickel: Hauptfahrbahn rechts, Rampe links (Rechtsverkehr)
             Clear(pl.MainIn, false, false); Clear(pl.MainOut, true, false);
-            Clear(pl.Ramp, pl.Kind == "exit", true);
+            if (pl.Kind != "drop") Clear(pl.Ramp, pl.Kind == "exit", true);
         }
         if (separated > 0) warnings.Add($"Info: {separated} Richtungsfahrbahnen seitlich verschoben (OSM-Abstand kleiner als Vorlagenbreite)");
         // Prefab-Flächen als Hindernisse: Strecken von jedem Knoten zur Prefab-Mitte
@@ -351,7 +352,7 @@ public static class MapWriter
                 pl.First.Attach(pl.FirstIn, lastItem[plan.MainIn].ForwardNode);
                 pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
                 if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
-                else pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
+                else if (plan.Kind == "entry") pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
                 if (plan.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
                 {
                     pl.ExtFrom.Attach(pl.ExtFromNode, firstItem[plan.ExtRoad].Node);

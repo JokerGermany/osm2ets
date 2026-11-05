@@ -84,6 +84,16 @@ public static class Interchanges
     /// <summary>Vierspurige Strecke zwischen Einmündung 3 + 2 und Ausfahrt 4 → 3 + 1 (aus: OSM2ETS_NO_LANE4=1).</summary>
     public static bool UseLane4 = Environment.GetEnvironmentVariable("OSM2ETS_NO_LANE4") != "1";
 
+    /// <summary>Rampe mit n Spuren; am Anfang (atStart) darf ein kurzer Lauf mit n+1 Spuren liegen.</summary>
+    internal static bool IsLinkLanes(RoadEntry r, bool atStart, int n)
+    {
+        if (!IsRamp(r)) return false;
+        int k = AuxRun(r, atStart, n);
+        for (int i = 0; i < r.Runs.Count; i++)
+            if (i != k && r.Runs[i].Lanes != n) return false;
+        return true;
+    }
+
     /// <summary>Autobahn mit n Spuren; am Anfang und am Ende darf je ein kurzer Lauf mit n+1 Spuren liegen.</summary>
     internal static bool IsMotorwayLanes(RoadEntry r, int n)
     {
@@ -143,13 +153,76 @@ public static class Interchanges
         };
     }
 
+    /// <summary>
+    /// Spurende 2 → 1 mitten in einer Rampe (ch_4202l „ger hw2-hw1 merge“, Grundspiel; Varianten laut
+    /// .pmd: default, no_lines). Die Rampe wird am Wechsel der Spurzahl geteilt (Plan-Art "drop").
+    /// </summary>
+    public static readonly Kit LaneDrop = new("hw2-hw1 drop", 2, 0, null, null, null,
+        new("ch_4202l", "/prefab2/fork_temp/ger/ger_hw2-hw1_merge_v02.ppd", "default", "ger_1"), "ext");
+
+    /// <summary>Zusammenführung zweier Rampen (2 + 1 → 2 mit Beschleunigungsstreifen) und Spurende
+    /// 2 → 1 in Rampen (aus: OSM2ETS_NO_LINKJOIN=1).</summary>
+    public static bool UseLinkJoin = Environment.GetEnvironmentVariable("OSM2ETS_NO_LINKJOIN") != "1";
+
+    private static long synthNode = -1_000_000;
+
+    /// <summary>Von <see cref="PrepareLaneDrops"/> geteilte Rampen, abgeholt von <see cref="Find"/>.</summary>
+    private static readonly List<(long Node, RoadEntry A, RoadEntry B)> PendingDrops = [];
+
+    /// <summary>Vor der Spurzahl-Vereinheitlichung (LaneSmoothing) aufrufen – sie würde den
+    /// Wechsel 2 → 1 sonst einebnen.</summary>
+    public static int PrepareLaneDrops(List<RoadEntry> roads)
+    {
+        PendingDrops.Clear();
+        if (UseLinkJoin) PendingDrops.AddRange(SplitLaneDrops(roads));
+        return PendingDrops.Count;
+    }
+
+    /// <summary>
+    /// Rampen, deren Spurzahl einmal von 2 auf 1 fällt (beide Teile ≥ 80 m), am Wechsel teilen.
+    /// Der neue Knoten bekommt eine künstliche (negative) Nummer; dort steht später das Spurende.
+    /// </summary>
+    internal static List<(long Node, RoadEntry A, RoadEntry B)> SplitLaneDrops(List<RoadEntry> roads)
+    {
+        var res = new List<(long, RoadEntry, RoadEntry)>();
+        foreach (var r in roads.ToList())
+        {
+            if (!IsRamp(r) || r.Runs.Count < 2) continue;
+            int k = r.Runs.FindIndex(x => x.Lanes == 1);
+            if (k <= 0) continue;
+            if (r.Runs.Take(k).Any(x => x.Lanes is null or < 2) || r.Runs.Skip(k).Any(x => x.Lanes != 1)) continue;
+            if (r.Runs.Any(x => x.Bridge || x.Tunnel)) continue;
+            int b = r.Runs[k].From;
+            double la = 0, lb = 0;
+            for (int i = 0; i < b; i++) la += Dist(r.Points[i], r.Points[i + 1]);
+            for (int i = b; i < r.Points.Count - 1; i++) lb += Dist(r.Points[i], r.Points[i + 1]);
+            if (la < 80 || lb < 80) continue;
+            long id = synthNode--;
+            var tail = new RoadEntry
+            {
+                Id = r.Id + "d", Chain = r.Chain, Piece = r.Piece, Role = r.Role,
+                Start = new EndInfo { Kind = "node", OsmNode = id }, End = r.End,
+                Points = r.Points.Skip(b).ToList(),
+                Runs = r.Runs.Skip(k).Select(x => { x.From -= b; x.To -= b; return x; }).ToList(),
+                LengthM = lb,
+            };
+            r.Points = r.Points.Take(b + 1).ToList();
+            r.Runs = r.Runs.Take(k).ToList();
+            r.End = new EndInfo { Kind = "node", OsmNode = id };
+            r.LengthM = la;
+            roads.Add(tail);
+            res.Add((id, r, tail));
+        }
+        return res;
+    }
+
     /// <summary>Gabelung in zwei zweispurige Äste (aus: OSM2ETS_NO_SPLIT22=1).</summary>
     public static bool UseSplit22 = Environment.GetEnvironmentVariable("OSM2ETS_NO_SPLIT22") != "1";
 
     /// <summary>Seitlicher Abstand zusätzlicher Spurpunkte unter dem Seitenstreifen (0 = keine).</summary>
     public static float ShoulderOf(TruckLib.Token model)
     {
-        foreach (var (k, off) in new[] { (Hw3Double, PrefabFootprint.ShoulderOffset3), (Hw3Merge2, PrefabFootprint.ShoulderOffset3), (Hw3Exit, PrefabFootprint.ShoulderOffset3), (Split22, PrefabFootprint.ShoulderOffset), (Hw2, PrefabFootprint.ShoulderOffset) })
+        foreach (var (k, off) in new[] { (Hw3Double, PrefabFootprint.ShoulderOffset3), (Hw3Merge2, PrefabFootprint.ShoulderOffset3), (Hw3Exit, PrefabFootprint.ShoulderOffset3), (Split22, PrefabFootprint.ShoulderOffset), (LaneDrop, PrefabFootprint.ShoulderOffset), (Hw2, PrefabFootprint.ShoulderOffset) })
             foreach (var d in new[] { k.Widen0, k.Widen, k.Split, k.Join, k.Narrow })
                 if (d is not null && (TruckLib.Token)d.Unit == model) return off;
         return 0f;
@@ -243,6 +316,8 @@ public static class Interchanges
     public static List<Plan> Find(List<RoadEntry> roads, List<string> warnings)
     {
         OneLane.Clear(); TwoLane.Clear();
+        var drops = PendingDrops.Where(d => roads.Contains(d.A) && roads.Contains(d.B)).ToList();
+        PendingDrops.Clear();
         var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
         foreach (var r in roads)
             foreach (var atStart in new[] { true, false })
@@ -258,6 +333,32 @@ public static class Interchanges
         var plans = new List<Plan>();
         var handled = new HashSet<long>();
         if (UseLane4) FindLane4(ends, plans, handled, warnings);
+        foreach (var (node, a, b) in drops)
+        {
+            plans.Add(new Plan
+            {
+                Kind = "drop", K = LaneDrop, OsmNode = node, MainIn = a, MainOut = b, Ramp = null!,
+                Anchor = MapWriter.ToVector(a.Points[^1]), Direction = Direction(a, b),
+            });
+            handled.Add(node);
+            TwoLane.Add(a);
+        }
+        if (UseLinkJoin)
+            foreach (var (node, list) in ends)
+            {
+                // zwei Rampen laufen zusammen: zweispurige + einspurige → zweispurig (Beschleunigungsstreifen)
+                if (list.Count != 3 || handled.Contains(node)) continue;
+                if (!list.All(e => IsRamp(e.R))) continue;
+                var in2 = list.Where(e => !e.AtStart && e.R.Runs.All(x => x.Lanes == 2)).ToList();
+                var in1 = list.Where(e => !e.AtStart && e.R.Runs.All(x => x.Lanes is null or 1)).ToList();
+                var out2 = list.Where(e => e.AtStart && IsLinkLanes(e.R, true, 2)).ToList();
+                if (in2.Count != 1 || in1.Count != 1 || out2.Count != 1) continue;
+                var pl = MakePlan(node, "entry", Hw2, in2[0].R, out2[0].R, in1[0].R, warnings);
+                if (pl is null) continue;
+                plans.Add(pl); handled.Add(node);
+                NarrowAtNode(out2[0].R, true, 2);
+                TwoLane.Add(in2[0].R); TwoLane.Add(out2[0].R); OneLane.Add(in1[0].R);
+            }
         foreach (var (node, list) in ends)
         {
             if (list.Count != 3 || handled.Contains(node)) continue;
@@ -729,6 +830,7 @@ public static class Interchanges
         for (int j = i + 1; j < plans.Count; j++)
         {
             var a = plans[i]; var b = plans[j];
+            if (a.Kind == "drop" || b.Kind == "drop") continue;
             var da = new Vector2(a.Direction.X, a.Direction.Z); var db = new Vector2(b.Direction.X, b.Direction.Z);
             if (da.LengthSquared() < 1e-6f || db.LengthSquared() < 1e-6f) continue;
             da = Vector2.Normalize(da); db = Vector2.Normalize(db);
@@ -812,6 +914,14 @@ public static class Interchanges
         // erst prüfen, dann kürzen – sonst bliebe bei Abbruch eine Lücke
         // Alle Abstände (lenNear, d, far …) zählen entlang der Hauptfahrbahn ab dem OSM-Knoten; d ist
         // die Verschiebung des inneren Prefabs auf die andere Seite des Knotens (meist 0).
+        if (p.Kind == "drop")
+        {
+            float len = Length(src, p.K.Narrow!, NarrowIn, NarrowOut);
+            if (ArcLength(p.MainOut) < len + Slack + 20 || ArcLength(p.MainIn) < Slack + 20) return false;
+            p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
+            if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, len), p.Direction);
+            return TrimStart(p.MainOut, len + Slack);
+        }
         if (p.Kind == "exit")
         {
             float lenNear = Length(src, p.K.Split!, SplitIn, SplitMain), lenFar = p.K.Widen is null ? 0f : Length(src, p.K.Widen, WidenIn, WidenOut);
@@ -1090,6 +1200,11 @@ public static class Interchanges
     /// <summary>Setzt die Prefabs eines Plans (Straßen müssen schon gebaut sein).</summary>
     public static Placed Build(Map map, Plan p, PpdSource src)
     {
+        if (p.Kind == "drop")
+        {
+            var pf = Place(map, src, p.K.Narrow!, NarrowIn, NarrowOut, p.Direction, NarrowIn, p.Anchor, p.Grade);
+            return new Placed(p, pf, NarrowIn, pf, NarrowOut, pf, NarrowIn);
+        }
         if (p.Kind == "exit")
         {
             // Teilung so, dass ihr Hauptausgang auf dem OSM-Knoten liegt; Aufweitung davor
@@ -1279,7 +1394,7 @@ public static class Interchanges
         var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];
         pl.First.Nodes[pl.FirstIn].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], GradeOf(pl, pl.First)));
         pl.Last.Nodes[pl.LastOut].Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], GradeOf(pl, pl.Last)));
-        pl.RampPrefab.Nodes[pl.RampNode].Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
+        if (p.Kind != "drop") pl.RampPrefab.Nodes[pl.RampNode].Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
         FixExtRotations(pl);
         if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
             foreach (var n in new[] { pl.First.Nodes[pl.FirstIn], pl.Last.Nodes[pl.LastOut], pl.RampPrefab.Nodes[pl.RampNode] })
@@ -1299,6 +1414,7 @@ public static class Interchanges
         // Das Prefab zweigt schneller ab als die OSM-Rampe: Rampenpunkte, die noch näher an der
         // Hauptfahrbahn liegen als der Rampenknoten, entfernen (sonst schwenkt die Rampe zurück
         // und kreuzt die Hauptfahrbahn)
+        if (p.Kind == "drop") return;
         DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
         if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn);
         else SetTail(p.Ramp, rampNode.Position, rampIn, p.K == Hw3Merge2 ? ShortRampLead : Lead);
