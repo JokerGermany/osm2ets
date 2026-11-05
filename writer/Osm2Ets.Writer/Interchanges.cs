@@ -1585,6 +1585,9 @@ public static class Interchanges
     /// Kurve aus der Prefab-Richtung auf die OSM-Linie zurückgeführt (statt nach einem
     /// Straßenstück abzuknicken). OSM2ETS_MAIN_BLEND=0 schaltet ab.
     /// </summary>
+    /// <summary>Dasselbe für Rampen (OSM2ETS_RAMP_BLEND=<m>, 0 = aus).</summary>
+    public static float RampBlend = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_RAMP_BLEND"), System.Globalization.CultureInfo.InvariantCulture, out var rb) ? rb : 40f;
+
     public static float MainBlend = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_MAIN_BLEND"), System.Globalization.CultureInfo.InvariantCulture, out var mb) ? mb : 40f;
     /// <summary>Einlauf der Rampe in <see cref="Hw3Merge2"/>: Der Rampenknoten steht 15° schräg; mit
     /// 20 m geradem Einlauf schwenkte die Rampe 5 m nach außen (A 9 bei Bayreuth: auf den Wirtschaftsweg
@@ -1600,7 +1603,17 @@ public static class Interchanges
         while (k > 0 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k--;
         // Punkte, die schon jenseits des Einlaufpunkts liegen, ebenfalls weg (sonst Rücklauf)
         while (k > 0 && Vector2.Dot(P(r.Points[k]) - new Vector2(lead.X, lead.Z), new Vector2(dirInto.X, dirInto.Z)) > -2) k--;
+        // Reichte die Straße über den Knoten hinaus (Einmündung stromauf gerückt), greift der
+        // Abstand erst jetzt
+        while (k > 0 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k--;
         var pts = r.Points.Take(k + 1).ToList();
+        if (curve > 0 && pts.Count < 2 && leadLen > ShortRampLead)
+        {
+            // kurzes Reststück: kein Platz für einen Bogen – kürzerer gerader Einlauf, damit es am
+            // Anfangsknoten (Übergang zur Straße davor) nicht abknickt
+            leadLen = ShortRampLead;
+            lead = node - dirInto * leadLen;
+        }
         lead.Y = Between(node, pts[^1], leadLen);
         if (curve > 0 && pts.Count >= 2)
         {
@@ -1640,7 +1653,13 @@ public static class Interchanges
         float cut = MathF.Max(leadLen + 10, curve);
         while (k < r.Points.Count - 1 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k++;
         while (k < r.Points.Count - 1 && Vector2.Dot(P(r.Points[k]) - new Vector2(lead.X, lead.Z), new Vector2(dirOut.X, dirOut.Z)) < 2) k++;
+        while (k < r.Points.Count - 1 && Vector2.Distance(P(r.Points[k]), new Vector2(node.X, node.Z)) < cut) k++;
         var rest = r.Points.Skip(k).ToList();
+        if (curve > 0 && rest.Count < 2 && leadLen > ShortRampLead)
+        {
+            leadLen = ShortRampLead;            // kurzes Reststück, siehe SetTail
+            lead = node + dirOut * leadLen;
+        }
         var pts = new List<double[]> { V(node) };
         lead.Y = Between(node, rest[0], leadLen);
         if (Vector2.Distance(P(rest[0]), new Vector2(lead.X, lead.Z)) > 2) pts.Add(V(lead));
@@ -1754,8 +1773,8 @@ public static class Interchanges
         // und kreuzt die Hauptfahrbahn)
         if (p.Kind == "drop") return;
         DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
-        if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn);
-        else SetTail(p.Ramp, rampNode.Position, rampIn, p.K == Hw3Merge2 ? ShortRampLead : Lead);
+        if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn, Lead, RampBlend);
+        else SetTail(p.Ramp, rampNode.Position, rampIn, p.K == Hw3Merge2 ? ShortRampLead : Lead, RampBlend);
         if (p.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
             SnapExt(p.ExtRoad, pl.ExtFrom.Nodes[pl.ExtFromNode].Position, pl.ExtTo.Nodes[pl.ExtToNode].Position);
 
