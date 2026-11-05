@@ -89,6 +89,27 @@ def read_ways(path: str, classes: frozenset, exclude_access: frozenset = frozens
     return ways
 
 
+AREA_KINDS = frozenset({"motorway", "motorway_link", "trunk", "trunk_link", "emergency", "shoulder"})
+
+
+def read_areas(path: str, kinds: frozenset = AREA_KINDS) -> list[tuple[int, str, list[int]]]:
+    """Fahrbahnflächen (area:highway=…, geschlossene Wege): [(Weg-ID, Art, Knoten-IDs)].
+
+    Nur für die Prüfung der Lage im Writer; Multipolygone werden nicht gelesen.
+    """
+    out = []
+    fp = osmium.FileProcessor(path, osmium.osm.WAY).with_filter(osmium.filter.KeyFilter("area:highway"))
+    for w in fp:
+        kind = w.tags.get("area:highway")
+        if kind not in kinds:
+            continue
+        refs = [n.ref for n in w.nodes]
+        if len(refs) >= 4 and refs[0] == refs[-1]:
+            out.append((w.id, kind, refs))
+    log.info("%d Fahrbahnflächen (area:highway) gelesen", len(out))
+    return out
+
+
 def read_node_locations(path: str, node_ids: Iterable[int]) -> dict[int, tuple[float, float]]:
     """Liefert {Knoten-ID: (lon, lat)} für die angefragten Knoten.
 

@@ -569,6 +569,10 @@ public static class MapWriter
                 Console.Error.WriteLine($"T {a.X:0.0}..{b.X:0.0} z {a.Z:0.0} y {a.Y:0.0}/{b.Y:0.0} L {t.Left.Terrain.Size:0.0} R {t.Right.Terrain.Size:0.0} offs {t.Left.Terrain.QuadData.Offsets.Count}/{t.Right.Terrain.QuadData.Offsets.Count} cols {t.Left.Terrain.QuadData.Cols} rows {t.Left.Terrain.QuadData.Rows}/{t.Right.Terrain.QuadData.Rows}");
             }
         }
+        if (AreaCheck.Run(map, input.Areas) is { } ac)
+            warnings.Add($"Info: Lage zu area:highway: {ac.Points} Spurpunkte an Autobahnflächen, {ac.Outside} mehr als {AreaCheck.Tol:0} m außerhalb" +
+                         $" ({100.0 * ac.Outside / Math.Max(ac.Points, 1):0.0} %), höchstens {ac.Max:0.0} m" +
+                         (ac.Spots.Count > 0 ? "; Stellen: " + string.Join(", ", ac.Spots.Take(6).Select(sp => $"({sp.At.X:0},{sp.At.Y:0}) {sp.N}× bis {sp.Max:0.0} m")) : ""));
         return (map, new WriteResult(written, skipped, items, styleChanges, startPos, startRoad?.Id, warnings,
                                      connections, reversed, terrainClamped, overlaps, branchesTrimmed));
     }

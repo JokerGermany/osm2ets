@@ -19,6 +19,8 @@ public sealed class IntermediateFile
     public List<JunctionEntry> Junctions { get; set; } = [];
     /// <summary>Optional: Geländeraster (nur mit Geländemodell erzeugt).</summary>
     public TerrainGridEntry? TerrainGrid { get; set; }
+    /// <summary>Optional: Fahrbahnflächen aus OSM (area:highway), nur zur Lageprüfung.</summary>
+    public List<AreaEntry> Areas { get; set; } = [];
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -57,6 +59,14 @@ public sealed class EndInfo
 {
     public string Kind { get; set; } = "";
     public long? OsmNode { get; set; }
+}
+
+/// <summary>Fahrbahnfläche (area:highway=…) als Umriss in Spielkoordinaten [x, z].</summary>
+public sealed class AreaEntry
+{
+    public long OsmWay { get; set; }
+    public string Kind { get; set; } = "";
+    public List<double[]> Points { get; set; } = [];
 }
 
 public sealed class RoadEntry
