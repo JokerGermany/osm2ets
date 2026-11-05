@@ -165,6 +165,7 @@ public static class MapWriter
             catch (Exception ex)
             {
                 warnings.Add($"Knoten {plan.OsmNode} ({plan.Kind}): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine(ex);
             }
         }
 
@@ -202,7 +203,7 @@ public static class MapWriter
             var covered = new HashSet<RunEntry>(bodies.SelectMany(b => new[] { b.Run, b.PartnerRun }).OfType<RunEntry>());
             var singles = mapping.BridgeBodies is { Count: > 0 }
                 ? BridgeBodies.PlanSingle(valid, mapping.Resolve, mapping.BodyFor, covered,
-                                          mapping.BridgeBody?.MaxLength ?? 200f, warnings)
+                                          mapping.BridgeBody?.MaxLength ?? 200f, warnings, PrefabLowerRoads(placed))
                 : [];
             foreach (var r in bodies.Select(x => x.Road).Concat(singles.Select(x => x.Road)).Distinct())
             {
@@ -377,6 +378,7 @@ public static class MapWriter
             catch (Exception ex)
             {
                 warnings.Add($"Knoten {plan.OsmNode} ({plan.Kind}): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine(ex);
             }
         }
         int junctionsSet = 0;
@@ -417,6 +419,7 @@ public static class MapWriter
             catch (Exception ex)
             {
                 warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): Prefab nicht gesetzt – {ex.GetType().Name}: {ex.Message}");
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine(ex);
             }
         }
         // Neigung aller Prefab-Knoten aus der Prefab-Ebene (das Spiel setzt Prefabs nach dem Ursprungsknoten)
@@ -574,6 +577,30 @@ public static class MapWriter
     /// Abschnitte länger als maxLen teilen. Neue Punkte auf einer Catmull-Rom-Kurve durch
     /// die Nachbarpunkte (nähert die Spielkurve), Höhe linear. Runs werden umnummeriert.
     /// </summary>
+    /// <summary>
+    /// Anschluss-Prefabs als untere Straßen für die Brückenverlängerung: Hauptfahrbahn (Eingang →
+    /// Ausgang) und Rampe als dreispurige Autobahn bzw. Rampe. Sonst stand ein Widerlager auf der
+    /// Fahrbahn eines Prefabs unter einer Brücke (die Prefabs liegen nicht genau auf der OSM-Linie).
+    /// </summary>
+    private static List<RoadEntry> PrefabLowerRoads(List<Interchanges.Placed> placed)
+    {
+        var res = new List<RoadEntry>();
+        static double[] V(Vector3 v) => [v.X, v.Y, v.Z];
+        foreach (var pl in placed)
+        {
+            var a = pl.First.Nodes[pl.FirstIn].Position; var b = pl.Last.Nodes[pl.LastOut].Position;
+            var ramp = pl.RampPrefab.Nodes[pl.RampNode].Position;
+            var c = (a + b) / 2;
+            foreach (var (p, q, lanes) in new[] { (a, b, 3), (c, ramp, 1) })
+                res.Add(new RoadEntry
+                {
+                    Id = $"prefab@{pl.Plan.OsmNode}", Points = [V(p), V(q)],
+                    Runs = [new RunEntry { From = 0, To = 1, Highway = lanes == 1 ? "motorway_link" : "motorway", Oneway = true, Lanes = lanes }],
+                });
+        }
+        return res;
+    }
+
     internal static void Subdivide(RoadEntry r, float maxLen)
     {
         var p = r.Points;

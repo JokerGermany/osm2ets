@@ -1274,27 +1274,33 @@ public static class Interchanges
     /// dahin wird Ende der Fahrbahn davor.
     /// </summary>
     internal static List<RoadEntry> AllRoads = [];
-    public const float BlockRadius = 12f;   // Rampe (ger2 etwa 4 m bis Rand) + Weg + Luft
+    public const float BlockRadius = 12f;
+    public const float BlockReach = 40f;    // so weit läuft die Rampe in Prefab-Richtung (Einlauf 20 m + Bogen)   // Rampe (ger2 etwa 4 m bis Rand) + Weg + Luft
 
     /// <summary>Liegt am unverschobenen Platz des Rampenknotens eine fremde Straße (≤ BlockRadius)?</summary>
     private static bool RampNodeBlocked(Plan p, float lat, float lon)
     {
         var dir = Direction(p.MainIn, p.MainOut);
         var right = new Vector3(-dir.Z, 0, dir.X);
-        var a = p.Anchor + right * lat + dir * lon;
-        var q = new Vector2(a.X, a.Z);
+        var a0 = p.Anchor + right * lat + dir * lon;
         var own = new HashSet<RoadEntry> { p.MainIn, p.MainOut, p.Ramp };
         var nodes = new[] { p.MainIn, p.MainOut, p.Ramp }.SelectMany(r => new[] { r.Start, r.End })
                         .Where(e => e?.Kind == "node" && e.OsmNode is long).Select(e => e!.OsmNode!.Value).ToHashSet();
-        foreach (var r in AllRoads)
+        // Rampenknoten und der Weg der Rampe danach (gerade weiter in Fahrtrichtung, bis BlockReach)
+        for (float sAlong = 0; sAlong <= BlockReach; sAlong += 5)
         {
-            if (own.Contains(r)) continue;
-            if (new[] { r.Start, r.End }.Any(e => e?.Kind == "node" && e.OsmNode is long id && nodes.Contains(id))) continue;
-            for (int i = 0; i < r.Points.Count - 1; i++)
+            var a = a0 + dir * sAlong;
+            var q = new Vector2(a.X, a.Z);
+            foreach (var r in AllRoads)
             {
-                var u = P(r.Points[i]); var ab = P(r.Points[i + 1]) - u; float l2 = ab.LengthSquared();
-                float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - u, ab) / l2, 0, 1) : 0;
-                if (Vector2.Distance(q, u + ab * t) <= BlockRadius) return true;
+                if (own.Contains(r)) continue;
+                if (new[] { r.Start, r.End }.Any(e => e?.Kind == "node" && e.OsmNode is long id && nodes.Contains(id))) continue;
+                for (int i = 0; i < r.Points.Count - 1; i++)
+                {
+                    var u = P(r.Points[i]); var ab = P(r.Points[i + 1]) - u; float l2 = ab.LengthSquared();
+                    float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - u, ab) / l2, 0, 1) : 0;
+                    if (Vector2.Distance(q, u + ab * t) <= BlockRadius) return true;
+                }
             }
         }
         return false;
@@ -1306,7 +1312,8 @@ public static class Interchanges
         var loc = Calibrate(ppd, p.K.Split.Unit, Quaternion.Identity);
         var fwd = loc[SplitMain] - loc[SplitIn]; fwd.Y = 0; fwd = Vector3.Normalize(fwd);
         var rv = loc[SplitRamp] - loc[SplitMain]; rv.Y = 0;
-        float lat = MathF.Abs(fwd.X * rv.Z - fwd.Z * rv.X), lon = Vector3.Dot(rv, fwd);
+        float latS = fwd.X * rv.Z - fwd.Z * rv.X;   // > 0: rechts (rechts = (-d.z, d.x))
+        float lat = MathF.Abs(latS), lon = Vector3.Dot(rv, fwd);
         float total = (float)ArcLength(p.MainOut);
         float found = -1;
         for (float D = 2; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
@@ -1315,11 +1322,12 @@ public static class Interchanges
             if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
         }
         float d = found - lon - 2;     // Prefab-Hauptausgang so, dass der Rampenknoten dort liegt
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine($"SPLITTRY {p.OsmNode} {p.K.Name} found {found:0} d {d:0} lat {lat:0.0} blocked {RampNodeBlocked(p, latS, lon)}");
         if (found < 0 || d < 20) return;
         // Nur wo es nötig ist: am alten Platz läge der Rampenknoten auf einer fremden Straße
         // (Weg, andere Straße). Sonst bleibt die Teilung am OSM-Knoten – das Verschieben ändert
         // die Lage zu Nachbarn (Gelände, Brücken) und brachte an anderen Stellen neue Wände.
-        if (!RampNodeBlocked(p, lat, lon)) return;
+        if (!RampNodeBlocked(p, latS, lon)) return;
         // hinter dem Rampenknoten muss genug Rampe bleiben
         var qf = AxisAt(p.MainOut, true, found);
         float after = (float)ArcLength(p.Ramp) - RampArcAt(p.Ramp, new Vector2(qf.X, qf.Z));

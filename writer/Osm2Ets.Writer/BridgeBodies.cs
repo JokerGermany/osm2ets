@@ -100,14 +100,15 @@ public static class BridgeBodies
     /// </summary>
     public static List<Single> PlanSingle(List<RoadEntry> roads, Func<RunEntry, ResolvedStyle> resolve,
                                           Func<ResolvedStyle, BridgeBodyType?> bodyFor, HashSet<RunEntry> covered,
-                                          float maxLength, List<string> warnings)
+                                          float maxLength, List<string> warnings,
+                                          List<RoadEntry>? extraLower = null)
     {
         var res = new List<Single>();
         int tooLong = 0, extended = 0;
         float extendedM = 0, extendedMax = 0;
         // alle Abschnitte mit Lauf (untere Straßen für die Verlängerung schräg unterquerter Brücken)
         var segs = new List<(RoadEntry R, RunEntry Run, Vector3 A, Vector3 B)>();
-        foreach (var r in roads)
+        foreach (var r in roads.Concat(extraLower ?? []))
             for (int i = 0; i < r.Points.Count - 1; i++)
                 if (r.Runs.FirstOrDefault(x => x.From <= i && i < x.To) is { } run)
                     segs.Add((r, run, MapWriter.ToVector(r.Points[i]), MapWriter.ToVector(r.Points[i + 1])));

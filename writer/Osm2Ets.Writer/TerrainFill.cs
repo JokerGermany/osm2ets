@@ -36,7 +36,7 @@ public static class TerrainFill
     public static float GoreMaxDh = 1.0f;
     /// <summary>Zwischen zwei Straßen: Gelände als gerade Rampe von der eigenen zur fremden Fahrbahnhöhe,
     /// wenn sich beide höchstens so viel unterscheiden (sonst Raster). Aus: OSM2ETS_RT_NOGAP.</summary>
-    public static float GapMaxDh = 3f;
+    public static float GapMaxDh = EnvF("OSM2ETS_GAP_MAXDH", 3f);
     public static bool GapRamp = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOGAP") is null;
     public static int GapRamped;
     /// <summary>Straßengelände-Punkte, die als Rampe an ein höheres bzw. tieferes Prefab laufen.</summary>
