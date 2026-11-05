@@ -490,7 +490,9 @@ public static class Interchanges
 
     public static int NormalizeLinkLanes(List<RoadEntry> roads)
     {
-        static bool Link(RoadEntry r) => r.Runs.All(x => x.Highway is "motorway_link" or "trunk_link");
+        // Zusatzspur-Straßen zwischen Anschluss-Prefabs behalten ihre Rolle (ext/ext3)
+        static bool Link(RoadEntry r) => r.Runs.All(x => x.Highway is "motorway_link" or "trunk_link")
+                                         && !r.Runs.Any(x => x.Role is ExtRole or "ext3");
         var links = roads.Where(Link).ToList();
         var two = links.Where(r => r.Runs.All(x => x.Lanes >= 2) && !OneLane.Contains(r)).ToHashSet();
         // Ebenso einspurig, wenn eine anschließende Rampe einspurig ist (Wechsel am Knoten = Stufe)
