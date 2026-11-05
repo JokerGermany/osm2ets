@@ -1,9 +1,13 @@
 # TODO
 
-- **Entry of a 2-lane link into a 3-lane motorway** (A 70 -> A 9 south at Dreieck
-  Bayreuth/Kulmbach, node 198339441): no prefab yet; the 2-lane link runs ~100 m beside the
-  A 9 and overlaps it (two small walls at x 4543, z -1445). Candidates: `ger_hw3_r2_merge_double`
-  (prefab.ger_2i037, 3 lanes + 2-lane ramp -> 4 lanes) followed by a 4 -> 3 narrowing
-  (`ger_hw3-hw3_exit_tmpl_v02`). Token of the narrowing and variants still to check.
+- **Cut next to the 4-lane A 9 section** (x 4610-4625, z -820 to -860): since the A 9 is built
+  with 4 lanes (ger18) there, the farm road on top of the cut has a 4-5 m step at its edge
+  (road terrain of the A 9 and of the farm road do not meet). Also small walls where the
+  2-lane link (A 70 -> A 9 south) runs next to the farm road (x 4522-4525, z -1355 to -1393).
+- **ger18 model extents** (4 lanes, assumed -9.0 ... +12.5 m around the line) are not measured.
+- **5-lane section after the A 70 -> A 9 south entry** (node 198339441, ~128 m with 5 lanes in
+  OSM, then 4): find or build a prefab 3 lanes + 2-lane ramp -> 5 lanes (both ramp lanes kept)
+  and a lane end 5 -> 4. Road look for 5 lanes exists (ger28 "ger hw5 one lane tmpl"); no German
+  prefab found so far. Currently ger_2i037 joins the two ramp lanes into one (3 + 2 -> 4).
 - **B 85 slip lanes** (x -3700, z -3230): loops of chained T prefabs (mod_ger_67), node
   2166477040 without prefab – waiting for a decision.
