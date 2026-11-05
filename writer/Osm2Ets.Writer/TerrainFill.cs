@@ -45,6 +45,8 @@ public static class TerrainFill
     /// <summary>Je Spalte kürzen: Reihen enden kurz vor dem Modell einer anderen Straße (an
     /// zusammenlaufenden Fahrbahnen ist die Lücke je Spalte verschieden). Aus: OSM2ETS_RT_NOCLAMP.</summary>
     public static bool ClampColumns = Environment.GetEnvironmentVariable("OSM2ETS_RT_NOCLAMP") is null;
+    /// <summary>Gekürzte Spalten: Nachbarn höchstens so viel länger je m Abstand (0 = aus, OSM2ETS_CLAMP_TAPER).</summary>
+    public static float ClampTaper = EnvF("OSM2ETS_CLAMP_TAPER", 1f);
     public static int ColumnsClamped;
     private static float EnvF(string n, float d) =>
         float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
@@ -551,6 +553,16 @@ public static class TerrainFill
             var dir = nrm * zSign;
             float g = rayFree(c + dir * edge, dir, size);
             if (g < size) { free[i] = MathF.Max(0, g - TerrainClearance.EdgeClear); ColumnsClamped++; }
+        }
+        // Nachbarspalten nicht viel länger als eine gekürzte: sonst wechseln kurze und volle
+        // Spalten ab, und der Rand des Straßengeländes wird am Hang eine Zackenlinie (Dreieck A 70/A 9).
+        // Höchstens ClampTaper m mehr je m Spaltenabstand (beide Richtungen).
+        if (rayFree is not null && ClampTaper > 0 && cols > 0)
+        {
+            float colLen = Vector2.Distance(new Vector2(pa.X, pa.Z), new Vector2(pb.X, pb.Z)) / cols;
+            float step = ClampTaper * MathF.Max(colLen, 0.1f);
+            for (int i = 1; i <= cols; i++) free[i] = MathF.Min(free[i], free[i - 1] + step);
+            for (int i = cols - 1; i >= 0; i--) free[i] = MathF.Min(free[i], free[i + 1] + step);
         }
         // Schmale Seiten (unter NearFlat + NearBlend): Verlauf gestaucht, damit der Außenrand die
         // Rasterhöhe erreicht. Sonst endete das Straßengelände auf Fahrbahnhöhe – bei einem Damm
