@@ -546,7 +546,7 @@ public static class MapWriter
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes, cover);
             if (cover is not null)
                 warnings.Insert(0, $"Info: Füllgelände unter Fahrbahn/Straßengelände begrenzt: {CoverCap.CoverLowered} Punkte, am Rand per Böschung ({CoverCap.Slope:0.0}) gesenkt: {CoverCap.ConeLowered}, angehoben: {CoverCap.ConeRaised} Punkte, Durchstoßungen nachträglich abgesenkt: {CoverCap.SettledQuads} Quads ({CoverCap.Settled} Höhenpunkte, höchstens {CoverCap.SettledMax:0.00} m)");
-            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Stücke mit 4-m-Raster an Prefabs: {TerrainFill.FinePieces}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered}, angehoben: {RoadCap.Raised} Punkte");
+            warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Stücke mit 4-m-Raster an Prefabs: {TerrainFill.FinePieces}, davon in feinen Reihen um Anschluss-Prefabs: {TerrainFill.ZonePieces}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered}, angehoben: {RoadCap.Raised} Punkte");
         }
         if (Environment.GetEnvironmentVariable("OSM2ETS_ONLYBOX") is { } ob)
         {
