@@ -15,7 +15,7 @@ public static class MinorPush
     public const float Gap = 0.5f;        // Luft zwischen den Modellrändern (m)
     public const float MaxPush = 12f;     // mehr nicht (sonst eher falsche Zuordnung)
     public const float Taper = 40f;       // Ein-/Auslauf der Verschiebung entlang der Straße (m)
-    public const float MaxDz = 3f;        // nur bei Höhenunterschied darunter
+    public static float MaxDz = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_PUSH_MAXDZ"), System.Globalization.CultureInfo.InvariantCulture, out var md) ? md : 6f;        // nur bei Höhenunterschied darunter (OSM2ETS_PUSH_MAXDZ)
     public const float Slope = 1.5f;      // Böschung zwischen den Rändern: so viele m Breite je m Höhe
 
     public const float MinParallel = 0.87f;  // |cos| des Winkels zur großen Straße (≤ 30°)

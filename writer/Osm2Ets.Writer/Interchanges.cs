@@ -1154,6 +1154,7 @@ public static class Interchanges
                 p.Grade = (p.Anchor.Y - HeightFromEnd(p.MainIn, len)) / len;
                 if (UseChord) p.Direction = Chord(AxisAt(p.MainIn, false, len), p.Anchor, p.Direction);
             }
+            if (UseBalance && (p.Ext > 0 || BalanceAll)) Balance(p, src);
             return TrimEnd(p.MainIn, far + Slack) && TrimStart(p.Ramp, RampTrim + d) && (d == 0 || TrimStart(p.MainOut, d));
         }
         else
@@ -1258,6 +1259,61 @@ public static class Interchanges
         p.Direction = Direction(p.MainIn, p.MainOut);
         p.Moved = d;
         ParallelMoved++;
+    }
+
+    /// <summary>Teilung so drehen, dass ankommende Fahrbahn, weiterführende Fahrbahn und Rampe
+    /// gleich viel von ihrer OSM-Richtung abweichen (aus: OSM2ETS_NO_BALANCE=1).</summary>
+    public static bool UseBalance = Environment.GetEnvironmentVariable("OSM2ETS_NO_BALANCE") != "1";
+    public const float MaxBalanceDeg = 5f;
+    public static bool BalanceAll = Environment.GetEnvironmentVariable("OSM2ETS_BALANCE_ALL") == "1";
+    public const float BalanceReach = 40f;     // Richtung der Straßen über so viele Meter ab dem Prefab
+    public static int Balanced;
+
+    private static float Ang(Vector3 v) => MathF.Atan2(v.Z, v.X);
+    private static float Wrap(float a) { while (a > MathF.PI) a -= 2 * MathF.PI; while (a < -MathF.PI) a += 2 * MathF.PI; return a; }
+
+    /// <summary>
+    /// Die Teilung lag nach der Sehne der ankommenden Fahrbahn; zweigt die OSM-Rampe flacher oder
+    /// steiler ab als die Prefab-Rampe, musste allein die Rampe einen starken Bogen machen (Dreieck,
+    /// ch_42007). Gedreht wird um den Hauptausgang (OSM-Knoten), um das Mittel der Richtungsfehler
+    /// von ankommender Fahrbahn (0, sie bestimmt die Sehne), weiterführender Fahrbahn und Rampe,
+    /// höchstens <see cref="MaxBalanceDeg"/>.
+    /// </summary>
+    private static void Balance(Plan p, PpdSource src)
+    {
+        var ppd = src.Get(p.K.Split!.PpdPath);
+        var loc = Calibrate(ppd, p.K.Split.Unit, Quaternion.Identity);
+        var inward = WorldDirections(ppd, loc);
+        var axis = loc[SplitMain] - loc[SplitIn];
+        float fMain = Wrap(Ang(-inward[SplitMain]) - Ang(axis)), fRamp = Wrap(Ang(-inward[SplitRamp]) - Ang(axis));
+        var mo = AxisAt(p.MainOut, true, BalanceReach) - p.Anchor;
+        // ab der Stelle der Rampe neben dem Hauptausgang (die Rampe beginnt nach einer verschobenen
+        // Teilung weit stromauf)
+        var rp = PointAlongRamp(p.Ramp, RampArcAt(p.Ramp, new Vector2(p.Anchor.X, p.Anchor.Z)) + BalanceReach) - p.Anchor;
+        if (mo.LengthSquared() < 1 || rp.LengthSquared() < 1) return;
+        float th = Ang(p.Direction);
+        float eM = Wrap(Ang(mo) - (th + fMain)), eR = Wrap(Ang(rp) - (th + fRamp));
+        float delta = Math.Clamp((0 + eM + eR) / 3, -MaxBalanceDeg * MathF.PI / 180, MaxBalanceDeg * MathF.PI / 180);
+        if (MathF.Abs(delta) < 0.2f * MathF.PI / 180) return;
+        float c = MathF.Cos(delta), sn = MathF.Sin(delta);
+        var d = p.Direction;
+        p.Direction = Vector3.Normalize(new Vector3(d.X * c - d.Z * sn, d.Y, d.X * sn + d.Z * c));
+        Balanced++;
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            Console.Error.WriteLine($"BALANCE {p.OsmNode} {p.K.Name} eM {eM * 180 / MathF.PI:0.0} eR {eR * 180 / MathF.PI:0.0} -> {delta * 180 / MathF.PI:0.0}°");
+    }
+
+    /// <summary>Punkt der Rampe in dist Metern Bogenlänge ab ihrem Anfang.</summary>
+    private static Vector3 PointAlongRamp(RoadEntry r, float dist)
+    {
+        double acc = 0;
+        for (int i = 0; i < r.Points.Count - 1; i++)
+        {
+            double s = Dist(r.Points[i], r.Points[i + 1]);
+            if (acc + s >= dist) return Vector3.Lerp(MapWriter.ToVector(r.Points[i]), MapWriter.ToVector(r.Points[i + 1]), (float)((dist - acc) / Math.Max(s, 1e-6)));
+            acc += s;
+        }
+        return MapWriter.ToVector(r.Points[^1]);
     }
 
     /// <summary>Ausfahrten dort, wo die Rampe sich wirklich von der Hauptfahrbahn löst
