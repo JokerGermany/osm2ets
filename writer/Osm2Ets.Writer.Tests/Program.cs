@@ -36,6 +36,7 @@ var tests = new List<(string Name, Action Body)>
     ("Anschlussstelle: Autobahnbeginn aus zwei Anschlussästen wird Einfahrt", MotorwayStartFromTwoLinks),
     ("Anschlussstelle: zweispurige Ausfahrt von 3 Spuren, zweispurige Rampen", Hw3DoubleExitAndTwoLaneLinks),
     ("Anschlussstelle: Autobahnende an zwei zweispurigen Ästen wird Gabelung 2+2", Split22AtTwoTwoLaneLinks),
+    ("Anschlussstelle: vierspurige Strecke zwischen Einmündung 3+2 und Ausfahrt 4→3+1", Lane4MergeAndExit),
 };
 
 int failed = 0;
@@ -894,4 +895,26 @@ static void Split22AtTwoTwoLaneLinks()
     Check(plans.Count == 1 && plans[0].K == Interchanges.Split22 && plans[0].MainOut == st && plans[0].Ramp == ra,
           $"keine Gabelung 2+2 erkannt ({plans.Count}, {(plans.Count > 0 ? plans[0].K.Name : "-")})");
     Check(mi.Runs[1].Lanes == 2, "Zusatzspur vor der Gabelung nicht auf 2 Spuren gesetzt");
+}
+
+static void Lane4MergeAndExit()
+{
+    RunEntry R(int a, int b, string hw, int lanes) => new() { From = a, To = b, Highway = hw, Role = hw == "motorway" ? "core" : "link", Oneway = true, Lanes = lanes };
+    EndInfo N(long id) => new() { Kind = "node", OsmNode = id };
+    // in +x: 3 Spuren bis x = 0, Einmündung von rechts (+z) zweispurig, 4 Spuren bis x = 700,
+    // dort Ausfahrt nach rechts (einspurig), 3 Spuren weiter
+    var a = MakeRoad("a", [[-600, 0, 0], [0, 0, 0]], R(0, 1, "motorway", 3)); a.End = N(1);
+    var ramp = MakeRoad("r", [[-400, 0, 120], [-100, 0, 25], [0, 0, 0]], R(0, 2, "motorway_link", 2)); ramp.End = N(1);
+    var m = MakeRoad("m", [[0, 0, 0], [100, 0, 0], [700, 0, 0]], R(0, 1, "motorway", 5), R(1, 2, "motorway", 4)); m.Start = N(1); m.End = N(2);
+    var b = MakeRoad("b", [[700, 0, 0], [1300, 0, 0]], R(0, 1, "motorway", 3)); b.Start = N(2);
+    var ex = MakeRoad("x", [[700, 0, 0], [800, 0, 25], [1000, 0, 120]], R(0, 2, "motorway_link", 1)); ex.Start = N(2);
+    var plans = Interchanges.Find([a, ramp, m, b, ex], []);
+    Check(plans.Count == 2 && plans.Any(p => p.K == Interchanges.Hw3Merge2 && p.Kind == "entry" && p.Ramp == ramp)
+          && plans.Any(p => p.K == Interchanges.Hw3Exit && p.Kind == "exit" && p.Ramp == ex), $"Paar nicht erkannt ({plans.Count})");
+    Check(m.Runs.All(x => x.Role == "ext3" && x.Lanes == 4), "vierspurige Strecke nicht als ext3/4 Spuren");
+    // ohne Ausfahrt am Ende: keine Einmündung
+    var m2 = MakeRoad("m2", [[0, 0, 0], [700, 0, 0]], R(0, 1, "motorway", 4)); m2.Start = N(1);
+    var a2 = MakeRoad("a2", [[-600, 0, 0], [0, 0, 0]], R(0, 1, "motorway", 3)); a2.End = N(1);
+    var r2 = MakeRoad("r2", [[-400, 0, 120], [-100, 0, 25], [0, 0, 0]], R(0, 2, "motorway_link", 2)); r2.End = N(1);
+    Check(Interchanges.Find([a2, r2, m2], []).Count == 0, "Einmündung ohne passende Ausfahrt gesetzt");
 }
