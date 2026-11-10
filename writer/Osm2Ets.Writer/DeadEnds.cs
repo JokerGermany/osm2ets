@@ -27,6 +27,23 @@ internal static class DeadEnds
         var placed = new List<Placed>();
         var done = new HashSet<INode>();
         if (!Enabled) return placed;
+        // nur Kreuzungen, die der Spieler von der Autobahn aus erreicht: Netz ab allen Autobahn- und
+        // Rampenstücken über Knoten und Prefabs durchlaufen (Straßen ohne Anschluss an die Autobahn
+        // sind in L1 nur Sichtstücke)
+        var reach = new HashSet<IMapItem>();
+        var stack = new Stack<IMapItem>();
+        foreach (var r in roads)
+            if (r.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link") && first.TryGetValue(r, out var f0))
+                stack.Push(f0);
+        while (stack.Count > 0)
+        {
+            var it = stack.Pop();
+            if (!reach.Add(it)) continue;
+            IEnumerable<INode> nodes = it switch { Road rd => [rd.Node, rd.ForwardNode], Prefab pf => pf.Nodes, _ => [] };
+            foreach (var nd in nodes)
+                foreach (var o in new[] { nd.ForwardItem, nd.BackwardItem })
+                    if (o is IMapItem oi && !reach.Contains(oi)) stack.Push(oi);
+        }
         foreach (var r in roads)
         {
             if (!first.TryGetValue(r, out var fi) || !last.TryGetValue(r, out var la)) continue;
@@ -51,7 +68,7 @@ internal static class DeadEnds
                     if (cur is not Road rd) break;
                     var far = ReferenceEquals(rd.Node, from) ? rd.ForwardNode : rd.Node;
                     var next = (IMapItem?)(ReferenceEquals(far.BackwardItem, rd) ? far.ForwardItem : far.BackwardItem);
-                    if (next is Prefab) { junction = far; inner = from; break; }
+                    if (next is Prefab pfj) { if (reach.Contains(pfj)) { junction = far; inner = from; } break; }
                     if (next is null) break;
                     from = far; cur = (IMapItem)next;
                 }
