@@ -63,9 +63,10 @@ def test_synthetic_end_to_end(synthetic_osm, tmp_path, profile, capsys):
     nb = by_osm[(1, 2)]
     assert nb["points"][0][2] > nb["points"][-1][2]
     assert all(run["oneway"] for run in nb["runs"])
-    # Brücke der Bundesstraße liegt 6,0 m hoch, die Autobahn darunter auf 0
+    # Brücke der Bundesstraße über der Autobahn: 4,5 m lichte Höhe + 1,2 m Bauwerk + Reserve für
+    # die Steigung über die Fahrbahnbreite (Issue #1), die Autobahn darunter auf 0
     b = next(r for r in model["roads"] if any(run["bridge"] for run in r["runs"]))
-    assert max(p[1] for p in b["points"]) == pytest.approx(6.0, abs=0.01)
+    assert max(p[1] for p in b["points"]) == pytest.approx(6.4, abs=0.05)
     assert max(p[1] for p in nb["points"]) == pytest.approx(0.0, abs=0.01)
     # Kreuzungsknoten 32 liegt für alle angrenzenden Straßen auf derselben Höhe 0
     j32 = next(j for j in model["junctions"] if j["osm_node"] == 32)

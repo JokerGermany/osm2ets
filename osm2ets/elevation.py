@@ -197,6 +197,14 @@ SAG_MAX_RAISE_M = 3.0
 # Reserve beim Anheben an Kreuzungen: mit Geländemodell verschieben Steigungsgrenzen und Hülle
 # danach die Höhen um einige Zentimeter (ohne pauschales Anheben fehlte sonst bis 0,11 m Lichtraum)
 CLEARANCE_MARGIN_M = 0.2
+# Lichte Höhe über Autobahnen und Bundesstraßen ohne maxheight-Angabe (Issue #1): mindestens
+# 4,5 m unter der Bauwerksunterkante, und zwar über die ganze Breite der unteren Fahrbahn –
+# die obere Straße steigt oder fällt auf diesem Stück (bis 0,5 m weniger als an der Achse)
+MAJOR_MIN_CLEARANCE_M = 4.5
+MAJOR_LOWER = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link"}
+# halbe Breite je Straßenklasse (Spielmeter, Modellrand; Autobahn: ger16 −9…8 m)
+HALF_WIDTH_M = {"motorway": 9.0, "trunk": 8.0, "primary": 5.0, "motorway_link": 5.0,
+                "trunk_link": 5.0, "primary_link": 4.0, "secondary": 4.0, "tertiary": 4.0}
 
 
 def parse_maxheight(value) -> Optional[float]:
@@ -221,6 +229,31 @@ def parse_maxheight(value) -> Optional[float]:
 def _maxheight(piece: Piece, seg: int) -> Optional[float]:
     tags = piece.chain.parts[piece.dense.seg_part[seg]].edge.way.tags
     return parse_maxheight(tags.get("maxheight") or tags.get("maxheight:physical"))
+
+
+def _seg_dir_slope(piece: Piece, seg: int):
+    d = piece.dense
+    a, b = np.asarray(d.xy[seg], float), np.asarray(d.xy[seg + 1], float)
+    v = b - a
+    n = float(np.hypot(*v)) or 1.0
+    z = getattr(d, "z", None)
+    return v / n, n
+
+
+def _major_need(pieces, a_up: bool, la, sa, lb, sb) -> float:
+    """Höhenabstand der Achsen, damit unter dem Bauwerk über die ganze Breite der unteren Straße
+    MAJOR_MIN_CLEARANCE_M frei bleiben: Lichtraum + Bauwerksdicke + Höhenänderung der oberen
+    Straße über die halbe Breite der unteren (schräg gekreuzt: länger) und umgekehrt."""
+    (lu, su), (ll, sl) = ((la, sa), (lb, sb)) if a_up else ((lb, sb), (la, sa))
+    du, _ = _seg_dir_slope(pieces[lu], su)
+    dl, _ = _seg_dir_slope(pieces[ll], sl)
+    sin = max(abs(float(du[0] * dl[1] - du[1] * dl[0])), 0.3)
+    hw_low = HALF_WIDTH_M.get(_highway(pieces[ll], sl), 4.0)
+    hw_up = HALF_WIDTH_M.get(_highway(pieces[lu], su), 4.0)
+    # Steigung als Reserve: 10 % (größte Steigung im Netz) über die Länge; gemessen fehlten über
+    # die Breite bis 0,5 m gegenüber der Achse
+    grade = 0.10
+    return MAJOR_MIN_CLEARANCE_M + DECK_THICKNESS_M + grade * (hw_low + hw_up) / sin * 0.5
 
 
 def _highway(piece: Piece, seg: int) -> str:
@@ -758,6 +791,14 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     # zwischen den Widerlagern) lag z. B. die BT 46 über der A 9 gut 4 m höher als nötig,
     # samt 120 m langen Dammrampen und Erdplateau neben der Anschlussrampe.
     crossings = find_crossings([p.dense.xy_game for p in pieces])
+    # Punkte an höhenfreien Kreuzungen beim späteren Vereinfachen behalten, sonst gehen bis
+    # 0,6 m Lichtraum verloren (Douglas-Peucker mit Höhentoleranz auf beiden Straßen)
+    for la, sa, t, lb, sb, u in crossings:
+        for pc, sc in ((pieces[la], sa), (pieces[lb], sb)):
+            keep = getattr(pc.dense, "keep_idx", None)
+            if keep is None:
+                keep = set(); pc.dense.keep_idx = keep
+            keep.update((sc, sc + 1))
     eoff = np.cumsum([0] + [len(p.dense.xy) - 1 for p in pieces])
     crossed = {int(eoff[la] + sa) for la, sa, _, _, _, _ in crossings} | \
               {int(eoff[lb] + sb) for _, _, _, lb, sb, _ in crossings}
@@ -817,6 +858,8 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             if mh is None:
                 mh = _maxheight(pieces[lb], sb) if ra < rb else _maxheight(pieces[la], sa)
             need = (mh + DECK_THICKNESS_M if mh is not None else clearance) + extra
+            if mh is None and _highway(pieces[lb if ra >= rb else la], sb if ra >= rb else sa) in MAJOR_LOWER:
+                need = max(need, _major_need(pieces, ra >= rb, la, sa, lb, sb) + extra)
             if mh is not None:
                 mh_crossings.add(k)
             deficit = h_low + need - h_up
@@ -922,7 +965,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             fall[list(low)] = True
         crit_only = rise.astype(np.int8) - fall.astype(np.int8)
         crit_fixed = rise & fall
-        for _ in range(4):
+        for _ in range(12):
             fix = np.zeros(total)
             for target, deficit, lower in shortfalls(z, 0.0):
                 for vid in target:

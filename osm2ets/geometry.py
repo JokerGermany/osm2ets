@@ -362,6 +362,9 @@ def finalize_piece(piece: Piece, profile, part_run: list[int], runs: list[dict])
     prio[0] = prio[-1] = 2
     boundary = np.flatnonzero(run_of_seg[1:] != run_of_seg[:-1]) + 1
     prio[boundary] = np.maximum(prio[boundary], 1)
+    for k in getattr(d, "keep_idx", None) or ():
+        if 0 <= k < m:
+            prio[k] = max(prio[k], 1)
 
     # Alles ab hier in Spielmetern
     tol = max(profile.simplify_tolerance_game_m, 1e-6)
