@@ -175,7 +175,15 @@ public static class MapWriter
             foreach (var pl in placed)
                 foreach (var pf in new[] { pl.First, pl.Last }.Distinct())
                     pfObs.Add((pf.Nodes.Select(n => n.Position).ToArray(), 8f));
+            // lange Segmente fein unterteilen, sonst liegt kein Punkt dort, wo der Weg die Rampe überdeckt
+            if (MinorPush.Enabled)
+                foreach (var e in valid)
+                    if (!e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link")) SubdivideLinear(e, MinorPush.Sample);
             MinorPush.Apply(valid, run => { var st = mapping.Resolve(run); return (st.Width / 2, st.ModelCenter); }, pfObs, warnings);
+            // eingefügte Prüfpunkte, die gerade geblieben sind, wieder entfernen
+            if (MinorPush.Enabled)
+                foreach (var e in valid)
+                    if (!e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link")) DropCollinear(e, 0.02);
         }
 
         // Abzweige ohne Prefab bis an den Fahrbahnrand der anderen Straße zurücknehmen
@@ -187,11 +195,14 @@ public static class MapWriter
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } && TerrainFill.WideRoadTerrain)
             foreach (var entry in valid) Subdivide(entry, 40f);
 
+        // durch Unterteilen und Kürzen entstandene Kleinstabschnitte entfernen
+        foreach (var entry in valid) DropShort(entry, MinSegment);
+
         // Stile je Abschnitt auflösen, dann Gelände an Nachbarstraßen anpassen
         var styles = new Dictionary<RoadEntry, ResolvedStyle[]>();
         foreach (var entry in valid)
         {
-            Validate(entry, out var pts, out var ros);
+            if (Validate(entry, out var pts, out var ros) is { } verr) throw new InvalidOperationException($"{entry.Id}: {verr}");
             styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
         }
         int separated = CarriagewaySeparation.Apply(valid, styles);
@@ -605,6 +616,73 @@ public static class MapWriter
         return res;
     }
 
+    /// <summary>Innere Punkte entfernen, die einen Abschnitt kürzer als minLen machen (Läufe angepasst).</summary>
+    /// <summary>Innere Punkte auf der Geraden ihrer Nachbarn (Abweichung unter tol, auch in der Höhe) entfernen; Laufgrenzen bleiben.</summary>
+    internal static void DropCollinear(RoadEntry r, double tol)
+    {
+        var keep = new HashSet<int> { 0, r.Points.Count - 1 };
+        foreach (var run in r.Runs) { keep.Add(run.From); keep.Add(Math.Min(run.To, r.Points.Count - 1)); }
+        for (int i = r.Points.Count - 2; i >= 1; i--)
+        {
+            if (keep.Contains(i)) continue;
+            var a = r.Points[i - 1]; var b = r.Points[i]; var c = r.Points[i + 1];
+            double len2 = (c[0] - a[0]) * (c[0] - a[0]) + (c[1] - a[1]) * (c[1] - a[1]) + (c[2] - a[2]) * (c[2] - a[2]);
+            if (len2 < 1e-9) continue;
+            double t = ((b[0] - a[0]) * (c[0] - a[0]) + (b[1] - a[1]) * (c[1] - a[1]) + (b[2] - a[2]) * (c[2] - a[2])) / len2;
+            double dx = a[0] + t * (c[0] - a[0]) - b[0], dy = a[1] + t * (c[1] - a[1]) - b[1], dz = a[2] + t * (c[2] - a[2]) - b[2];
+            if (t <= 0 || t >= 1 || dx * dx + dy * dy + dz * dz > tol * tol) continue;
+            // neben dem Punkt darf kein Abschnitt länger als das Maximum werden
+            if (Math.Sqrt(len2) > MaxSegment * 0.9) continue;
+            r.Points.RemoveAt(i);
+            foreach (var run in r.Runs) { if (run.From > i) run.From--; if (run.To > i) run.To--; }
+            keep = keep.Select(k => k > i ? k - 1 : k).ToHashSet();
+        }
+    }
+
+    internal static void DropShort(RoadEntry r, float minLen)
+    {
+        static float D(double[] a, double[] b) => MathF.Sqrt((float)((a[0] - b[0]) * (a[0] - b[0]) + (a[1] - b[1]) * (a[1] - b[1]) + (a[2] - b[2]) * (a[2] - b[2])));
+        for (int i = 0; i < r.Points.Count - 1 && r.Points.Count > 2;)
+        {
+            if (D(r.Points[i], r.Points[i + 1]) >= minLen) { i++; continue; }
+            int k = i + 1 < r.Points.Count - 1 ? i + 1 : i;      // inneren Punkt entfernen
+            if (k == 0) { i++; continue; }
+            // Lauf, der an Punkt k beginnt, beginnt nun einen früher; Indizes dahinter rücken auf
+            r.Points.RemoveAt(k);
+            foreach (var run in r.Runs)
+            {
+                if (run.From >= k) run.From--;
+                if (run.To >= k) run.To--;
+            }
+            r.Runs.RemoveAll(x => x.From >= x.To);
+        }
+    }
+
+    /// <summary>Gerade Zwischenpunkte einfügen (Form bleibt), Läufe angepasst.</summary>
+    internal static void SubdivideLinear(RoadEntry r, float maxLen)
+    {
+        var p = r.Points;
+        if (p.Count < 2) return;
+        var np = new List<double[]> { p[0] };
+        var map = new int[p.Count];
+        for (int i = 0; i < p.Count - 1; i++)
+        {
+            var a = p[i]; var b = p[i + 1];
+            double len = Math.Sqrt((b[0] - a[0]) * (b[0] - a[0]) + (b[2] - a[2]) * (b[2] - a[2]));
+            int n = (int)Math.Ceiling(len / maxLen);
+            for (int k = 1; k < n; k++)
+            {
+                double t = (double)k / n;
+                np.Add([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]);
+            }
+            np.Add(b);
+            map[i + 1] = np.Count - 1;
+        }
+        if (np.Count == p.Count) return;
+        foreach (var run in r.Runs) { run.From = map[run.From]; run.To = map[Math.Min(run.To, map.Length - 1)]; }
+        r.Points = np;
+    }
+
     internal static void Subdivide(RoadEntry r, float maxLen)
     {
         var p = r.Points;
@@ -630,7 +708,8 @@ public static class MapWriter
             map[i + 1] = np.Count - 1;
         }
         if (np.Count == p.Count) return;
-        foreach (var run in r.Runs) { run.From = map[run.From]; run.To = map[run.To]; }
+        int M(int k) => k >= map.Length ? np.Count - 1 + (k - map.Length + 1) : map[k];   // To kann hinter dem letzten Punkt liegen
+        foreach (var run in r.Runs) { run.From = M(run.From); run.To = M(run.To); }
         r.Points = np;
     }
 

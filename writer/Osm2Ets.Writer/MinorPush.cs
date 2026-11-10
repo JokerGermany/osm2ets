@@ -14,7 +14,9 @@ public static class MinorPush
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_MINOR_PUSH") != "1";
     public const float Gap = 0.5f;        // Luft zwischen den Modellrändern (m)
     public const float MaxPush = 12f;     // mehr nicht (sonst eher falsche Zuordnung)
-    public const float Taper = 40f;       // Ein-/Auslauf der Verschiebung entlang der Straße (m)
+    public const float Taper = 40f;
+    public static float Sample = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_PUSH_SAMPLE"), System.Globalization.CultureInfo.InvariantCulture, out var sp) ? sp : 8f; // Punktabstand der Nebenstraßen beim Prüfen (m)
+    public const float MaxPushFlip = 20f; // auf die andere Seite einer Straße (Spalt zwischen zwei Rampen)       // Ein-/Auslauf der Verschiebung entlang der Straße (m)
     public static float MaxDz = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_PUSH_MAXDZ"), System.Globalization.CultureInfo.InvariantCulture, out var md) ? md : 6f;        // nur bei Höhenunterschied darunter (OSM2ETS_PUSH_MAXDZ)
     public const float Slope = 1.5f;      // Böschung zwischen den Rändern: so viele m Breite je m Höhe
 
@@ -70,7 +72,15 @@ public static class MinorPush
             // Seite je großer Straße einheitlich wählen (Mehrheit der nahen Punkte), sonst würden
             // einzelne Punkte auf die andere Seite gedrückt und der Weg kreuzte die Straße
             var sideSum = new Dictionary<object, float>();
-            for (int pass = 0; pass < 2; pass++)
+            // Durchgang 1 prüft, ob die gewählte Seite in ein anderes Hindernis drückt (Weg im
+            // Spalt zwischen zwei Rampen); dann weicht er dieser Straße auf die andere Seite aus
+            var conflict = new Dictionary<object, int>();
+            var flipped = new HashSet<object>();
+            for (int pass = 0; pass < 3; pass++)
+            {
+            if (pass == 2)
+                foreach (var (id, c) in conflict)
+                    if (c > 0 && sideSum.TryGetValue(id, out var sv0) && sv0 != 0) { sideSum[id] = -sv0; flipped.Add(id); }
             for (int i = 0; i < n; i++)
             {
                 var p = P(r.Points[i]);
@@ -81,7 +91,7 @@ public static class MinorPush
                 var tg = P(r.Points[Math.Min(i + 1, n - 1)]) - P(r.Points[Math.Max(i - 1, 0)]);
                 if (tg.LengthSquared() < 1e-6f) continue;
                 tg = Vector2.Normalize(tg);
-                Vector2 best = Vector2.Zero;
+                Vector2 best = Vector2.Zero; object? bestId = null;
                 foreach (var k in cand)
                 {
                     var o = obs[k];
@@ -107,11 +117,30 @@ public static class MinorPush
                     float needSide = o.Hw + hwMe + Gap + Slope * dz - side * lat;
                     if (needSide <= 0) continue;
                     var v = nrm * side * needSide;
-                    if (v.Length() > best.Length()) best = v;
+                    if (v.Length() > best.Length()) { best = v; bestId = id; }
                 }
                 if (pass == 0) continue;
-                if (best.Length() > MaxPush) best = Vector2.Zero;
+                if (pass == 1)
+                {
+                    if (bestId is null) continue;
+                    var np = p + best;
+                    foreach (var k in cand)
+                    {
+                        var o = obs[k];
+                        if (((object?)o.R ?? k).Equals(bestId) || (o.R is not null && nodeOf(o.R).Overlaps(mine))) continue;
+                        float dz = MathF.Abs(o.Y - (float)r.Points[i][1]);
+                        if (dz > MaxDz) continue;
+                        var ab = o.B - o.A; float l2 = ab.LengthSquared(); if (l2 < 1e-6f) continue;
+                        float u = Math.Clamp(Vector2.Dot(np - o.A, ab) / l2, 0, 1);
+                        if (o.Hw + hwMe + Gap + Slope * dz - Vector2.Distance(np, o.A + ab * u) > 0.5f)
+                        { conflict[bestId] = (conflict.TryGetValue(bestId, out var cc) ? cc : 0) + 1; break; }
+                    }
+                    continue;
+                }
+                float lim = bestId is not null && flipped.Contains(bestId) ? MaxPushFlip : MaxPush;
+                if (best.Length() > lim) best = Vector2.Zero;
                 push[i] = best; any |= best != Vector2.Zero;
+            }
             }
             if (!any) continue;
             // Hüllkurve über die Bogenlänge; an angeschlossenen Enden auf 0 auslaufen
