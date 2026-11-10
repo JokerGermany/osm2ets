@@ -34,7 +34,12 @@ public static class PrefabFootprint
         foreach (var (pf, ppd) in Ppd.ToList())
         {
             if (!map.MapItems.ContainsKey(pf.Uid)) continue;
-            var pts = LanesOf(pf, ppd, Interchanges.ShoulderOf(pf.Model));
+            float side = Interchanges.ShoulderOf(pf.Model);
+            // Kreuzungs-Prefabs (kein Anschluss-Kit): Spurmitten ±JunctionSide dazu, damit die
+            // Kreisscheiben die ganze Fahrbahn samt Rand decken – sonst lag Füllgelände an den
+            // Armen über dem Asphalt (mod_ger_67 an der A 70, x 1743, z −2505)
+            if (side <= 0) side = JunctionSide;
+            var pts = LanesOf(pf, ppd, side);
             if (pts is null) continue;
             var (h0, g, o) = Plane(pf);
             // Die Ebene geht durch die Knoten; Spurhöhen relativ zur mittleren Knotenhöhe der .ppd
@@ -115,6 +120,8 @@ public static class PrefabFootprint
     /// der A 70 (x = 4234, z = -1841) neue Wände.
     /// </summary>
     public const float ShoulderOffset = 2.5f, ShoulderOffset3 = 4.5f;
+    /// <summary>Seitlicher Zusatz für Kreuzungs-Prefabs (m; OSM2ETS_JUNCTION_SIDE, 0 = aus).</summary>
+    public static float JunctionSide = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JUNCTION_SIDE"), System.Globalization.CultureInfo.InvariantCulture, out var js) ? js : 2.5f;
 
     private static List<(Vector2 P, float LocalY)>? LanesOf(Prefab pf, PrefabDescriptor ppd, float side = 0f)
     {
