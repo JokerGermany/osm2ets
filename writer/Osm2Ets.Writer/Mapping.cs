@@ -20,6 +20,9 @@ public sealed class MappingConfig
     public StyleSpec? Tunnel { get; set; }
     /// <summary>Überschreibt Werte auf Wegen ohne Kfz-Zugang (access=private|no), zusätzlich zur Regel.</summary>
     public StyleSpec? Restricted { get; set; }
+    /// <summary>Seitenstreifen nach OSM shoulder=* (Schlüssel: Tag-Wert), außer für die Klassen in ShoulderSkip.</summary>
+    public Dictionary<string, StyleSpec>? Shoulder { get; set; }
+    public List<string>? ShoulderSkip { get; set; }
     /// <summary>Überschreibt Werte auf Sichtstücken (Rolle "visible": Straßen höherer Stufen, die man von der
     /// Strecke aus sieht – nur ein Stück davon, mit offenem Ende), zusätzlich zur Regel.</summary>
     public StyleSpec? Visible { get; set; }
@@ -66,6 +69,7 @@ public sealed class MappingConfig
         Bridge?.Validate("bridge", errors);
         Tunnel?.Validate("tunnel", errors);
         Restricted?.Validate("restricted", errors);
+        if (Shoulder is not null) foreach (var (k, v) in Shoulder) v.Validate($"shoulder.{k}", errors);
         Visible?.Validate("visible", errors);
         BridgeBody?.Validate("bridge_body", errors);
         foreach (var (type, b) in BridgeBodies ?? [])
@@ -104,6 +108,9 @@ public sealed class MappingConfig
             style = Tunnel.ToResolved(style);
         if (run.Access is not null && Restricted is not null)
             style = Restricted.ToResolved(style);
+        if (run.Shoulder is { } sh && Shoulder is not null && Shoulder.TryGetValue(sh, out var shs)
+            && !(ShoulderSkip?.Contains(run.Highway) ?? false))
+            style = shs.ToResolved(style);
         if (run.Role == VisibleRole && Visible is not null)
             style = Visible.ToResolved(style);
         return style;

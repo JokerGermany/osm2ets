@@ -21,7 +21,7 @@ log = logging.getLogger(__name__)
 # Tags, die später gebraucht werden. Alles andere wird verworfen.
 KEPT_TAGS = (
     "highway", "ref", "name", "oneway", "junction", "lanes", "lanes:forward",
-    "lanes:backward", "maxspeed", "bridge", "tunnel", "layer", "service",
+    "lanes:backward", "maxspeed", "bridge", "tunnel", "layer", "service", "shoulder",
 )
 
 _ALLOWED_VEHICLE_VALUES = frozenset({"yes", "designated", "permissive", "destination"})

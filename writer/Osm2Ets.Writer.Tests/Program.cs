@@ -125,6 +125,14 @@ static void MappingResolve()
     Check(vis.AiVehicles == track.AiVehicles && vis.ShowInUiMap == false && vis.GpsAvoid == true, "Sichtstück: KI wie sonst, nicht auf Karte/Navi");
     var visRes = cfg.Resolve(MakeRun(0, 1, "unclassified", role: "visible"));
     Check(visRes.AiVehicles != false && visRes.RoadType == other.RoadType, "Sichtstück einer Gemeindestraße mit KI");
+    // Seitenstreifen nach shoulder=* (Issue #3): asphaltierter Rand, nicht an Autobahnen
+    var shRun = MakeRun(0, 1, "primary", role: "core"); shRun.Shoulder = "yes";
+    var sh = cfg.Resolve(shRun);
+    Check(sh.Right?.LeftEdge == "ger_sh_as_15" && sh.Right?.RightEdge == "ger_sh_as_15" && sh.RoadType == cfg.Resolve(MakeRun(0, 1, "primary", role: "core")).RoadType, "shoulder=yes: asphaltierte Ränder");
+    var shR = MakeRun(0, 1, "primary", role: "core"); shR.Shoulder = "right";
+    Check(cfg.Resolve(shR).Right?.RightEdge == "ger_sh_as_15" && cfg.Resolve(shR).Right?.LeftEdge != "ger_sh_as_15", "shoulder=right: nur rechts");
+    var shM = MakeRun(0, 1, "motorway", oneway: true); shM.Shoulder = "no";
+    Check(cfg.Resolve(shM) == mw, "Autobahn: shoulder ändert nichts");
 }
 
 static void MappingRejectsInvalid()

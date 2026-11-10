@@ -94,6 +94,19 @@
   // Richtungsfahrbahnen (railing_left: false in ihren Regeln) nur außen, wie in der SCS-Karte.
   "bridge": { "terrain_left": 0, "terrain_right": 0, "railing": "mod_ger_3", "railing_offset": 1 },
   "tunnel": { "terrain_left": 0, "terrain_right": 0 },
+  // Seitenstreifen nach OSM shoulder=* (Issue #3): asphaltierter 1-m-Rand ger_sh_as_15
+  // ("ger_sh_asp_15", /road_template/ger/ger_sh_asphalt_15.pmd) statt des Banketts ger_sh_15.
+  // Alle ger-Ränder (sh_15, sh_as_15, sh_dirt, sh_vill) sind gemessen 1,0 m breit und eben, sie
+  // unterscheiden sich nur im Material. shoulder=no: wie ohne Angabe (Bankett). Autobahnen und
+  // Rampen haben den Standstreifen in ihrer Vorlage; eine deutsche Vorlage ohne ist nicht bekannt.
+  // Seiten in Fahrtrichtung der OSM-Linie (Annahme: left_edge/right_edge der Seite "right").
+  "shoulder": {
+    "yes": { "right": { "left_edge": "ger_sh_as_15", "right_edge": "ger_sh_as_15" } },
+    "both": { "right": { "left_edge": "ger_sh_as_15", "right_edge": "ger_sh_as_15" } },
+    "right": { "right": { "right_edge": "ger_sh_as_15" } },
+    "left": { "right": { "left_edge": "ger_sh_as_15" } }
+  },
+  "shoulder_skip": ["motorway", "motorway_link", "trunk", "trunk_link"],
   // Ein Brückenkörper für beide Richtungsfahrbahnen eines Paars paralleler Autobahnbrücken, wie in
   // der SCS-Karte: Railing dlc_it_8 = /model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd aus
   // dem ITALIA-DLC, an einer Richtungsfahrbahn, zur Gegenfahrbahn hin um den halben Abstand der

@@ -100,6 +100,8 @@ public sealed class RunEntry
     public string? Service { get; set; }
     /// <summary>Kfz-Zugang gesperrt: "private" oder "no" (nur in L5 enthalten), sonst null.</summary>
     public string? Access { get; set; }
+    /// <summary>OSM shoulder=* (yes, both, left, right, no), sonst null.</summary>
+    public string? Shoulder { get; set; }
     public List<long> OsmWays { get; set; } = [];
 
     /// <summary>Kopie mit anderen Grenzen (gleiche Attribute).</summary>
