@@ -40,7 +40,8 @@ def check_invariants(model: dict, profile) -> None:
             p = road["points"][0 if e["at"] == "start" else -1]
             assert np.allclose(p, j["position"], atol=0.002)
             info = road["start" if e["at"] == "start" else "end"]
-            assert info == {"kind": "node", "osm_node": j["osm_node"]}
+            # "open": geht in OSM auf befahrbaren Wegen außerhalb der Karte weiter (Sperrbaken, Issue #2)
+            assert {k: v for k, v in info.items() if k != "open"} == {"kind": "node", "osm_node": j["osm_node"]}
         assert j["degree"] == len(j["ends"])
 
 

@@ -59,6 +59,8 @@ public sealed class EndInfo
 {
     public string Kind { get; set; } = "";
     public long? OsmNode { get; set; }
+    /// <summary>Straße geht in OSM auf befahrbaren Wegen weiter, die nicht in der Karte sind (oder Kartenrand).</summary>
+    public bool Open { get; set; }
 }
 
 /// <summary>Fahrbahnfläche (area:highway=…) als Umriss in Spielkoordinaten [x, z].</summary>

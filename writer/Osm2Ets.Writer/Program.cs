@@ -133,6 +133,7 @@ public static class Program
         }
         Directory.CreateDirectory(outDir);
         map.Save(outDir, name, true);
+        DeadEnds.WriteSidecar(Path.Combine(outDir, name + ".osm2ets.json"), MapWriter.DeadEndsPlaced);
         int layerFiles = o.ContainsKey("--no-layer-files") ? 0 : MapWriter.EnsureLayerFiles(sectorDir);
 
         Console.WriteLine($"Geschrieben: {mbd}");

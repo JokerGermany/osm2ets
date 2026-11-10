@@ -253,6 +253,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                            "Gebiet, Detailstufe und Maßstab prüfen")
 
     roads = [_road_dict(p) for p in kept]
+    open_ends = mark_open_ends(roads, input_path, excl_access, excl_service)
     implicit = implicit_bridges(roads)
     terrain_grid = None
     if dem is not None:
@@ -362,6 +363,45 @@ IMPLICIT_HALF_M = 4.0           # halbe Breite der unteren Straße (etwa)
 IMPLICIT_SHOULDER_M = 1.5       # flach neben ihr (wie Underpasses.Shoulder im Writer)
 IMPLICIT_SLOPE = 0.67           # Böschung unter der Brücke bis an die Brückenenden (1 : 1,5)
 IMPLICIT_MAX_HALF_M = 25.0
+
+
+# Klassen, auf denen ein Lkw weiterfahren könnte: endet eine Kartenstraße an einem Knoten, an dem
+# eine solche Straße in OSM weitergeht (oder am Kartenrand), führt sie im Spiel ins Nichts
+DRIVABLE = frozenset({"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link",
+                      "secondary", "secondary_link", "tertiary", "tertiary_link", "unclassified",
+                      "residential", "living_street", "service", "road"})
+
+
+def mark_open_ends(roads: list[dict], input_path: str, excl_access=frozenset(), excl_service=frozenset()) -> int:
+    """Setzt end["open"] = True an Straßenenden, die in OSM auf befahrbaren Wegen weitergehen,
+    die nicht in der Karte sind (Stufengrenze), und an abgeschnittenen Enden (Kartenrand)."""
+    ends: dict[int, list[dict]] = {}
+    in_map: dict[int, set] = {}
+    for r in roads:
+        ways = {w for run in r["runs"] for w in run.get("osm_ways", [])}
+        for key in ("start", "end"):
+            e = r[key]
+            if e.get("kind") == "node":
+                ends.setdefault(e["osm_node"], []).append(e)
+                in_map.setdefault(e["osm_node"], set()).update(ways)
+    drive_ways: dict[int, set] = {}
+    if ends:
+        for w in read_ways(input_path, DRIVABLE, excl_access, excl_service):
+            for n in w.nodes:
+                if n in ends:
+                    drive_ways.setdefault(n, set()).add(w.id)
+    all_map = {w for r in roads for run in r["runs"] for w in run.get("osm_ways", [])}
+    count = 0
+    for r in roads:
+        drivable = any(run["highway"] in DRIVABLE for run in r["runs"])
+        for key in ("start", "end"):
+            e = r[key]
+            if not drivable:
+                continue
+            if e.get("kind") == "cut" or (e.get("kind") == "node" and drive_ways.get(e["osm_node"], set()) - all_map):
+                e["open"] = True
+                count += 1
+    return count
 
 
 def implicit_bridges(roads: list[dict]) -> int:

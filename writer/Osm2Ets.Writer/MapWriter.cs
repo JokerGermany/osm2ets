@@ -580,6 +580,8 @@ public static class MapWriter
                 Console.Error.WriteLine($"T {a.X:0.0}..{b.X:0.0} z {a.Z:0.0} y {a.Y:0.0}/{b.Y:0.0} L {t.Left.Terrain.Size:0.0} R {t.Right.Terrain.Size:0.0} offs {t.Left.Terrain.QuadData.Offsets.Count}/{t.Right.Terrain.QuadData.Offsets.Count} cols {t.Left.Terrain.QuadData.Cols} rows {t.Left.Terrain.QuadData.Rows}/{t.Right.Terrain.QuadData.Rows}");
             }
         }
+        DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
+        if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen");
         if (AreaCheck.Run(map, input.Areas) is { } ac)
             warnings.Add($"Info: Lage zu area:highway: {ac.Points} Spurpunkte an Autobahnflächen, {ac.Outside} mehr als {AreaCheck.Tol:0} m außerhalb" +
                          $" ({100.0 * ac.Outside / Math.Max(ac.Points, 1):0.0} %), höchstens {ac.Max:0.0} m" +
@@ -856,6 +858,9 @@ public static class MapWriter
     public static Vector3 ToVector(double[] p) => new((float)p[0], (float)p[1], (float)p[2]);
 
     /// <summary>Prüft ein Straßenstück und liefert Punkte und Lauf je Abschnitt.</summary>
+    /// <summary>Zuletzt gesetzte Sperrbaken (für die Begleitdatei).</summary>
+    internal static List<DeadEnds.Placed> DeadEndsPlaced = [];
+
     internal static string? Validate(RoadEntry entry, out List<Vector3> points, out int[] runOfSegment)
     {
         points = [];
