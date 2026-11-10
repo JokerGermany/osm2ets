@@ -191,14 +191,17 @@ GRADE_BY_HIGHWAY = {"motorway": 0.06, "trunk": 0.06}
 WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, "trunk_link": 140.0}
 
 
-DECK_THICKNESS_M = 1.2
+# Bauwerk unter der Fahrbahn: die Brückenkörper (shared_simple, shared_2lanes_x_1way,
+# shared_hw_exit, shared_3lanes_x_1way aus /model2/railing/bridge/, ETS2 1.61) reichen
+# gemessen 1,57–1,59 m unter die Fahrbahn
+DECK_THICKNESS_M = 1.6
 SAG_WINDOW_M = 160.0      # Mulden in Autobahnprofilen auffüllen (Spielmeter)
 SAG_MAX_RAISE_M = 3.0
 # Reserve beim Anheben an Kreuzungen: mit Geländemodell verschieben Steigungsgrenzen und Hülle
 # danach die Höhen um einige Zentimeter (ohne pauschales Anheben fehlte sonst bis 0,11 m Lichtraum)
 CLEARANCE_MARGIN_M = 0.2
 # Lichte Höhe über Autobahnen und Bundesstraßen ohne maxheight-Angabe (Issue #1): mindestens
-# 4,5 m unter der Bauwerksunterkante, und zwar über die ganze Breite der unteren Fahrbahn –
+# 4,5 m unter der Bauwerksunterkante (Bauwerk 1,6 m), und zwar über die ganze Breite der unteren Fahrbahn –
 # die obere Straße steigt oder fällt auf diesem Stück (bis 0,5 m weniger als an der Achse)
 MAJOR_MIN_CLEARANCE_M = 4.5
 MAJOR_LOWER = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link"}
