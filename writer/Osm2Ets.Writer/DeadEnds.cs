@@ -25,6 +25,7 @@ internal static class DeadEnds
                                      Dictionary<RoadEntry, Road> first, Dictionary<RoadEntry, Road> last)
     {
         var placed = new List<Placed>();
+        var done = new HashSet<INode>();
         if (!Enabled) return placed;
         foreach (var r in roads)
         {
@@ -39,9 +40,26 @@ internal static class DeadEnds
                 if (other is not null) continue;
                 var st = styles[r][atStart ? 0 : ^1];
                 if (st.AiVehicles == false) continue;               // Wege ohne Verkehr: keine Sperre
-                var p = node.Position;
-                var q = atStart ? fi.ForwardNode.Position : la.Node.Position;
-                var d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));   // ins Straßeninnere
+                // Die Sperre gehört an die Kreuzung, an der die Sackgasse abzweigt (Issue #2): vom
+                // offenen Ende die Straßenkette zurückgehen bis zum Prefab. Endet die Kette auch auf
+                // der anderen Seite frei, ist das Stück nicht erreichbar – keine Sperre.
+                IMapItem cur = atStart ? fi : la;
+                var from = node;
+                INode? junction = null; INode? inner = null;
+                for (int step = 0; step < 500; step++)
+                {
+                    if (cur is not Road rd) break;
+                    var far = ReferenceEquals(rd.Node, from) ? rd.ForwardNode : rd.Node;
+                    var next = (IMapItem?)(ReferenceEquals(far.BackwardItem, rd) ? far.ForwardItem : far.BackwardItem);
+                    if (next is Prefab) { junction = far; inner = from; break; }
+                    if (next is null) break;
+                    from = far; cur = (IMapItem)next;
+                }
+                if (junction is null || inner is null) continue;
+                if (!done.Add(junction)) continue;
+                var p = junction.Position;
+                var q = (cur as Road)!.Node == junction ? (cur as Road)!.ForwardNode.Position : (cur as Road)!.Node.Position;
+                var d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));   // von der Kreuzung in die Sackgasse
                 if (float.IsNaN(d.X)) continue;
                 var at = new Vector2(p.X, p.Z) + d * Inset;
                 var n = new Vector2(-d.Y, d.X);
