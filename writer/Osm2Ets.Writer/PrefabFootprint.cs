@@ -35,7 +35,7 @@ public static class PrefabFootprint
         {
             if (!map.MapItems.ContainsKey(pf.Uid)) continue;
             float side = Interchanges.ShoulderOf(pf.Model);
-            // Kreuzungs-Prefabs (kein Anschluss-Kit): Spurmitten ±JunctionSide dazu, damit die
+            // Kreuzungs-Prefabs (kein Anschluss-Kit): Spurmitten ±JunctionSide (4,5 m) dazu, damit die
             // Kreisscheiben die ganze Fahrbahn samt Rand decken – sonst lag Füllgelände an den
             // Armen über dem Asphalt (mod_ger_67 an der A 70, x 1743, z −2505)
             if (side <= 0) side = JunctionSide;
@@ -121,7 +121,7 @@ public static class PrefabFootprint
     /// </summary>
     public const float ShoulderOffset = 2.5f, ShoulderOffset3 = 4.5f;
     /// <summary>Seitlicher Zusatz für Kreuzungs-Prefabs (m; OSM2ETS_JUNCTION_SIDE, 0 = aus).</summary>
-    public static float JunctionSide = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JUNCTION_SIDE"), System.Globalization.CultureInfo.InvariantCulture, out var js) ? js : 2.5f;
+    public static float JunctionSide = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JUNCTION_SIDE"), System.Globalization.CultureInfo.InvariantCulture, out var js) ? js : 4.5f;
 
     private static List<(Vector2 P, float LocalY)>? LanesOf(Prefab pf, PrefabDescriptor ppd, float side = 0f)
     {
