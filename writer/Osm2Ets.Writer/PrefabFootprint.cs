@@ -38,7 +38,10 @@ public static class PrefabFootprint
             // Kreuzungs-Prefabs (kein Anschluss-Kit): Spurmitten ±JunctionSide (4,5 m) dazu, damit die
             // Kreisscheiben die ganze Fahrbahn samt Rand decken – sonst lag Füllgelände an den
             // Armen über dem Asphalt (mod_ger_67 an der A 70, x 1743, z −2505)
-            if (side <= 0) side = JunctionSide;
+            // dazu tiefer: die Modellfläche fällt zu den Rändern und Ecken hin ab (Quergefälle), mit
+            // nur 0,18 m Abstand zur Knotenebene kam die Erde in Innenecken durch (mod_ger_67, x 1768, z −2540)
+            float drop = 0f;
+            if (side <= 0) { side = JunctionSide; drop = JunctionDrop; }
             var pts = LanesOf(pf, ppd, side);
             if (pts is null) continue;
             var (h0, g, o) = Plane(pf);
@@ -47,7 +50,7 @@ public static class PrefabFootprint
             // und das Gelände darf 0,2 m über der Fahrbahn liegen)
             float ny = UseNodeRelative ? ppd.Nodes.Average(k => k.Position.Y) : 0f;
             foreach (var (p, ly) in pts)
-                res.Add(new Vector3(p.X, h0 + Vector2.Dot(g, p - o) + ly - ny, p.Y));
+                res.Add(new Vector3(p.X, h0 + Vector2.Dot(g, p - o) + ly - ny - drop, p.Y));
         }
         return res;
     }
@@ -120,6 +123,8 @@ public static class PrefabFootprint
     /// der A 70 (x = 4234, z = -1841) neue Wände.
     /// </summary>
     public const float ShoulderOffset = 2.5f, ShoulderOffset3 = 4.5f;
+    /// <summary>Zusätzliche Tiefe des Füllgeländes unter Kreuzungs-Prefabs (m; OSM2ETS_JUNCTION_DROP).</summary>
+    public static float JunctionDrop = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JUNCTION_DROP"), System.Globalization.CultureInfo.InvariantCulture, out var jd) ? jd : 0.3f;
     /// <summary>Seitlicher Zusatz für Kreuzungs-Prefabs (m; OSM2ETS_JUNCTION_SIDE, 0 = aus).</summary>
     public static float JunctionSide = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JUNCTION_SIDE"), System.Globalization.CultureInfo.InvariantCulture, out var js) ? js : 4.5f;
 
