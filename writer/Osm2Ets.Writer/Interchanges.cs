@@ -335,6 +335,10 @@ public static class Interchanges
         /// Spurende), rückt dieses über das Bauwerk hinaus; dazwischen läuft eine Straße mit
         /// Zusatzspur (wie in der SCS-Karte). Länge dieser Straße (m), 0 = Prefabs direkt verbunden.</summary>
         public float Ext;
+        /// <summary>Einfahrt direkt hinter dem Spurende-Prefab der Rampe stromauf gerückt.</summary>
+        public bool AfterRampPrefab;
+        /// <summary>Einfahrt direkt am Spurende-Prefab der Rampe, die Rampenstraße entfällt.</summary>
+        public bool DirectRamp;
         /// <summary>Liegt ein Bauwerk unter dem inneren Prefab (Teilung bzw. Zusammenführung), rückt
         /// dieses um Shift Meter vom Bauwerk weg auf die andere Seite des OSM-Knotens (Ausfahrt:
         /// stromab, Einfahrt: stromauf); das Bauwerk liegt dann unter der Zusatzspur-Straße.</summary>
@@ -752,6 +756,28 @@ public static class Interchanges
     }
 
     /// <summary>Kürzt eine Straße am Anfang um mindestens <paramref name="dist"/> Meter.</summary>
+    /// <summary>Wie TrimStart, aber genau bei dist geschnitten (Zwischenpunkt), nicht am nächsten
+    /// Punkt dahinter – hinter dem Spurende einer Rampe blieben sonst bis 36 m Anschlussstück, und
+    /// die Einfahrt danach lag so weit vom Spurende entfernt (A 9 z −2530).</summary>
+    public static bool TrimStartExact(RoadEntry r, float dist)
+    {
+        double acc = 0;
+        int k = 0;
+        while (k < r.Points.Count - 1 && acc + Dist(r.Points[k], r.Points[k + 1]) < dist)
+        {
+            acc += Dist(r.Points[k], r.Points[k + 1]);
+            k++;
+        }
+        if (k > r.Points.Count - 2) return false;
+        double seg = Dist(r.Points[k], r.Points[k + 1]), rest = dist - acc;
+        if (seg - rest < MapWriter.MinSegment + 0.5) return TrimStart(r, dist);
+        var a = r.Points[k]; var b = r.Points[k + 1]; double t = rest / seg;
+        var cut = new[] { a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t };
+        r.Points = new List<double[]> { cut }.Concat(r.Points.Skip(k + 1)).ToList();
+        r.Runs = r.Runs.Where(x => x.To > k).Select(x => { x.From = Math.Max(0, x.From - k); x.To -= k; return x; }).ToList();
+        return r.Points.Count >= 2;
+    }
+
     public static bool TrimStart(RoadEntry r, float dist)
     {
         double acc = 0;
@@ -1111,7 +1137,7 @@ public static class Interchanges
             if (ArcLength(p.MainOut) < len + Slack + 20 || ArcLength(p.MainIn) < Slack + 20) return false;
             p.Grade = (HeightFromStart(p.MainOut, len) - p.Anchor.Y) / len;
             if (UseChord) p.Direction = Chord(p.Anchor, AxisAt(p.MainOut, true, len), p.Direction);
-            return TrimStart(p.MainOut, len + Slack);
+            return TrimStartExact(p.MainOut, len + Slack);
         }
         if (p.Kind == "exit")
         {
@@ -1174,6 +1200,17 @@ public static class Interchanges
                 ext = CurveExt(p.MainOut.Points, p.Anchor, lenNear + lenFar);
                 p.ExtForCurve = ext > 0;
             }
+            // Einmündung stromauf gerückt: die Verengung bleibt, wo OSM die Fahrbahn wieder schmaler
+            // macht – dazwischen Zusatzspur-Straße auf der OSM-Linie des breiteren Abschnitts (sonst
+            // lag die schmale Fahrbahn mit dem Versatz der breiten neben der Gegenfahrbahn, A 9 z −2660)
+            if (p.Moved > 0 && p.AfterRampPrefab && p.K.Narrow is not null && d == 0 && ext < p.Moved)
+            {
+                // nicht bis an das nächste Prefab/Ende der Fahrbahn danach (A 9 bei z −500: Zusatzspur
+                // über zwei Einmündungen)
+                float room = (float)ArcLength(p.MainOut) - len - Slack - 60;
+                float e2 = MathF.Min(MathF.Min(p.Moved, MaxExt), room);
+                if (e2 > ext) { ext = e2; p.ExtForCurve = false; }
+            }
             p.Ext = ext;
             if (p.K.Narrow is null && (d > 0 || ext > 0)) return false;
             float far = len + p.Ext - d;      // so weit reichen die Prefabs stromab
@@ -1224,6 +1261,7 @@ public static class Interchanges
         for (float D = 2; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
         {
             var q = AxisAt(p.MainIn, false, D);
+            if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null && D % 10 == 0) Console.Error.WriteLine($"PAR {p.OsmNode} D {D} dist {RampDistance(p.Ramp, new Vector2(q.X, q.Z)):0.0} lat {lat:0.0} lon {lon:0.0} total {total:0}");
             if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
         }
         float d = found - lon - 2;     // Prefab-Hauptknoten so, dass der Rampenknoten dort liegt
@@ -1231,7 +1269,63 @@ public static class Interchanges
         // vor dem Rampenknoten muss genug Rampe bleiben (sonst z. B. Spurende-Prefab und Einfahrt
         // fast aneinander, die Rampe dazwischen geknickt)
         var qf = AxisAt(p.MainIn, false, found);
-        if (RampArcAt(p.Ramp, new Vector2(qf.X, qf.Z)) < (p.Ramp.Start?.Kind == "prefab" ? MinRampBefore * 3 : MinRampBefore)) return;
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine($"PARF {p.OsmNode} found {found} d {d} arc {RampArcAt(p.Ramp, new Vector2(qf.X, qf.Z)):0} start {p.Ramp.Start?.Kind} ramp {p.Ramp.Id}");
+        float needArc = p.Ramp.Start?.Kind == "prefab" ? MinRampBefore * 3 : MinRampBefore;
+        if (RampArcAt(p.Ramp, new Vector2(qf.X, qf.Z)) < needArc)
+        {
+            // Rampe beginnt kurz davor an einem Prefab (Spurende auf der Rampe): dann nur so weit
+            // rücken, wie vor dem Rampenknoten MinRampBefore bleiben und die Rampe mindestens den
+            // halben Prefab-Abstand hat – der Rest des Abstands wird ein flacher Bogen der Rampe.
+            // In OSM ist die Rampe getrennt, solange eine Sperrfläche sie trennt; das Prefab gehört
+            // davor, nicht an den OSM-Knoten (sonst liegt die Rampe auf der Autobahn, A 9 z −2530).
+            float best = -1;
+            if (p.Ramp.Start?.Kind == "prefab")
+            {
+                // direkt hinter dem Spurende-Prefab der Rampe beginnt die Einfädelung (Sperrfläche
+                // in OSM bis zum Knoten): so weit stromauf wie möglich, nur ein kurzes Rampenstück
+                // (PrefabGap) zwischen den Prefabs
+                for (float D = found + 120; D >= 20 + lon + 2; D -= 2)
+                {
+                    if (D > total - 60) continue;
+                    // geschätzte Lage des Rampenknotens: lon vor und lat neben der Achse, auf der Seite der Rampe
+                    var q2 = AxisAt(p.MainIn, false, D);
+                    var q3 = AxisAt(p.MainIn, false, MathF.Max(D - 5, 0));
+                    var dv = new Vector2(q3.X - q2.X, q3.Z - q2.Z);
+                    if (dv.LengthSquared() < 1e-6f) continue;
+                    dv = Vector2.Normalize(dv);
+                    var rs = P(p.Ramp.Points[0]) - new Vector2(q2.X, q2.Z);
+                    var nrm = new Vector2(-dv.Y, dv.X);
+                    if (Vector2.Dot(nrm, rs) < 0) nrm = -nrm;
+                    var node = new Vector2(q2.X, q2.Z) + dv * lon + nrm * lat;
+                    if (RampArcAt(p.Ramp, node) < PrefabGap) continue;
+                    // kein Knick zwischen Spurende und Einfahrt: die Verbindung vom Ende des
+                    // Spurende-Prefabs zum Rampenknoten darf von dessen Richtung und von der Richtung
+                    // der Einfahrt (parallel zur Achse) nur wenig abweichen – sonst lieber etwas
+                    // weiter stromab (flacher S-Bogen statt V)
+                    var r0 = P(p.Ramp.Points[0]);
+                    var t0 = P(p.Ramp.Points[1]) - r0;
+                    var ch = node - r0;
+                    if (t0.LengthSquared() < 1e-6f || ch.LengthSquared() < 1e-6f) continue;
+                    t0 = Vector2.Normalize(t0); var chn = Vector2.Normalize(ch); var tn = dv;   // Fahrtrichtung (dv zeigt stromab)
+                    float a0 = MathF.Acos(Math.Clamp(Vector2.Dot(t0, chn), -1, 1)) * 180 / MathF.PI;
+                    float a1 = MathF.Acos(Math.Clamp(Vector2.Dot(chn, tn), -1, 1)) * 180 / MathF.PI;
+                    if (a0 + a1 > JoinTurnPerM * ch.Length()) continue;
+                    best = D; break;
+                }
+            }
+            else
+            for (float D = found; D >= 20 + lon + 2; D -= 2)
+            {
+                var q2 = AxisAt(p.MainIn, false, D);
+                var v2 = new Vector2(q2.X, q2.Z);
+                if (RampDistance(p.Ramp, v2) < lat * ShortRampLat) break;
+                if (RampArcAt(p.Ramp, v2) >= MinRampBefore) { best = D; break; }
+            }
+            if (best < 0) return;
+            p.AfterRampPrefab = p.Ramp.Start?.Kind == "prefab";
+            found = best; d = found - lon - 2;
+            qf = AxisAt(p.MainIn, false, found);
+        }
         // Hauptfahrbahn bei d teilen
         var pts = p.MainIn.Points; double acc = 0; int k = pts.Count - 1;
         while (k > 0 && acc + Dist(pts[k - 1], pts[k]) < d) { acc += Dist(pts[k - 1], pts[k]); k--; }
@@ -1454,6 +1548,19 @@ public static class Interchanges
 
     /// <summary>So viel Rampe muss vor dem verschobenen Rampenknoten bleiben (m).</summary>
     public const float MinRampBefore = 60f;
+    /// <summary>Kleinster Rampenabstand (Anteil des Prefab-Abstands), bis zu dem eine Einmündung vor
+    /// einem Rampen-Prefab noch stromauf gerückt wird.</summary>
+    public const float ShortRampLat = 0.5f;
+    /// <summary>Rampenstück zwischen Spurende-Prefab der Rampe und Einfahrt (m), zusätzlich zum
+    /// Anschlussstück (Slack), das hinter dem Spurende-Prefab ohnehin bleibt.</summary>
+    public const float PrefabGap = 1f;
+    /// <summary>Einfahrt direkt an das Spurende-Prefab der Rampe hängen (aus: OSM2ETS_NO_DIRECT_JOIN=1).</summary>
+    public static bool UseDirectJoin = Environment.GetEnvironmentVariable("OSM2ETS_NO_DIRECT_JOIN") != "1";
+    public static int DirectJoins;
+    private static readonly Dictionary<RoadEntry, Prefab> DropPlaced = [];
+    /// <summary>Richtungsänderung (Grad je Meter) an beiden Enden zusammen, die das Rampenstück
+    /// zwischen Spurende-Prefab und Einfahrt als flacher Bogen aufnehmen darf.</summary>
+    public static float JoinTurnPerM = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JOIN_TURN"), System.Globalization.CultureInfo.InvariantCulture, out var jt) ? jt : 0.4f;
 
     /// <summary>Bogenlänge vom Rampenanfang bis zum Punkt, der q am nächsten liegt.</summary>
     private static float RampArcAt(RoadEntry r, Vector2 q)
@@ -1693,6 +1800,7 @@ public static class Interchanges
         if (p.Kind == "drop")
         {
             var pf = Place(map, src, p.K.Narrow!, NarrowIn, NarrowOut, p.Direction, NarrowIn, p.Anchor, p.Grade);
+            DropPlaced[p.MainOut] = pf;
             return new Placed(p, pf, NarrowIn, pf, NarrowOut, pf, NarrowIn);
         }
         if (p.Kind == "exit")
@@ -1721,7 +1829,26 @@ public static class Interchanges
         }
         else
         {
-            var join = Place(map, src, p.K.Join!, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
+            Prefab join;
+            if (UseDirectJoin && p.AfterRampPrefab && DropPlaced.TryGetValue(p.Ramp, out var drop))
+            {
+                // Einfahrt direkt an das Spurende-Prefab der Rampe hängen: Rampenknoten auf dessen
+                // Ausgang, Rampenarm in dessen Richtung; die Einfahrt steht dafür um den Unterschied
+                // schräg zur Hauptfahrbahn, die Hauptfahrbahn gleicht das in ihren Bögen aus
+                var ppdJ = src.Get(p.K.Join!.PpdPath);
+                var locJ = Calibrate(ppdJ, p.K.Join.Unit, Quaternion.Identity);
+                var inwJ = WorldDirections(ppdJ, locJ);
+                var fwdJ = locJ[JoinOut] - locJ[JoinMain];
+                float th = Wrap(Ang(inwJ[JoinRamp]) - Ang(fwdJ));            // Rampenarm gegen Achse
+                var dOut = Flat(-InwardDirections[drop][NarrowOut], p.Direction);
+                float axisAng = Ang(dOut) - th;
+                var axis = new Vector3(MathF.Cos(axisAng), 0, MathF.Sin(axisAng));
+                join = Place(map, src, p.K.Join!, JoinMain, JoinOut, axis, JoinRamp, drop.Nodes[NarrowOut].Position, p.Grade);
+                join.Attach(JoinRamp, drop, NarrowOut);
+                p.DirectRamp = true;
+                DirectJoins++;
+            }
+            else join = Place(map, src, p.K.Join!, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
             if (p.K.Narrow is null) return new Placed(p, join, JoinMain, join, JoinOut, join, JoinRamp);
             if (p.ExtRoad is not null)
             {
@@ -1931,18 +2058,27 @@ public static class Interchanges
         // Hauptfahrbahn liegen als der Rampenknoten, entfernen (sonst schwenkt die Rampe zurück
         // und kreuzt die Hauptfahrbahn)
         if (p.Kind == "drop") return;
-        DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
-        if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn, Lead, RampBlend);
-        else SetTail(p.Ramp, rampNode.Position, rampIn, p.K == Hw3Merge2 ? ShortRampLead : Lead, RampBlend);
+        if (!p.DirectRamp)
+        {
+            DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
+            if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn, Lead, RampBlend);
+            else SetTail(p.Ramp, rampNode.Position, rampIn, p.K == Hw3Merge2 ? ShortRampLead : Lead, RampBlend);
+        }
         if (p.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
+        {
             SnapExt(p.ExtRoad, pl.ExtFrom.Nodes[pl.ExtFromNode].Position, pl.ExtTo.Nodes[pl.ExtToNode].Position);
+            // schräg stehende Einfahrt (direkt am Spurende-Prefab): Zusatzspur-Straße tangential aus
+            // ihrem Ausgang herausführen, sonst Knick und versetzter Querschnitt an der Fuge
+            if (p.DirectRamp)
+                SetHead(p.ExtRoad, pl.ExtFrom.Nodes[pl.ExtFromNode].Position, -InwardDirections[pl.ExtFrom][pl.ExtFromNode], Lead, MainBlend);
+        }
 
         // Knotendrehungen auf die Fahrtrichtung setzen (aus der ppd-Geometrie). TruckLib
         // liefert für schräge Knoten nach dem Drehen eines Prefabs eine gespiegelte
         // Richtung; die Straßenkurve würde sonst am Knoten abknicken.
         inNode.Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[pl.First][pl.FirstIn], GradeOf(pl, pl.First)));
         outNode.Rotation = MathEx.GetNodeRotation(Sloped(-InwardDirections[pl.Last][pl.LastOut], GradeOf(pl, pl.Last)));
-        rampNode.Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
+        if (!p.DirectRamp) rampNode.Rotation = MathEx.GetNodeRotation(p.Kind == "exit" ? -rampIn : rampIn);
         FixExtRotations(pl);
     }
 }

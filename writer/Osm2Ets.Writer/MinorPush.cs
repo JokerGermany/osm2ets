@@ -28,14 +28,23 @@ public static class MinorPush
 
     private static Vector2 P(double[] p) => new((float)p[0], (float)p[2]);
 
+    private static bool IsMain(RoadEntry r) => r.Runs.Any(x => x.Highway is "motorway" or "trunk");
+    private static bool IsLinkOnly(RoadEntry r) => r.Runs.All(x => x.Highway is "motorway_link" or "trunk_link");
+
+    /// <summary>Rampen von Hauptfahrbahnen wegschieben (aus: OSM2ETS_NO_LINK_PUSH=1). In OSM ist eine
+    /// Rampe getrennt eingezeichnet, solange eine Sperrfläche sie von der Autobahn trennt – oft nur
+    /// 8 m Linienabstand, zu wenig für die Modelle (A 9 bei z −2530: 185 m² Überdeckung).</summary>
+    public static bool LinkPush = Environment.GetEnvironmentVariable("OSM2ETS_NO_LINK_PUSH") != "1";
+
     public static void Apply(List<RoadEntry> roads, Func<RunEntry, (float HalfWidth, float Center)> style,
-                             List<(Vector3[] Nodes, float HalfWidth)> prefabs, List<string> warnings)
+                             List<(Vector3[] Nodes, float HalfWidth)> prefabs, List<string> warnings, bool links = false)
     {
         Moved = 0;
+        if (links && !LinkPush) return;
         if (!Enabled) return;
         // Hindernisse: Segmente großer Straßen (Mitte des Modells) und Prefab-Sterne
         var obs = new List<(Vector2 A, Vector2 B, float Hw, float Y, RoadEntry? R)>();
-        foreach (var r in roads.Where(IsMajor))
+        foreach (var r in roads.Where(x => links ? IsMain(x) : IsMajor(x)))
             for (int i = 0; i < r.Points.Count - 1; i++)
             {
                 var run = r.Runs.FirstOrDefault(x => x.From <= i && i < x.To) ?? r.Runs[^1];
@@ -45,7 +54,7 @@ public static class MinorPush
                 var sh = new Vector2(-d.Y, d.X) / d.Length() * c;
                 obs.Add((a + sh, b + sh, hw, (float)(r.Points[i][1] + r.Points[i + 1][1]) / 2, r));
             }
-        foreach (var (nodes, hw) in prefabs)
+        foreach (var (nodes, hw) in links ? [] : prefabs)
         {
             var c = nodes.Aggregate(Vector3.Zero, (s, v) => s + v) / nodes.Length;
             foreach (var n in nodes) obs.Add((new Vector2(n.X, n.Z), new Vector2(c.X, c.Z), hw, (n.Y + c.Y) / 2, null));
@@ -64,7 +73,7 @@ public static class MinorPush
         float maxShift = 0;
         foreach (var r in roads)
         {
-            if (IsMajor(r) || r.Points.Count < 2) continue;
+            if ((links ? !IsLinkOnly(r) : IsMajor(r)) || r.Points.Count < 2) continue;
             var mine = nodeOf(r);
             int n = r.Points.Count;
             var push = new Vector2[n];
@@ -95,7 +104,7 @@ public static class MinorPush
                 foreach (var k in cand)
                 {
                     var o = obs[k];
-                    if (o.R is not null && nodeOf(o.R).Overlaps(mine)) continue;     // angeschlossen
+                    if (!links && o.R is not null && nodeOf(o.R).Overlaps(mine)) continue;     // angeschlossen
                     float dz = MathF.Abs(o.Y - (float)r.Points[i][1]);
                     if (dz > MaxDz) continue;
                     var ab = o.B - o.A; float l2 = ab.LengthSquared(); if (l2 < 1e-6f) continue;
@@ -127,7 +136,7 @@ public static class MinorPush
                     foreach (var k in cand)
                     {
                         var o = obs[k];
-                        if (((object?)o.R ?? k).Equals(bestId) || (o.R is not null && nodeOf(o.R).Overlaps(mine))) continue;
+                        if (((object?)o.R ?? k).Equals(bestId) || (!links && o.R is not null && nodeOf(o.R).Overlaps(mine))) continue;
                         float dz = MathF.Abs(o.Y - (float)r.Points[i][1]);
                         if (dz > MaxDz) continue;
                         var ab = o.B - o.A; float l2 = ab.LengthSquared(); if (l2 < 1e-6f) continue;
@@ -158,8 +167,8 @@ public static class MinorPush
                     var c = push[j] * f;
                     if (c.Length() > v.Length()) v = c;
                 }
-                float fixA = r.Start?.Kind == "node" ? Math.Clamp(s[i] / Taper, 0, 1) : 1;
-                float fixB = r.End?.Kind == "node" ? Math.Clamp((s[^1] - s[i]) / Taper, 0, 1) : 1;
+                float fixA = r.Start?.Kind == "node" || (links && r.Start?.Kind == "prefab") ? Math.Clamp(s[i] / Taper, 0, 1) : 1;
+                float fixB = r.End?.Kind == "node" || (links && r.End?.Kind == "prefab") ? Math.Clamp((s[^1] - s[i]) / Taper, 0, 1) : 1;
                 sm[i] = v * MathF.Min(fixA, fixB);
             }
             for (int i = 0; i < n; i++)
@@ -169,6 +178,7 @@ public static class MinorPush
             }
             Moved++;
         }
-        if (Moved > 0) warnings.Add($"Info: {Moved} Nebenstraßen von Autobahnen/Prefabs weggeschoben, höchstens {maxShift:0.0} m");
+        if (Moved > 0) warnings.Add(links ? $"Info: {Moved} Rampen von Autobahnfahrbahnen weggeschoben, höchstens {maxShift:0.0} m"
+                                          : $"Info: {Moved} Nebenstraßen von Autobahnen/Prefabs weggeschoben, höchstens {maxShift:0.0} m");
     }
 }

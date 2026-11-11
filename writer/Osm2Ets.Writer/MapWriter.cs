@@ -53,6 +53,7 @@ public static class MapWriter
             }
             valid.Add(entry);
         }
+        Triangles.Collapse(valid, warnings);
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
         // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);
@@ -152,6 +153,8 @@ public static class MapWriter
             {
                 var pl = Interchanges.Build(map, plan, prefabs!);
                 Interchanges.Adjust(pl);
+                // Einfahrt direkt am Spurende-Prefab: die Rampenstraße dazwischen entfällt
+                if (plan.DirectRamp) valid.Remove(plan.Ramp);
                 if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
                 {
                     string R(RoadEntry r) => $"{r.Id} start {string.Join('/', r.Points[0].Select(v => v.ToString("0.0")))} next {string.Join('/', r.Points[1].Select(v => v.ToString("0.0")))} end {string.Join('/', r.Points[^1].Select(v => v.ToString("0.0")))} prev {string.Join('/', r.Points[^2].Select(v => v.ToString("0.0")))}";
@@ -179,6 +182,7 @@ public static class MapWriter
             if (MinorPush.Enabled)
                 foreach (var e in valid)
                     if (!e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link")) SubdivideLinear(e, MinorPush.Sample);
+            MinorPush.Apply(valid, run => { var st = mapping.Resolve(run); return (st.Width / 2, st.ModelCenter); }, pfObs, warnings, links: true);
             MinorPush.Apply(valid, run => { var st = mapping.Resolve(run); return (st.Width / 2, st.ModelCenter); }, pfObs, warnings);
             // eingefügte Prüfpunkte, die gerade geblieben sind, wieder entfernen
             if (MinorPush.Enabled)
