@@ -1443,6 +1443,7 @@ public static class Interchanges
     public const float BlockReach = 40f;    // so weit läuft die Rampe in Prefab-Richtung (Einlauf 20 m + Bogen)   // Rampe (ger2 etwa 4 m bis Rand) + Weg + Luft
 
     /// <summary>Liegt am unverschobenen Platz des Rampenknotens eine fremde Straße (≤ BlockRadius)?</summary>
+    public static bool UseSplitShiftAlways = Environment.GetEnvironmentVariable("OSM2ETS_SPLIT_ONLY_BLOCKED") != "1";
     private static bool RampNodeBlocked(Plan p, float lat, float lon)
     {
         var dir = Direction(p.MainIn, p.MainOut);
@@ -1492,7 +1493,10 @@ public static class Interchanges
         // Nur wo es nötig ist: am alten Platz läge der Rampenknoten auf einer fremden Straße
         // (Weg, andere Straße). Sonst bleibt die Teilung am OSM-Knoten – das Verschieben ändert
         // die Lage zu Nachbarn (Gelände, Brücken) und brachte an anderen Stellen neue Wände.
-        if (!RampNodeBlocked(p, latS, lon)) return;
+        // Inzwischen allgemein: sonst liegt der Rampenknoten am OSM-Knoten seitlich um die volle
+        // Prefab-Breite neben der OSM-Rampe, und die Rampe muss in einer S-Kurve zurück
+        // (aus: OSM2ETS_SPLIT_ONLY_BLOCKED=1)
+        if (!UseSplitShiftAlways && !RampNodeBlocked(p, latS, lon)) return;
         // hinter dem Rampenknoten muss genug Rampe bleiben
         var qf = AxisAt(p.MainOut, true, found);
         float after = (float)ArcLength(p.Ramp) - RampArcAt(p.Ramp, new Vector2(qf.X, qf.Z));
