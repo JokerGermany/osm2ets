@@ -323,6 +323,8 @@ public static class Interchanges
         public Kit K = Hw2;
         /// <summary>So weit wurde die Einmündung stromauf gerückt (siehe MoveMergeUpstream).</summary>
         public float Moved;
+        /// <summary>Zusätzliche Drehung des Aus-/Einfahrt-Prefabs um seinen Hauptknoten (Grad, aus BestPose).</summary>
+        public float PoseRotation;
         /// <summary>Zusatzspur-Straße wegen Kurve (nicht wegen Bauwerk).</summary>
         public bool ExtForCurve;
         public required long OsmNode;
@@ -1266,41 +1268,24 @@ public static class Interchanges
             if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null && D % 10 == 0) Console.Error.WriteLine($"PAR {p.OsmNode} D {D} dist {RampDistance(p.Ramp, new Vector2(q.X, q.Z)):0.0} lat {lat:0.0} lon {lon:0.0} total {total:0}");
             if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
         }
-        // Wie bei Ausfahrten: lieber die Einfahrt verschieben als die Rampe biegen – weiter stromauf,
-        // wo die OSM-Rampe am Rampenknoten mindestens so steil auf die Hauptfahrbahn zuläuft wie der
-        // Rampenarm; sonst die Stelle mit dem kleinsten Bogen
-        if (found >= 0 && UseBendFreeExit && p.Ramp.Start?.Kind != "prefab")
+        // Wie bei Ausfahrten: die Lage mit dem kleinsten Bogen (Rampe per SetTail auf einer Kopie
+        // angeschlossen, dazu der Knick der Hauptfahrbahn). Nicht hinter einem Spurende-Prefab der
+        // Rampe (dafür gilt die Regel weiter unten)
+        if (UseBendFreeExit && p.Ramp.Start?.Kind != "prefab")
         {
             var dirs = WorldDirections(ppd, loc);
-            var arm = -dirs[JoinRamp]; arm.Y = 0;
-            if (arm.LengthSquared() > 1e-6f)
-            {
-                arm = Vector3.Normalize(arm);
-                float armDiv = MathF.Acos(Math.Clamp(Vector3.Dot(arm, fwd), -1, 1)) * 180 / MathF.PI;
-                if (armDiv > 90) armDiv = 180 - armDiv;
-                float smooth = -1, bestCost = float.MaxValue, bestD = -1;
-                for (float D = found; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
-                {
-                    var q0 = AxisAt(p.MainIn, false, D + 2); var q1 = AxisAt(p.MainIn, false, MathF.Max(0, D - 2));
-                    var md = new Vector2(q1.X - q0.X, q1.Z - q0.Z);
-                    if (md.LengthSquared() < 1e-6f) continue;
-                    md = Vector2.Normalize(md);
-                    var right = new Vector2(-md.Y, md.X);
-                    var q = AxisAt(p.MainIn, false, D);
-                    var node = new Vector2(q.X, q.Z) + right * latS + md * lon;
-                    if (RampArcAt(p.Ramp, node) < MinRampBefore) break;
-                    float dist = RampDistance(p.Ramp, node);
-                    var rt = RampTangent(p.Ramp, node);
-                    float div = MathF.Acos(Math.Clamp(MathF.Abs(Vector2.Dot(rt, md)), 0, 1)) * 180 / MathF.PI;
-                    if (dist <= BendFreeTol && div >= armDiv - BendFreeAngle) { smooth = D; break; }
-                    float cost = MathF.Max(0, armDiv - div) + 2f * MathF.Max(0, dist - BendFreeTol);
-                    if (dist < 10f && cost < bestCost) { bestCost = cost; bestD = D; }
-                }
-                if (smooth < 0) smooth = bestD;
-                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
-                    Console.Error.WriteLine($"MERGETRY {p.OsmNode} arm {armDiv:0.0} found {found} smooth {smooth}");
-                if (smooth >= 0) found = smooth;
-            }
+            var f2 = new Vector2(fwd.X, fwd.Z);
+            float phiArm = SignedAng(f2, new Vector2(dirs[JoinRamp].X, dirs[JoinRamp].Z));   // Fahrtrichtung der Rampe in das Prefab
+            float phiRv = SignedAng(f2, new Vector2(rv.X, rv.Z)), rvLen = new Vector2(rv.X, rv.Z).Length();
+            var lo = loc[JoinOut] - loc[JoinMain]; float lp = new Vector2(lo.X, lo.Z).Length();
+            // gerade Strecke des ganzen Bausatzes (Spurende dahinter liegt auf derselben Geraden)
+            if (p.K.Narrow is not null && p.Ext <= 0) lp += Length(src, p.K.Narrow, NarrowIn, NarrowOut);
+            var (bestD, bestRho, bestCost, cost0) = BestPose(p, false, MathF.Min(MaxParallelShift, total - 60), lp, phiRv, rvLen, phiArm, true,
+                node => RampArcAt(p.Ramp, new Vector2(node.X, node.Z)) < MinRampBefore);
+            p.PoseRotation = bestRho;
+            if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                Console.Error.WriteLine($"PLACE entry {p.OsmNode} cost0 {cost0:0.0} best {bestCost:0.0} at {bestD} rot {bestRho} (first-fit {found})");
+            found = bestD <= 0 ? -1 : bestD + lon + 2;
         }
         float d = found - lon - 2;     // Prefab-Hauptknoten so, dass der Rampenknoten dort liegt
         if (found < 0 || d < 20) return;
@@ -1524,43 +1509,27 @@ public static class Interchanges
             var q = AxisAt(p.MainOut, true, D);
             if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
         }
-        // Ohne Bogen: weiter stromab, wo die OSM-Rampe am Rampenknoten mindestens so steil von der
-        // Hauptfahrbahn wegläuft wie der Rampenarm des Prefabs (sonst läuft die Rampe erst im Arm-
-        // winkel hinaus und biegt dann zurück)
-        float armDiv = 0, foundSmooth = -1;
-        if (found >= 0 && UseBendFreeExit)
+        // Lage mit dem kleinsten Bogen: erst das Prefab verschieben, dann die Rampe biegen. Jede Lage
+        // wird mit der Rampe bewertet, wie Adjust sie später anschließt (SetHead auf einer Kopie), plus
+        // dem Knick der Hauptfahrbahn an den Prefab-Enden (Sehne gegen Kurve)
+        if (UseBendFreeExit)
         {
             var dirs = WorldDirections(ppd, loc);
-            var arm = -dirs[SplitRamp]; arm.Y = 0;
-            if (arm.LengthSquared() > 1e-6f)
-            {
-                arm = Vector3.Normalize(arm);
-                armDiv = MathF.Acos(Math.Clamp(Vector3.Dot(arm, fwd), -1, 1)) * 180 / MathF.PI;
-                float bestCost = float.MaxValue, bestD = -1;
-                if (armDiv > 90) armDiv = 180 - armDiv;
-                for (float D = found; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
-                {
-                    var q0 = AxisAt(p.MainOut, true, MathF.Max(0, D - 2)); var q1 = AxisAt(p.MainOut, true, D + 2);
-                    var md = new Vector2(q1.X - q0.X, q1.Z - q0.Z);
-                    if (md.LengthSquared() < 1e-6f) continue;
-                    md = Vector2.Normalize(md);
-                    var right = new Vector2(-md.Y, md.X);
-                    var q = AxisAt(p.MainOut, true, D);
-                    var node = new Vector2(q.X, q.Z) + right * latS + md * lon;
-                    float dist = RampDistance(p.Ramp, node);
-                    var rt = RampTangent(p.Ramp, node);
-                    float div = MathF.Acos(Math.Clamp(MathF.Abs(Vector2.Dot(rt, md)), 0, 1)) * 180 / MathF.PI;
-                    if (dist <= BendFreeTol && div >= armDiv - BendFreeAngle) { foundSmooth = D; break; }
-                    // sonst die Stelle mit dem kleinsten Bogen merken (Winkel- und Lagefehler)
-                    float cost = MathF.Max(0, armDiv - div) + 2f * MathF.Max(0, dist - BendFreeTol);
-                    if (dist < 10f && cost < bestCost) { bestCost = cost; bestD = D; }
-                }
-                if (foundSmooth < 0 && bestD >= 0) foundSmooth = bestD;
-                if (foundSmooth >= 0) found = foundSmooth;
-            }
+            var f2 = new Vector2(fwd.X, fwd.Z);
+            float phiArm = SignedAng(f2, new Vector2(-dirs[SplitRamp].X, -dirs[SplitRamp].Z));
+            float phiRv = SignedAng(f2, new Vector2(rv.X, rv.Z)), rvLen = new Vector2(rv.X, rv.Z).Length();
+            var li = loc[SplitIn] - loc[SplitMain]; float lp = new Vector2(li.X, li.Z).Length();
+            if (p.K.Widen is not null && p.Ext <= 0) lp += Length(src, p.K.Widen, WidenIn, WidenOut);
+            if (p.K.Widen0 is not null && p.Ext <= 0) lp += Length(src, p.K.Widen0, WidenIn, WidenOut);
+            bool blocked0 = RampNodeBlocked(p, latS, lon);
+            var (bestD, bestRho, bestCost, cost0) = BestPose(p, true, MathF.Min(MaxParallelShift, total - 60), lp, phiRv, rvLen, phiArm, !blocked0);
+            p.PoseRotation = bestRho;
+            if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                Console.Error.WriteLine($"PLACE exit {p.OsmNode} cost0 {cost0:0.0} best {bestCost:0.0} at {bestD} rot {bestRho} (first-fit {found})");
+            found = bestD <= 0 ? -1 : bestD + lon + 2;
         }
         float d = found - lon - 2;     // Prefab-Hauptausgang so, dass der Rampenknoten dort liegt
-        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine($"SPLITTRY arm {armDiv:0.0} smooth {foundSmooth:0} {p.OsmNode} {p.OsmNode} {p.K.Name} found {found:0} d {d:0} lat {lat:0.0} blocked {RampNodeBlocked(p, latS, lon)}");
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine($"SPLITTRY {p.OsmNode} {p.OsmNode} {p.K.Name} found {found:0} d {d:0} lat {lat:0.0} blocked {RampNodeBlocked(p, latS, lon)}");
         if (found < 0 || d < 20) return;
         // Nur wo es nötig ist: am alten Platz läge der Rampenknoten auf einer fremden Straße
         // (Weg, andere Straße). Sonst bleibt die Teilung am OSM-Knoten – das Verschieben ändert
@@ -1685,6 +1654,118 @@ public static class Interchanges
             acc += l;
         }
         return at;
+    }
+
+    public const float MainWeight = 2f, BendReach = 150f, MoveWeight = 0.05f, MinCurveForRotation = 1.5f, MaxPoseRotation = 6f, FarOffsetWeight = 4f;
+
+    private static float SignedAng(Vector2 a, Vector2 b) => MathF.Atan2(a.X * b.Y - a.Y * b.X, Vector2.Dot(a, b));
+    private static Vector2 Rot2(Vector2 v, float ang) => new(v.X * MathF.Cos(ang) - v.Y * MathF.Sin(ang), v.X * MathF.Sin(ang) + v.Y * MathF.Cos(ang));
+
+    /// <summary>Achspunkt in dd m vom OSM-Knoten (Ausfahrt: stromab, Einfahrt: stromauf; negativ: auf die
+    /// andere Seite) und die Fahrtrichtung dort.</summary>
+    private static (Vector3 Pos, Vector2 Dir) AxisDir(Plan p, bool exit, float dd)
+    {
+        Vector3 At(float x) => exit ? (x >= 0 ? AxisAt(p.MainOut, true, x) : AxisAt(p.MainIn, false, -x))
+                                    : (x >= 0 ? AxisAt(p.MainIn, false, x) : AxisAt(p.MainOut, true, -x));
+        var q = At(dd);
+        var a = At(exit ? dd - 2 : dd + 2); var b = At(exit ? dd + 2 : dd - 2);   // a stromauf, b stromab
+        var md = new Vector2(b.X - a.X, b.Z - a.Z);
+        return (q, md.LengthSquared() > 1e-8f ? Vector2.Normalize(md) : Vector2.UnitX);
+    }
+
+    /// <summary>Lage eines geraden Prefabs der Länge lp mit dem Drehpunkt (Ausfahrt: Hauptausgang, Einfahrt:
+    /// Haupteingang) bei dd: Drehpunkt, Prefab-Richtung (Sehne, um rho gedreht), Knick der Hauptfahrbahn an
+    /// beiden Enden (Grad) und die Richtungsänderung der Achse über das Prefab (Grad).</summary>
+    private static (Vector3 Pivot, Vector2 Dir, float MainCost, float Curve) PrefabPose(Plan p, bool exit, float dd, float lp, float rho)
+    {
+        var (q1, t1) = AxisDir(p, exit, dd);
+        var (q0, t0) = AxisDir(p, exit, dd - lp);   // Ausfahrt: stromauf, Einfahrt: stromab (dd zählt dort stromauf)
+        var ch = exit ? new Vector2(q1.X - q0.X, q1.Z - q0.Z) : new Vector2(q0.X - q1.X, q0.Z - q1.Z);
+        ch = ch.LengthSquared() > 1e-6f ? Vector2.Normalize(ch) : t1;
+        var dir = Rot2(ch, rho);
+        float mc = (MathF.Abs(SignedAng(dir, t0)) + MathF.Abs(SignedAng(dir, t1))) * 180 / MathF.PI;
+        // das andere Ende des (gedrehten) Bausatzes neben der Achse: dort muss die Hauptfahrbahn seitlich
+        // hinüber (6° Drehung über 95 m = 10 m, 38° Knick dahinter)
+        var far = new Vector2(q1.X, q1.Z) + (exit ? -dir : dir) * lp;
+        mc += FarOffsetWeight * Vector2.Distance(far, new Vector2(q0.X, q0.Z));
+        float curve = MathF.Abs(SignedAng(t0, t1)) * 180 / MathF.PI;
+        return (q1, dir, mc, curve);
+    }
+
+    /// <summary>Rampenknoten und Fahrtrichtung der Rampe dort für eine Prefab-Lage.</summary>
+    private static (Vector3 Node, Vector3 Travel) Candidate(Vector3 pivot, Vector2 dir, float phiRv, float rvLen, float phiArm)
+    {
+        var n = new Vector2(pivot.X, pivot.Z) + Rot2(dir, phiRv) * rvLen;
+        var t = Rot2(dir, phiArm);
+        return (new Vector3(n.X, pivot.Y, n.Y), new Vector3(t.X, 0, t.Y));
+    }
+
+    private static Vector3 Posed(Plan p)
+    {
+        if (MathF.Abs(p.PoseRotation) < 0.01f) return p.Direction;
+        var v = Rot2(new Vector2(p.Direction.X, p.Direction.Z), p.PoseRotation * MathF.PI / 180);
+        return Vector3.Normalize(new Vector3(v.X, p.Direction.Y, v.Y));
+    }
+
+    /// <summary>Beste Lage (Abstand vom OSM-Knoten, Drehung in Grad) für Aus- oder Einfahrt: kleinster Bogen
+    /// der Rampe plus Knick der Hauptfahrbahn plus 0,05 je Meter Verschiebung. Gedreht wird nur, wo die
+    /// Hauptfahrbahn über das Prefab hinweg merklich gekrümmt ist (gerade Autobahn: Prefab nicht drehen).</summary>
+    private static (float D, float Rho, float Cost, float Cost0) BestPose(Plan p, bool exit, float maxD, float lp,
+        float phiRv, float rvLen, float phiArm, bool allowZero, Func<Vector3, bool>? stop = null)
+    {
+        float bestCost = float.MaxValue, bestD = -1, bestRho = 0, cost0 = float.NaN;
+        for (float dd = 0; dd <= maxD; dd += 2)
+        {
+            if (dd > 0 && dd < 20) continue;
+            float curve = PrefabPose(p, exit, dd, lp, 0).Curve;
+            // höchstens um den halben Kurvenwinkel: die Sehne bleibt zwischen den Richtungen an beiden Enden
+            float rmax = curve >= MinCurveForRotation ? MathF.Floor(MathF.Min(MaxPoseRotation, curve / 2)) : 0;
+            bool stopped = false;
+            for (float r = -rmax; r <= rmax + 0.01f; r += 1f)
+            {
+                var (pivot, dir, mc, _) = PrefabPose(p, exit, dd, lp, r * MathF.PI / 180);
+                var (node, travel) = Candidate(pivot, dir, phiRv, rvLen, phiArm);
+                if (dd > 0 && stop is not null && stop(node)) { stopped = true; break; }
+                float cost = RampBendCost(p.Ramp, exit, node, travel) + MainWeight * mc + MoveWeight * dd;
+                if (dd == 0 && MathF.Abs(r) < 0.01f) cost0 = cost;
+                if (dd == 0 && !allowZero) continue;
+                if (cost < bestCost) { bestCost = cost; bestD = dd; bestRho = r; }
+            }
+            if (stopped) break;
+        }
+        return (bestD, bestRho, bestCost, cost0);
+    }
+
+    /// <summary>Bogen der Rampe, wenn sie so an den Knoten angeschlossen wird wie in Adjust (Kopie):
+    /// S-Anteil (Summe der Beträge minus Betrag der Summe) plus größter Einzelknick, in Grad, auf den
+    /// ersten <see cref="BendReach"/> m ab dem Knoten.</summary>
+    private static float RampBendCost(RoadEntry ramp, bool exit, Vector3 node, Vector3 travel)
+    {
+        var c = new RoadEntry { Id = ramp.Id, Start = ramp.Start, End = ramp.End,
+                                Points = ramp.Points.Select(q => (double[])q.Clone()).ToList(),
+                                Runs = ramp.Runs.Select(x => x.Span(x.From, x.To)).ToList() };
+        try
+        {
+            if (exit) SetHead(c, node, travel, RampLead, RampBlend);
+            else SetTail(c, node, travel, RampLead, RampBlend);
+        }
+        catch { return 1000f; }
+        var pts = c.Points.Select(P).ToList();
+        if (!exit) pts.Reverse();
+        var h0 = new Vector2(travel.X, travel.Z) * (exit ? 1 : -1);
+        pts.Insert(0, pts[0] - h0 * 5);
+        float sum = 0, sumAbs = 0, max = 0, acc = 0;
+        for (int i = 1; i < pts.Count - 1 && acc < BendReach; i++)
+        {
+            var a = pts[i] - pts[i - 1]; var b = pts[i + 1] - pts[i];
+            if (a.LengthSquared() < 1e-4f || b.LengthSquared() < 1e-4f) continue;
+            float th = SignedAng(a, b) * 180 / MathF.PI;
+            sum += th; sumAbs += MathF.Abs(th); max = MathF.Max(max, MathF.Abs(th));
+            acc += b.Length();
+        }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_BENDDBG") is { } bd && ramp.Id == bd)
+            Console.Error.WriteLine($"BEND {ramp.Id} exit {exit} node ({node.X:0.0},{node.Z:0.0}) travel ({travel.X:0.00},{travel.Z:0.00}) S {sumAbs - MathF.Abs(sum):0.0} max {max:0.0} pts " + string.Join(" ", pts.Take(10).Select(q => $"({q.X:0.0},{q.Y:0.0})")));
+        return (sumAbs - MathF.Abs(sum)) + max;
     }
 
     public static bool UseBendFreeExit = Environment.GetEnvironmentVariable("OSM2ETS_NO_BENDFREE_EXIT") is null;
@@ -1936,7 +2017,7 @@ public static class Interchanges
         if (p.Kind == "exit")
         {
             // Teilung so, dass ihr Hauptausgang auf dem OSM-Knoten liegt; Aufweitung davor
-            var split = Place(map, src, p.K.Split!, SplitIn, SplitMain, p.Direction, SplitMain, p.Anchor, p.Grade);
+            var split = Place(map, src, p.K.Split!, SplitIn, SplitMain, Posed(p), SplitMain, p.Anchor, p.Grade);
             if (p.K.Widen is null) return new Placed(p, split, SplitIn, split, SplitMain, split, SplitRamp);
             if (p.ExtRoad is not null)
             {
@@ -1966,7 +2047,7 @@ public static class Interchanges
                 // Hauptfahrbahn ausgerichtet (gerade Autobahn bleibt gerade); stattdessen wird das
                 // Spurende-Prefab neu gesetzt – sein Ausgang auf den Rampenknoten, in Richtung des
                 // Rampenarms – und die Rampe davor zu seinem Eingang geführt
-                join = Place(map, src, p.K.Join!, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
+                join = Place(map, src, p.K.Join!, JoinMain, JoinOut, Posed(p), JoinMain, p.Anchor, p.Grade);
                 var arm = InwardDirections[join][JoinRamp];
                 var old = dp.Pf;
                 var nd = Place(map, src, dp.Plan.K.Narrow!, NarrowIn, NarrowOut, arm, NarrowOut, join.Nodes[JoinRamp].Position, p.Grade);   // Neigung wie die Einfahrt (gemeinsamer Knoten)
@@ -1981,7 +2062,7 @@ public static class Interchanges
                 p.DirectRamp = true;
                 DirectJoins++;
             }
-            else join = Place(map, src, p.K.Join!, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
+            else join = Place(map, src, p.K.Join!, JoinMain, JoinOut, Posed(p), JoinMain, p.Anchor, p.Grade);
             if (p.K.Narrow is null) return new Placed(p, join, JoinMain, join, JoinOut, join, JoinRamp);
             if (p.ExtRoad is not null)
             {
@@ -1998,6 +2079,8 @@ public static class Interchanges
     // ------------------------------------------------------------------ tangentialer Anschluss
 
     public const float Lead = 20f;
+    /// <summary>Gerades Stück der Rampe im Armwinkel am Prefab-Knoten, bevor der Bogen beginnt.</summary>
+    public static float RampLead = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_RAMP_LEAD"), System.Globalization.CultureInfo.InvariantCulture, out var rl) ? rl : 10f;
 
     /// <summary>
     /// Hauptfahrbahn an Anschluss-Prefabs: so weit (m) vom Prefab-Knoten wird sie als weiche
@@ -2194,8 +2277,8 @@ public static class Interchanges
         if (!p.DirectRamp)
         {
             DropInside(p.Ramp, p.Kind == "exit", p.Kind == "exit" ? p.MainOut : p.MainIn, rampNode.Position);
-            if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn, Lead, RampBlend);
-            else SetTail(p.Ramp, rampNode.Position, rampIn, p.K == Hw3Merge2 ? ShortRampLead : Lead, RampBlend);
+            if (p.Kind == "exit") SetHead(p.Ramp, rampNode.Position, -rampIn, RampLead, RampBlend);
+            else SetTail(p.Ramp, rampNode.Position, rampIn, p.K == Hw3Merge2 ? MathF.Min(ShortRampLead, RampLead) : RampLead, RampBlend);
         }
         if (p.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
         {
