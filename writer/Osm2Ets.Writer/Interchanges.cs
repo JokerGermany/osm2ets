@@ -812,7 +812,7 @@ public static class Interchanges
     /// </summary>
     public static bool AxisOnModelLine = Environment.GetEnvironmentVariable("OSM2ETS_AXIS_OSM") != "1";
 
-    private static Vector3 AxisAt(RoadEntry r, bool fromStart, float dist)
+    private static Vector3 AxisAt(RoadEntry r, bool fromStart, float dist, RunEntry? lateralRun = null)
     {
         // OSM-Lage vor dem Mittig-Setzen (sonst steckt der Modellversatz schon in den Punkten)
         var (srcPts, srcRuns) = LaneCentering.Original.TryGetValue(r, out var o) ? o : (r.Points, r.Runs);
@@ -837,7 +837,8 @@ public static class Interchanges
                 // Nur auf die OSM-Linie zurück. Die durchgehenden Spuren lägen bei lanes=3 (Ver-
                 // zögerungsspur) eigentlich 2,25 m weiter innen – mit den 4,5 m breiten ETS2-
                 // Spuren überschnitten sich dann aber die Gegenfahrbahnen (A 70: 5 m statt 9 m).
-                float lat = raw ? (AxisOnModelLine ? OffsetOf(run) : 0) : -OffsetOf(run);
+                var lr = lateralRun ?? run;
+                float lat = raw ? (AxisOnModelLine ? OffsetOf(lr) : 0) : -OffsetOf(run) + (lateralRun is null ? 0 : OffsetOf(lr));
                 if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
                     Console.Error.WriteLine($"AXIS {r.Id} seg {seg} lanes {run.Lanes} off {OffsetOf(run)} q {q} lat {lat}");
                 return q + right * lat;
@@ -1345,10 +1346,24 @@ public static class Interchanges
         foreach (var x in p.MainOut.Runs) { x.From += add; x.To += add; }
         p.MainOut.Runs[0].From = 0;
         p.MainOut.Points = outPts;
-        // gespeicherte OSM-Lage passt nicht mehr zu den geteilten Punkten: verwerfen (AxisAt rechnet
-        // dann aus den aktuellen Punkten und dem Modellversatz zurück)
-        LaneCentering.Original.Remove(p.MainIn);
-        LaneCentering.Original.Remove(p.MainOut);
+        // gespeicherte OSM-Lage genauso teilen. Verworfen rechnete AxisAt aus den mittig gesetzten
+        // Punkten zurück – die laufen am alten OSM-Knoten (Anschlussstelle) auf die OSM-Linie aus,
+        // und die Zusatzspur-Straße darüber bekam eine S-Kurve von ±1,5 m (A 9 z −2600)
+        if (LaneCentering.Original.TryGetValue(p.MainIn, out var oIn) && LaneCentering.Original.TryGetValue(p.MainOut, out var oOut)
+            && oIn.Points.Count == pts.Count && oOut.Points.Count == outPts.Count - add)
+        {
+            var oa = oIn.Points[k - 1]; var ob = oIn.Points[k];
+            var oc = new[] { oa[0] + (ob[0] - oa[0]) * t, oa[1] + (ob[1] - oa[1]) * t, oa[2] + (ob[2] - oa[2]) * t };
+            var oInPts = oIn.Points.Take(k).Append(oc).ToList();
+            var oOutPts = new List<double[]> { oc }; oOutPts.AddRange(oIn.Points.Skip(k)); oOutPts.AddRange(oOut.Points.Skip(1));
+            LaneCentering.Original[p.MainIn] = (oInPts, p.MainIn.Runs.Select(x => x.Span(x.From, x.To)).ToList());
+            LaneCentering.Original[p.MainOut] = (oOutPts, p.MainOut.Runs.Select(x => x.Span(x.From, x.To)).ToList());
+        }
+        else
+        {
+            LaneCentering.Original.Remove(p.MainIn);
+            LaneCentering.Original.Remove(p.MainOut);
+        }
         p.Anchor = MapWriter.ToVector(cut);
         p.Direction = Direction(p.MainIn, p.MainOut);
         p.Moved = d;
@@ -1718,7 +1733,10 @@ public static class Interchanges
         }
         dense = dense.Distinct().ToList();
         if (d0 > d1) dense.Reverse();   // Ausfahrt: vom fernen Prefab zum Knoten hin
-        var pts = dense.Select(d => { var q = AxisAt(main, fromStart, d); return new double[] { q.X, q.Y, q.Z }; }).ToList();
+        // ein seitlicher Versatz für die ganze Zusatzspur-Straße (eine Straße, ein Querschnitt): sonst
+        // springt die Linie am OSM-Spurwechsel um den Unterschied der Modellversätze (S-Kurve, A 9 z −2650)
+        var lat = RunAt(main, fromStart, dense[^1] > dense[0] ? (dense[^1] + dense[^2]) / 2 : (dense[0] + dense[1]) / 2);
+        var pts = dense.Select(d => { var q = AxisAt(main, fromStart, d, lat); return new double[] { q.X, q.Y, q.Z }; }).ToList();
         var runs = new List<RunEntry>();
         for (int k = 0; k < dense.Count - 1; k++)
         {

@@ -147,6 +147,7 @@ public static class MapWriter
 
         // Prefabs zuerst setzen, dann die Straßen tangential an ihre Knoten heranführen
         var placed = new List<Interchanges.Placed>();
+        var directRamps = new HashSet<RoadEntry>();
         foreach (var plan in interchangePlans)
         {
             try
@@ -154,14 +155,14 @@ public static class MapWriter
                 var pl = Interchanges.Build(map, plan, prefabs!);
                 Interchanges.Adjust(pl);
                 // Einfahrt direkt am Spurende-Prefab: die Rampenstraße dazwischen entfällt
-                if (plan.DirectRamp) valid.Remove(plan.Ramp);
+                if (plan.DirectRamp) { valid.Remove(plan.Ramp); directRamps.Add(plan.Ramp); }
                 if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
                 {
                     string R(RoadEntry r) => $"{r.Id} start {string.Join('/', r.Points[0].Select(v => v.ToString("0.0")))} next {string.Join('/', r.Points[1].Select(v => v.ToString("0.0")))} end {string.Join('/', r.Points[^1].Select(v => v.ToString("0.0")))} prev {string.Join('/', r.Points[^2].Select(v => v.ToString("0.0")))}";
                     Console.Error.WriteLine($"IC {plan.OsmNode} {plan.Kind} anchor {plan.Anchor} grade {plan.Grade:0.000}");
                     foreach (var pf in new[] { pl.First, pl.Last }.Distinct()) for (int k = 0; k < pf.Nodes.Count; k++)
                         Console.Error.WriteLine($"   node {k} {pf.Nodes[k].Position} fwd {Vector3.Transform(Vector3.UnitZ * -1, pf.Nodes[k].Rotation)}");
-                    foreach (var (nm, rr, st) in new[] { ("in", plan.MainIn, false), ("out", plan.MainOut, true), ("ramp", plan.Ramp, plan.Kind == "exit") }) { var pts = st ? rr.Points.Take(6) : rr.Points.TakeLast(6); Console.Error.WriteLine($"   {nm} {rr.Id}: " + string.Join(" | ", pts.Select(q => $"{q[0]:0.0},{q[1]:0.00},{q[2]:0.0}"))); }
+                    foreach (var (nm, rr, st) in new[] { ("in", plan.MainIn, false), ("out", plan.MainOut, true), ("ramp", plan.Ramp, plan.Kind == "exit") }) { if (rr is null) continue; var pts = st ? rr.Points.Take(6) : rr.Points.TakeLast(6); Console.Error.WriteLine($"   {nm} {rr.Id}: " + string.Join(" | ", pts.Select(q => $"{q[0]:0.0},{q[1]:0.00},{q[2]:0.0}"))); }
                 }
                 placed.Add(pl);
                 // direkt angehängte Einfahrt hat ein Spurende-Prefab neu gesetzt: Liste nachführen
@@ -383,9 +384,12 @@ public static class MapWriter
             var plan = pl.Plan;
             try
             {
-                pl.First.Attach(pl.FirstIn, lastItem[plan.MainIn].ForwardNode);
-                pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
-                if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
+                // Rampen direkt angehängter Einfahrten gibt es nicht mehr: ihre Prefabs hängen schon aneinander
+                bool Gone(RoadEntry r) => directRamps.Contains(r);
+                if (!Gone(plan.MainIn)) pl.First.Attach(pl.FirstIn, lastItem[plan.MainIn].ForwardNode);
+                if (!Gone(plan.MainOut)) pl.Last.Attach(pl.LastOut, firstItem[plan.MainOut].Node);
+                if (Gone(plan.Ramp)) { }
+                else if (plan.Kind == "exit") pl.RampPrefab.Attach(pl.RampNode, firstItem[plan.Ramp].Node);
                 else if (plan.Kind == "entry") pl.RampPrefab.Attach(pl.RampNode, lastItem[plan.Ramp].ForwardNode);
                 if (plan.ExtRoad is not null && pl.ExtFrom is not null && pl.ExtTo is not null)
                 {
