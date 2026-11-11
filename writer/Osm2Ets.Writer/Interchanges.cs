@@ -1487,8 +1487,43 @@ public static class Interchanges
             var q = AxisAt(p.MainOut, true, D);
             if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
         }
+        // Ohne Bogen: weiter stromab, wo die OSM-Rampe am Rampenknoten mindestens so steil von der
+        // Hauptfahrbahn wegläuft wie der Rampenarm des Prefabs (sonst läuft die Rampe erst im Arm-
+        // winkel hinaus und biegt dann zurück)
+        float armDiv = 0, foundSmooth = -1;
+        if (found >= 0 && UseBendFreeExit)
+        {
+            var dirs = WorldDirections(ppd, loc);
+            var arm = -dirs[SplitRamp]; arm.Y = 0;
+            if (arm.LengthSquared() > 1e-6f)
+            {
+                arm = Vector3.Normalize(arm);
+                armDiv = MathF.Acos(Math.Clamp(Vector3.Dot(arm, fwd), -1, 1)) * 180 / MathF.PI;
+                float bestCost = float.MaxValue, bestD = -1;
+                if (armDiv > 90) armDiv = 180 - armDiv;
+                for (float D = found; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
+                {
+                    var q0 = AxisAt(p.MainOut, true, MathF.Max(0, D - 2)); var q1 = AxisAt(p.MainOut, true, D + 2);
+                    var md = new Vector2(q1.X - q0.X, q1.Z - q0.Z);
+                    if (md.LengthSquared() < 1e-6f) continue;
+                    md = Vector2.Normalize(md);
+                    var right = new Vector2(-md.Y, md.X);
+                    var q = AxisAt(p.MainOut, true, D);
+                    var node = new Vector2(q.X, q.Z) + right * latS + md * lon;
+                    float dist = RampDistance(p.Ramp, node);
+                    var rt = RampTangent(p.Ramp, node);
+                    float div = MathF.Acos(Math.Clamp(MathF.Abs(Vector2.Dot(rt, md)), 0, 1)) * 180 / MathF.PI;
+                    if (dist <= BendFreeTol && div >= armDiv - BendFreeAngle) { foundSmooth = D; break; }
+                    // sonst die Stelle mit dem kleinsten Bogen merken (Winkel- und Lagefehler)
+                    float cost = MathF.Max(0, armDiv - div) + 2f * MathF.Max(0, dist - BendFreeTol);
+                    if (dist < 10f && cost < bestCost) { bestCost = cost; bestD = D; }
+                }
+                if (foundSmooth < 0 && bestD >= 0) foundSmooth = bestD;
+                if (foundSmooth >= 0) found = foundSmooth;
+            }
+        }
         float d = found - lon - 2;     // Prefab-Hauptausgang so, dass der Rampenknoten dort liegt
-        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine($"SPLITTRY {p.OsmNode} {p.K.Name} found {found:0} d {d:0} lat {lat:0.0} blocked {RampNodeBlocked(p, latS, lon)}");
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null) Console.Error.WriteLine($"SPLITTRY arm {armDiv:0.0} smooth {foundSmooth:0} {p.OsmNode} {p.OsmNode} {p.K.Name} found {found:0} d {d:0} lat {lat:0.0} blocked {RampNodeBlocked(p, latS, lon)}");
         if (found < 0 || d < 20) return;
         // Nur wo es nötig ist: am alten Platz läge der Rampenknoten auf einer fremden Straße
         // (Weg, andere Straße). Sonst bleibt die Teilung am OSM-Knoten – das Verschieben ändert
@@ -1613,6 +1648,24 @@ public static class Interchanges
             acc += l;
         }
         return at;
+    }
+
+    public static bool UseBendFreeExit = Environment.GetEnvironmentVariable("OSM2ETS_NO_BENDFREE_EXIT") is null;
+    public const float BendFreeTol = 3f, BendFreeAngle = 3f;
+
+    /// <summary>Richtung der Rampe am Punkt, der q am nächsten liegt.</summary>
+    private static Vector2 RampTangent(RoadEntry r, Vector2 q)
+    {
+        float best = float.MaxValue; var dir = Vector2.UnitX;
+        for (int i = 0; i < r.Points.Count - 1; i++)
+        {
+            var a = P(r.Points[i]); var ab = P(r.Points[i + 1]) - a; float l2 = ab.LengthSquared();
+            if (l2 < 1e-6f) continue;
+            float t = Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1);
+            float dd = Vector2.Distance(q, a + ab * t);
+            if (dd < best) { best = dd; dir = Vector2.Normalize(ab); }
+        }
+        return dir;
     }
 
     private static float RampDistance(RoadEntry r, Vector2 q)
