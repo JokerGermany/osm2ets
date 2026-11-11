@@ -164,6 +164,13 @@ public static class MapWriter
                     foreach (var (nm, rr, st) in new[] { ("in", plan.MainIn, false), ("out", plan.MainOut, true), ("ramp", plan.Ramp, plan.Kind == "exit") }) { var pts = st ? rr.Points.Take(6) : rr.Points.TakeLast(6); Console.Error.WriteLine($"   {nm} {rr.Id}: " + string.Join(" | ", pts.Select(q => $"{q[0]:0.0},{q[1]:0.00},{q[2]:0.0}"))); }
                 }
                 placed.Add(pl);
+                // direkt angehängte Einfahrt hat ein Spurende-Prefab neu gesetzt: Liste nachführen
+                for (int k = 0; k < placed.Count; k++)
+                {
+                    var q = placed[k];
+                    if (Interchanges.Replaced.TryGetValue(q.First, out var nf) || Interchanges.Replaced.ContainsKey(q.Last) || Interchanges.Replaced.ContainsKey(q.RampPrefab))
+                        placed[k] = q with { First = Interchanges.Replaced.GetValueOrDefault(q.First, q.First), Last = Interchanges.Replaced.GetValueOrDefault(q.Last, q.Last), RampPrefab = Interchanges.Replaced.GetValueOrDefault(q.RampPrefab, q.RampPrefab) };
+                }
             }
             catch (Exception ex)
             {

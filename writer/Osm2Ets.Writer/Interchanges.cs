@@ -1557,7 +1557,25 @@ public static class Interchanges
     /// <summary>Einfahrt direkt an das Spurende-Prefab der Rampe hängen (aus: OSM2ETS_NO_DIRECT_JOIN=1).</summary>
     public static bool UseDirectJoin = Environment.GetEnvironmentVariable("OSM2ETS_NO_DIRECT_JOIN") != "1";
     public static int DirectJoins;
-    private static readonly Dictionary<RoadEntry, Prefab> DropPlaced = [];
+    private static readonly Dictionary<RoadEntry, (Prefab Pf, Plan Plan)> DropPlaced = [];
+    public const float ShiftReach = 300f;
+
+    /// <summary>Straßenende um delta verschieben, zum Anfang hin (über reach m) weich auslaufend.</summary>
+    private static void TaperShift(RoadEntry r, Vector3 delta, float reach)
+    {
+        int n = r.Points.Count;
+        var s = new double[n];
+        for (int i = n - 2; i >= 0; i--) s[i] = s[i + 1] + Dist(r.Points[i], r.Points[i + 1]);   // Abstand zum Ende
+        double L = Math.Min(reach, s[0]);
+        for (int i = 0; i < n; i++)
+        {
+            if (s[i] >= L) continue;
+            double t = 1 - s[i] / L, w = t * t * (3 - 2 * t);
+            r.Points[i][0] += delta.X * w; r.Points[i][2] += delta.Z * w;
+        }
+    }
+    /// <summary>Neu gesetzte Spurende-Prefabs (alt → neu), damit MapWriter seine Liste anpasst.</summary>
+    public static readonly Dictionary<Prefab, Prefab> Replaced = [];
     /// <summary>Richtungsänderung (Grad je Meter) an beiden Enden zusammen, die das Rampenstück
     /// zwischen Spurende-Prefab und Einfahrt als flacher Bogen aufnehmen darf.</summary>
     public static float JoinTurnPerM = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JOIN_TURN"), System.Globalization.CultureInfo.InvariantCulture, out var jt) ? jt : 0.4f;
@@ -1800,7 +1818,7 @@ public static class Interchanges
         if (p.Kind == "drop")
         {
             var pf = Place(map, src, p.K.Narrow!, NarrowIn, NarrowOut, p.Direction, NarrowIn, p.Anchor, p.Grade);
-            DropPlaced[p.MainOut] = pf;
+            DropPlaced[p.MainOut] = (pf, p);
             return new Placed(p, pf, NarrowIn, pf, NarrowOut, pf, NarrowIn);
         }
         if (p.Kind == "exit")
@@ -1830,21 +1848,24 @@ public static class Interchanges
         else
         {
             Prefab join;
-            if (UseDirectJoin && p.AfterRampPrefab && DropPlaced.TryGetValue(p.Ramp, out var drop))
+            if (UseDirectJoin && p.AfterRampPrefab && DropPlaced.TryGetValue(p.Ramp, out var dp))
             {
-                // Einfahrt direkt an das Spurende-Prefab der Rampe hängen: Rampenknoten auf dessen
-                // Ausgang, Rampenarm in dessen Richtung; die Einfahrt steht dafür um den Unterschied
-                // schräg zur Hauptfahrbahn, die Hauptfahrbahn gleicht das in ihren Bögen aus
-                var ppdJ = src.Get(p.K.Join!.PpdPath);
-                var locJ = Calibrate(ppdJ, p.K.Join.Unit, Quaternion.Identity);
-                var inwJ = WorldDirections(ppdJ, locJ);
-                var fwdJ = locJ[JoinOut] - locJ[JoinMain];
-                float th = Wrap(Ang(inwJ[JoinRamp]) - Ang(fwdJ));            // Rampenarm gegen Achse
-                var dOut = Flat(-InwardDirections[drop][NarrowOut], p.Direction);
-                float axisAng = Ang(dOut) - th;
-                var axis = new Vector3(MathF.Cos(axisAng), 0, MathF.Sin(axisAng));
-                join = Place(map, src, p.K.Join!, JoinMain, JoinOut, axis, JoinRamp, drop.Nodes[NarrowOut].Position, p.Grade);
-                join.Attach(JoinRamp, drop, NarrowOut);
+                // Einfahrt direkt an das Spurende-Prefab der Rampe: die Einfahrt bleibt an der
+                // Hauptfahrbahn ausgerichtet (gerade Autobahn bleibt gerade); stattdessen wird das
+                // Spurende-Prefab neu gesetzt – sein Ausgang auf den Rampenknoten, in Richtung des
+                // Rampenarms – und die Rampe davor zu seinem Eingang geführt
+                join = Place(map, src, p.K.Join!, JoinMain, JoinOut, p.Direction, JoinMain, p.Anchor, p.Grade);
+                var arm = InwardDirections[join][JoinRamp];
+                var old = dp.Pf;
+                var nd = Place(map, src, dp.Plan.K.Narrow!, NarrowIn, NarrowOut, arm, NarrowOut, join.Nodes[JoinRamp].Position, p.Grade);   // Neigung wie die Einfahrt (gemeinsamer Knoten)
+                // Rampe davor sanft auf den neuen Eingang verlegen: Versatz über ihre ganze Länge
+                // (höchstens ShiftReach m, z. B. ab der Brücke) verteilt, nicht erst in den letzten 40 m
+                TaperShift(dp.Plan.MainIn, nd.Nodes[NarrowIn].Position - old.Nodes[NarrowIn].Position, ShiftReach);
+                map.Delete(old);
+                join.Attach(JoinRamp, nd, NarrowOut);
+                SetTail(dp.Plan.MainIn, nd.Nodes[NarrowIn].Position, InwardDirections[nd][NarrowIn], Lead, RampBlend);
+                nd.Nodes[NarrowIn].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[nd][NarrowIn], p.Grade));
+                Replaced[old] = nd;
                 p.DirectRamp = true;
                 DirectJoins++;
             }
