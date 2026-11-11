@@ -1256,7 +1256,8 @@ public static class Interchanges
         var loc = Calibrate(ppd, p.K.Join.Unit, Quaternion.Identity);
         var fwd = loc[JoinOut] - loc[JoinMain]; fwd.Y = 0; fwd = Vector3.Normalize(fwd);
         var rv = loc[JoinRamp] - loc[JoinMain]; rv.Y = 0;
-        float lat = MathF.Abs(fwd.X * rv.Z - fwd.Z * rv.X), lon = Vector3.Dot(rv, fwd);
+        float latS = fwd.X * rv.Z - fwd.Z * rv.X;
+        float lat = MathF.Abs(latS), lon = Vector3.Dot(rv, fwd);
         float total = (float)ArcLength(p.MainIn);
         float found = -1;
         for (float D = 2; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
@@ -1264,6 +1265,42 @@ public static class Interchanges
             var q = AxisAt(p.MainIn, false, D);
             if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null && D % 10 == 0) Console.Error.WriteLine($"PAR {p.OsmNode} D {D} dist {RampDistance(p.Ramp, new Vector2(q.X, q.Z)):0.0} lat {lat:0.0} lon {lon:0.0} total {total:0}");
             if (RampDistance(p.Ramp, new Vector2(q.X, q.Z)) >= lat) { found = D; break; }
+        }
+        // Wie bei Ausfahrten: lieber die Einfahrt verschieben als die Rampe biegen – weiter stromauf,
+        // wo die OSM-Rampe am Rampenknoten mindestens so steil auf die Hauptfahrbahn zuläuft wie der
+        // Rampenarm; sonst die Stelle mit dem kleinsten Bogen
+        if (found >= 0 && UseBendFreeExit && p.Ramp.Start?.Kind != "prefab")
+        {
+            var dirs = WorldDirections(ppd, loc);
+            var arm = -dirs[JoinRamp]; arm.Y = 0;
+            if (arm.LengthSquared() > 1e-6f)
+            {
+                arm = Vector3.Normalize(arm);
+                float armDiv = MathF.Acos(Math.Clamp(Vector3.Dot(arm, fwd), -1, 1)) * 180 / MathF.PI;
+                if (armDiv > 90) armDiv = 180 - armDiv;
+                float smooth = -1, bestCost = float.MaxValue, bestD = -1;
+                for (float D = found; D <= MathF.Min(MaxParallelShift, total - 60); D += 2)
+                {
+                    var q0 = AxisAt(p.MainIn, false, D + 2); var q1 = AxisAt(p.MainIn, false, MathF.Max(0, D - 2));
+                    var md = new Vector2(q1.X - q0.X, q1.Z - q0.Z);
+                    if (md.LengthSquared() < 1e-6f) continue;
+                    md = Vector2.Normalize(md);
+                    var right = new Vector2(-md.Y, md.X);
+                    var q = AxisAt(p.MainIn, false, D);
+                    var node = new Vector2(q.X, q.Z) + right * latS + md * lon;
+                    if (RampArcAt(p.Ramp, node) < MinRampBefore) break;
+                    float dist = RampDistance(p.Ramp, node);
+                    var rt = RampTangent(p.Ramp, node);
+                    float div = MathF.Acos(Math.Clamp(MathF.Abs(Vector2.Dot(rt, md)), 0, 1)) * 180 / MathF.PI;
+                    if (dist <= BendFreeTol && div >= armDiv - BendFreeAngle) { smooth = D; break; }
+                    float cost = MathF.Max(0, armDiv - div) + 2f * MathF.Max(0, dist - BendFreeTol);
+                    if (dist < 10f && cost < bestCost) { bestCost = cost; bestD = D; }
+                }
+                if (smooth < 0) smooth = bestD;
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                    Console.Error.WriteLine($"MERGETRY {p.OsmNode} arm {armDiv:0.0} found {found} smooth {smooth}");
+                if (smooth >= 0) found = smooth;
+            }
         }
         float d = found - lon - 2;     // Prefab-Hauptknoten so, dass der Rampenknoten dort liegt
         if (found < 0 || d < 20) return;
