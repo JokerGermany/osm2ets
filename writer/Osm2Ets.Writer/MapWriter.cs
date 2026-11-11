@@ -54,6 +54,8 @@ public static class MapWriter
             valid.Add(entry);
         }
         Triangles.Collapse(valid, warnings);
+        int rounded = CornerRounding.Apply(valid);
+        if (rounded > 0) warnings.Add($"Info: {rounded} Ecken in Autobahn-/Rampenlinien gerundet (Bogen statt Knick am OSM-Knoten)");
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
         // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);

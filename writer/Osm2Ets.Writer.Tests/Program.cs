@@ -223,6 +223,9 @@ static void SaveAndReopen()
 
 static void SectorWithoutNodeIsSaved()
 {
+    // prüft anderes; gerundete Ecken änderten Stückzahl und Kürzungen
+    CornerRounding.Enabled = false;
+    try {
     // Vom Review gefunden: TruckLib legt beim Anhängen keinen Sektor für den
     // Mittelpunkt an. Mittelpunkt des 2. Stücks (80070, 128070) liegt in
     // Sektor (20, 32), beide Knoten aber in (19, 32) bzw. (20, 31).
@@ -247,6 +250,7 @@ static void SectorWithoutNodeIsSaved()
     {
         if (Directory.Exists(dir)) Directory.Delete(dir, true);
     }
+    } finally { CornerRounding.Enabled = true; }
 }
 
 static void ResolutionRecalculatesTerrain()
@@ -276,6 +280,9 @@ static void ResolutionRecalculatesTerrain()
 
 static void ConnectsThroughRoads()
 {
+    // prüft anderes; gerundete Ecken änderten Stückzahl und Kürzungen
+    CornerRounding.Enabled = false;
+    try {
     // Knoten 7 bei (0,0,0): A kommt von Süden (z>0) an, B fährt nach Norden weiter,
     // C zweigt nach Osten ab; D ist zweirichtig und falsch herum (endet an Knoten 9).
     var a = MakeRoad("a", new[] { new[] { 0.0, 0, 200 }, new[] { 0.0, 0, 100 }, new[] { 0.0, 0, 0 } }, MakeRun(0, 2, "motorway", oneway: true));
@@ -315,6 +322,7 @@ static void ConnectsThroughRoads()
         Check(re.MapItems.Count == map.MapItems.Count && re.Nodes.Count == map.Nodes.Count, "Speichern/Laden");
     }
     finally { if (Directory.Exists(dir2)) Directory.Delete(dir2, true); }
+    } finally { CornerRounding.Enabled = true; }
 }
 
 static void LookListerReadsArchive()
