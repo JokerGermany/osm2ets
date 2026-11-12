@@ -93,6 +93,8 @@ public sealed class RunEntry
     public string Role { get; set; } = "";
     public bool Oneway { get; set; }
     public int? Lanes { get; set; }
+    /// <summary>Spurzahl laut OSM beim Einlesen (Lanes kann der Writer später ändern).</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public int? OsmLanes { get; set; }
     public bool Bridge { get; set; }
     public bool Tunnel { get; set; }
     public int Layer { get; set; }

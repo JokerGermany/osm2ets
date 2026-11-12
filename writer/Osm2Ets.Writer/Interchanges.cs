@@ -325,6 +325,30 @@ public static class Interchanges
     public static bool UseShift = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOSHIFT") is null;
     /// <summary>Rolle der Abschnitte einer Zusatzspur-Straße (Zuordnung: Straßentyp "hw2 ext one lane").</summary>
     public const string ExtRole = "ext";
+    /// <summary>Länge der Zusatzspur aus OSM übernehmen: so weit, wie die Hauptfahrbahn hinter einer
+    /// Einmündung (vor einer Teilung) die Spurzahl des ersten Abschnitts behält (aus: OSM2ETS_NO_OSM_AUX).</summary>
+    public static bool UseOsmAux = Environment.GetEnvironmentVariable("OSM2ETS_NO_OSM_AUX") is null;
+    public static int OsmAux;
+    public const float MaxOsmAux = 400f;
+
+    /// <summary>Bogenlänge ab dem Anfang (fromStart) bzw. Ende der Straße, solange die Spurzahl des
+    /// ersten Abschnitts gilt; 0 ohne Spurangabe.</summary>
+    private static float AuxLength(RoadEntry r, bool fromStart)
+    {
+        int? L(RunEntry x) => x.OsmLanes ?? x.Lanes;
+        var first = fromStart ? r.Runs[0] : r.Runs[^1];
+        if (L(first) is not int l0 || l0 < 3) return 0;
+        int n = r.Points.Count; float acc = 0; bool dropped = false;
+        for (int k = 0; k < n - 1; k++)
+        {
+            int seg = fromStart ? k : n - 2 - k;
+            var run = r.Runs.FirstOrDefault(x => x.From <= seg && seg < x.To);
+            if (run is null) break;
+            if (L(run) is int l && l < l0) { dropped = true; break; }
+            acc += Vector2.Distance(new((float)r.Points[seg][0], (float)r.Points[seg][2]), new((float)r.Points[seg + 1][0], (float)r.Points[seg + 1][2]));
+        }
+        return dropped ? acc : 0;
+    }
 
     public sealed class Plan
     {
@@ -1169,6 +1193,20 @@ public static class Interchanges
                 ext = CurveExt(Enumerable.Reverse(p.MainIn.Points).ToList(), p.Anchor, lenNear + lenFar);
                 p.ExtForCurve = ext > 0;
             }
+            // Zusatzspur so lang wie in OSM (Abschnitt mit einer Spur mehr vor der Teilung)
+            if (UseOsmAux && d == 0 && p.K.Widen is not null && p.K.Widen0 is null)
+            {
+                float aux = AuxLength(p.MainIn, false) - len;
+                // äußeres Prefab nicht auf eine Brücke: dann über das Bauwerk hinaus rücken
+                for (int it = 0; it < 5 && aux > 0; it++)
+                {
+                    float a0 = lenNear + aux - ExtMargin, a1 = lenNear + aux + lenFar + Slack + ExtMargin;
+                    var hit = spans.Where(sp => sp.B > a0 && sp.A < a1).ToList();
+                    if (hit.Count == 0) break;
+                    aux = hit.Max(sp => sp.B) + ExtMargin - lenNear;
+                }
+                if (aux > ext + 10 && aux <= MaxOsmAux && ArcLength(p.MainIn) > len + aux + Slack + 40) { ext = aux; p.ExtForCurve = true; OsmAux++; }
+            }
             p.Ext = ext;
             // drei Prefabs: ohne Zusatzspur-Straße und Verschiebung (sonst nicht umsetzbar)
             if ((p.K.Widen0 is not null || p.K.Widen is null) && (d > 0 || ext > 0)) return false;
@@ -1222,6 +1260,20 @@ public static class Interchanges
                 float room = (float)ArcLength(p.MainOut) - len - Slack - 60;
                 float e2 = MathF.Min(MathF.Min(p.Moved, MaxExt), room);
                 if (e2 > ext) { ext = e2; p.ExtForCurve = false; }
+            }
+            // Zusatzspur so lang wie in OSM (Abschnitt mit einer Spur mehr hinter der Einmündung)
+            if (UseOsmAux && d == 0 && p.K.Narrow is not null)
+            {
+                float aux = AuxLength(p.MainOut, true) - len;
+                // äußeres Prefab nicht auf eine Brücke: dann über das Bauwerk hinaus rücken
+                for (int it = 0; it < 5 && aux > 0; it++)
+                {
+                    float a0 = lenNear + aux - ExtMargin, a1 = lenNear + aux + lenFar + Slack + ExtMargin;
+                    var hit = spans.Where(sp => sp.B > a0 && sp.A < a1).ToList();
+                    if (hit.Count == 0) break;
+                    aux = hit.Max(sp => sp.B) + ExtMargin - lenNear;
+                }
+                if (aux > ext + 10 && aux <= MaxOsmAux && ArcLength(p.MainOut) > len + aux + Slack + 40) { ext = aux; p.ExtForCurve = true; OsmAux++; }
             }
             p.Ext = ext;
             if (p.K.Narrow is null && (d > 0 || ext > 0)) return false;

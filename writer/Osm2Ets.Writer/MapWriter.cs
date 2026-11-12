@@ -53,6 +53,7 @@ public static class MapWriter
             }
             valid.Add(entry);
         }
+        foreach (var e in valid) foreach (var x in e.Runs) x.OsmLanes = x.Lanes;
         Triangles.Collapse(valid, warnings);
         int rounded = CornerRounding.Apply(valid);
         if (rounded > 0) warnings.Add($"Info: {rounded} Ecken in Autobahn-/Rampenlinien gerundet (Bogen statt Knick am OSM-Knoten)");
@@ -463,7 +464,7 @@ public static class MapWriter
         PrefabFootprint.FixPitch(map);
         if (PrefabFootprint.PitchFixed > 0) warnings.Add($"Info: Neigung von {PrefabFootprint.PitchFixed} Prefab-Knoten an die Prefab-Lage angepasst");
         if (prefabs is not null)
-            warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt, {Junctions.BridgeShifted} von Brücken weggerückt");
+            warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt, {Junctions.BridgeShifted} von Brücken weggerückt, {Interchanges.OsmAux} Zusatzspuren mit OSM-Länge");
         if (prefabs is not null)
             warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
 
