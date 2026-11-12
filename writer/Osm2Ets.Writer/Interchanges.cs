@@ -230,12 +230,15 @@ public static class Interchanges
 
     /// <summary>Von <see cref="PrepareLaneDrops"/> geteilte Rampen, abgeholt von <see cref="Find"/>.</summary>
     private static readonly List<(long Node, RoadEntry A, RoadEntry B)> PendingDrops = [];
+    /// <summary>Rampenstücke hinter einem Spurende-Prefab (aus SplitLaneDrops).</summary>
+    private static readonly HashSet<string> DropTails = [];
 
     /// <summary>Vor der Spurzahl-Vereinheitlichung (LaneSmoothing) aufrufen – sie würde den
     /// Wechsel 2 → 1 sonst einebnen.</summary>
     public static int PrepareLaneDrops(List<RoadEntry> roads)
     {
         PendingDrops.Clear();
+        DropTails.Clear();
         if (UseLinkJoin) PendingDrops.AddRange(SplitLaneDrops(roads));
         RecordLanes(roads);
         return PendingDrops.Count;
@@ -274,6 +277,7 @@ public static class Interchanges
             r.End = new EndInfo { Kind = "node", OsmNode = id };
             r.LengthM = la;
             roads.Add(tail);
+            DropTails.Add(tail.Id);
             res.Add((id, r, tail));
         }
         return res;
@@ -1271,7 +1275,11 @@ public static class Interchanges
         // Wie bei Ausfahrten: die Lage mit dem kleinsten Bogen (Rampe per SetTail auf einer Kopie
         // angeschlossen, dazu der Knick der Hauptfahrbahn). Nicht hinter einem Spurende-Prefab der
         // Rampe (dafür gilt die Regel weiter unten)
-        if (UseBendFreeExit && p.Ramp.Start?.Kind != "prefab")
+        // Rampe hinter einem Spurende-Prefab: eigene Regel weiter unten. Beginnt sie an einem anderen
+        // Prefab (z. B. Ausfahrt davor), gilt die Lagesuche auch, mit genug Rampe davor
+        bool afterDrop = DropTails.Contains(p.Ramp.Id);
+        float needBefore = p.Ramp.Start?.Kind == "prefab" ? MinRampBefore * 3 : MinRampBefore;
+        if (UseBendFreeExit && !afterDrop)
         {
             var dirs = WorldDirections(ppd, loc);
             var f2 = new Vector2(fwd.X, fwd.Z);
@@ -1281,10 +1289,10 @@ public static class Interchanges
             // gerade Strecke des ganzen Bausatzes (Spurende dahinter liegt auf derselben Geraden)
             if (p.K.Narrow is not null && p.Ext <= 0) lp += Length(src, p.K.Narrow, NarrowIn, NarrowOut);
             var (bestD, bestRho, bestCost, cost0) = BestPose(p, false, MathF.Min(MaxParallelShift, total - 60), lp, phiRv, rvLen, phiArm, true,
-                node => RampArcAt(p.Ramp, new Vector2(node.X, node.Z)) < MinRampBefore);
+                node => RampArcAt(p.Ramp, new Vector2(node.X, node.Z)) < needBefore);
             p.PoseRotation = bestRho;
             if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
-                Console.Error.WriteLine($"PLACE entry {p.OsmNode} cost0 {cost0:0.0} best {bestCost:0.0} at {bestD} rot {bestRho} (first-fit {found})");
+                Console.Error.WriteLine($"PLACE entry {p.OsmNode} ramp {p.Ramp.Id} start {p.Ramp.Start?.Kind}/{p.Ramp.Start?.OsmNode} drops {string.Join(",", PendingDrops.Select(x => x.B.Id))} cost0 {cost0:0.0} best {bestCost:0.0} at {bestD} rot {bestRho} (first-fit {found})");
             found = bestD <= 0 ? -1 : bestD + lon + 2;
         }
         float d = found - lon - 2;     // Prefab-Hauptknoten so, dass der Rampenknoten dort liegt
