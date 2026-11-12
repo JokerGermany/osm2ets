@@ -59,11 +59,24 @@ def run_key(part, role: str) -> tuple:
         tags.get("service"),
         tags.get("access"),
         tags.get("shoulder"),
+        parse_width(tags),
     )
 
 
 RUN_FIELDS = ("highway", "role", "oneway", "lanes", "bridge", "tunnel", "layer", "ref", "maxspeed", "service",
-              "access", "shoulder")
+              "access", "shoulder", "width")
+
+
+def parse_width(tags: dict):
+    """OSM width=* in Metern (z. B. "3", "3.5 m"); sonst None."""
+    raw = tags.get("width")
+    if raw is None:
+        return None
+    try:
+        v = float(str(raw).split(";")[0].replace(",", ".").replace("m", "").strip())
+    except ValueError:
+        return None
+    return v if v > 0 else None
 
 
 # --------------------------------------------------------------------------- Stücke

@@ -272,6 +272,8 @@ public sealed class MatchSpec
     public bool? Tunnel { get; set; }
     public int? LanesMin { get; set; }
     public int? LanesMax { get; set; }
+    /// <summary>Nur einspurige Wege: lanes fehlt oder ≤ 1 und width fehlt oder ≤ dieser Breite (m).</summary>
+    public double? NarrowMaxWidth { get; set; }
     /// <summary>Regulärer Ausdruck auf das OSM-ref-Tag.</summary>
     public string? Ref { get; set; }
     /// <summary>OSM service=* (z. B. parking_aisle, driveway).</summary>
@@ -299,6 +301,7 @@ public sealed class MatchSpec
         if (Tunnel is not null && Tunnel != run.Tunnel) return false;
         if (LanesMin is not null && (run.Lanes is null || run.Lanes < LanesMin)) return false;
         if (LanesMax is not null && (run.Lanes is null || run.Lanes > LanesMax)) return false;
+        if (NarrowMaxWidth is not null && (run.Lanes > 1 || run.Width > NarrowMaxWidth)) return false;
         if (refRegex is not null && !refRegex.IsMatch(run.Ref ?? "")) return false;
         if (Service is not null && (run.Service is null || !Service.Contains(run.Service))) return false;
         if (Access is not null && !Access.Contains(run.Access ?? "none")) return false;
