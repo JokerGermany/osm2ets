@@ -162,16 +162,31 @@ public static class Overlaps
                 if (d < best) { best = d; oy = (float)((o.Points[i][1] + o.Points[i + 1][1]) / 2); }
             }
         if (float.IsNaN(oy)) return;
+        // letztes Stück gerade: Zwischenpunkte innerhalb von 10 m vor dem Ende entfernen (sonst ein
+        // spitzer Knick direkt an der Sperre, das Straßenstück wird zum verdrehten Keil)
+        const float straight = 10f;
+        while (r.Points.Count > 2)
+        {
+            int k = atStart ? 1 : r.Points.Count - 2;
+            if (Vector2.Distance(P(r.Points[k]), p) >= straight) break;
+            r.Points.RemoveAt(k);
+            foreach (var run in r.Runs)
+            {
+                if (run.From > k) run.From--;
+                if (run.To >= k && run.To > 0) run.To--;
+            }
+        }
         double dy = oy + 0.02 - e[1];
         if (Math.Abs(dy) < 0.02) return;
-        const double blend = 15;
+        // volle Höhe schon 10 m vor dem Ende, angeglichen über die 20 m davor
+        const double full = 10, blend = 20;
         int n = r.Points.Count; double acc = 0;
         for (int k = 0; k < n; k++)
         {
             int i = atStart ? k : n - 1 - k;
             if (k > 0) { int j = atStart ? i - 1 : i + 1; acc += Vector2.Distance(P(r.Points[i]), P(r.Points[j])); }
-            if (acc >= blend) break;
-            r.Points[i][1] += dy * (1 - acc / blend);
+            if (acc >= full + blend) break;
+            r.Points[i][1] += dy * (acc <= full ? 1 : 1 - (acc - full) / blend);
         }
     }
 
