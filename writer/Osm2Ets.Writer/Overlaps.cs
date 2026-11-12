@@ -111,10 +111,14 @@ public static class Overlaps
             {
                 var end = atStart ? r.Start : r.End;
                 var run = atStart ? r.Runs[0] : r.Runs[^1];
-                if (run.Access is null || end?.Kind == "node" || major.Contains(r)) continue;
+                if (run.Access is null || major.Contains(r)) continue;
+                // an einem Knoten, an dem auch eine andere Straße endet: echte Einmündung, bleibt
+                if (end?.Kind == "node" && end.OsmNode is long en && byNode.TryGetValue(en, out var at) && at.Count > 1) continue;
                 var p = P(atStart ? r.Points[0] : r.Points[^1]);
                 float hw = halfWidth(run);
-                var near = major.Where(o => Touches(p, hw + 2f, o, halfWidth)).ToList();
+                // nur Fahrbahnen auf gleicher Höhe (nicht die Brücke darüber / den Tunnel darunter)
+                float py = (float)(atStart ? r.Points[0] : r.Points[^1])[1];
+                var near = roads.Where(o => o != r && !drop.Contains(o) && Touches(p, hw + 2f, o, halfWidth) && SameLevelNear(p, py, o)).ToList();
                 if (near.Count == 0) continue;
                 float need = 0;
                 foreach (var o in near) need = MathF.Max(need, NeededTrim(r, atStart, o, hw, halfWidth));
@@ -123,11 +127,12 @@ public static class Overlaps
                 {
                     // zu kurz: ganz weglassen statt auf der Fahrbahn liegen lassen – nur wenn das
                     // andere Ende frei ist (sonst hinge eine Kreuzung daran)
-                    if ((atStart ? r.End : r.Start) is { Kind: "cut", Open: true }) drop.Add(r);
+                    if ((atStart ? r.End : r.Start) is { Kind: "cut", Open: true }) { drop.Add(r); warnings.Add($"Gesperrte Zufahrt {r.Id} weggelassen bei ({p.X:0},{p.Y:0})"); }
                     else warnings.Add($"Gesperrte Zufahrt {r.Id}: müsste um {need:0} m gekürzt werden – zu kurz, bleibt überlagert");
                     continue;
                 }
                 CutEnd(r, atStart, need);
+                warnings.Add($"Info: gesperrte Zufahrt {r.Id} am Fahrbahnrand um {need:0} m gekürzt bei ({p.X:0},{p.Y:0})");
                 trimmed++;
             }
         if (drop.Count > 0)
@@ -137,6 +142,21 @@ public static class Overlaps
             warnings.Add($"Info: {drop.Count} gesperrte Zufahrten an der Autobahn zu kurz zum Kürzen – weggelassen");
         }
         return trimmed;
+    }
+
+    private static bool SameLevelNear(Vector2 p, float py, RoadEntry o)
+    {
+        int best = -1; float bd = float.MaxValue;
+        for (int i = 0; i < o.Points.Count - 1; i++)
+        {
+            float d = DistPointSeg(p, P(o.Points[i]), P(o.Points[i + 1]));
+            if (d < bd) { bd = d; best = i; }
+        }
+        if (best < 0) return false;
+        var run = o.Runs.FirstOrDefault(x => x.From <= best && best < x.To) ?? o.Runs[0];
+        if (run.Bridge || run.Tunnel) return false;
+        float oy = (float)((o.Points[best][1] + o.Points[best + 1][1]) / 2);
+        return MathF.Abs(oy - py) < 3f;
     }
 
     /// <summary>Wie weit (Bogenlänge) das Ende von r gekürzt werden muss, damit es o nicht überdeckt.</summary>

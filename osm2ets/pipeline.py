@@ -127,11 +127,10 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     if use_ind or use_links or use_escape or use_ends or use_vis or use_stubs:
         from .extras import escape_lanes, local_xy, same_level_links
         # alle Wege, damit an Einmündungen ins Netz geteilt wird; Netzwege selbst sind gesperrt
-        net2 = Network(all_ways + stub_ways, profile)
+        # gesperrte Zufahrten nicht in diesem Netz: sonst würden ihre Anschlussknoten andere Wege
+        # teilen und die übrigen Regeln dort neue Enden/Starts sehen (Unterführung verschwand)
+        net2 = Network(all_ways, profile)
         stub_ids = {w.id for w in stub_ways}
-        for e in net2.edges:
-            if e.way.id in stub_ids:
-                e.role = "blocked"   # für die übrigen Zusatzregeln gesperrt
         spans: dict = {}
         for e in selected:
             spans.setdefault(e.way.id, []).append((e.i0, e.i1, e.role))
@@ -175,7 +174,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
             from .industry import connect, connect_services
             starts = set(nn)
             for e in net2.edges:
-                if e.role not in (None, "taken"):
+                if e.role not in (None, "taken", "blocked"):
                     starts.update(e.node_ids())
             on_major = set()
             for e in selected:
@@ -187,14 +186,14 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                 if e.highway not in major:
                     on_major.difference_update(e.node_ids())
             for e in net2.edges:
-                if e.role not in (None, "taken"):
+                if e.role not in (None, "taken", "blocked"):
                     on_major.difference_update(e.node_ids())
             industry_stats = connect(net2, starts, targets, loc, ind["highway"], ind["max_distance_m"],
                                      ind["inside_m"], no_start=on_major)
             # Rast- und Tankanlagen: auch direkt von der Autobahn aus, alle Zu- und Abfahrten
             starts2 = set(nn)
             for e in net2.edges:
-                if e.role not in (None, "taken"):
+                if e.role not in (None, "taken", "blocked"):
                     starts2.update(e.node_ids())
             services_stats = connect_services(net2, starts2, targets, loc, ind["highway"], ind["max_distance_m"])
         # 4. Straßenenden weiterführen (zuletzt, damit auch Zufahrten und Verbindungen enden)
@@ -231,11 +230,17 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
             for e in selected:
                 if e.highway in ("motorway", "motorway_link"):
                     mw.update(e.node_ids())
-            stub_stats = restricted_stubs(net2, xy, loc, set(detach), stub_len)
-            stub_stats["locations"].update({f: loc[f] for f in detach if f in loc})
-            for e in net2.edges:
-                if e.role == "blocked":
-                    e.role = None
+            # eigenes Netz nur aus den gesperrten Wegen: ganze Kanten werden als Teilstücke übernommen
+            net3 = Network(stub_ways, profile)
+            for e in net3.edges:
+                e.role = "blocked"
+            sloc = read_node_locations(input_path, {n for w in stub_ways for n in w.nodes if n > 0} | set(detach.values()))
+            for fid, orig in detach.items():
+                if orig in sloc:
+                    sloc[fid] = sloc[orig]
+            stub_stats = restricted_stubs(net3, local_xy(sloc), sloc, set(detach), stub_len)
+            stub_stats["locations"].update(sloc)
+            stub_stats["partial"] = [e for e in net3.edges if e.role == "connector"] + stub_stats["partial"]
         new = [e for e in net2.edges if e.role not in (None, "taken")]
         if new or (stub_stats and stub_stats["partial"]):
             # Netzkanten an den neuen Einmündungen teilen: Auswahl aus net2 übernehmen
