@@ -41,6 +41,10 @@ public static class Junctions
     /// Sonst liegen die Fahrbahnen auf den ersten Metern übereinander.
     /// </summary>
     public const float MaxBend = 75f;
+    /// <summary>Durchgehende Straße gilt als gerade, wenn ihre Arme höchstens so weit (Grad) von
+    /// 180° abweichen; nur dann richtet sich das Prefab allein nach ihr (sonst Mittel aller Arme –
+    /// eine abknickende Hauptstraße bog sonst die anschließende Brücke über die Autobahn).</summary>
+    public const float StraightThroughDeg = 25f;
 
     /// <summary>Länge des Bogens je nach Abweichung (m); 0 = gerader Einlauf genügt.</summary>
     /// <summary>Größte Abweichung eines Arms von der Prefab-Knotenrichtung (Grad); sonst ohne Prefab.
@@ -445,7 +449,8 @@ public static class Junctions
                 // Kreuzung/Einmündung mit durchgehender Straße: Prefab nur nach den beiden
                 // durchgehenden Armen drehen – sonst zöge ein schräger Seitenarm die gerade
                 // Hauptstraße in ein S (St 2183 an der Zufahrt zur A 70)
-                if (p.Def.Through.Length == 2 && p.Def.Side.Length >= 1 && p.ForceNodes is null)
+                if (p.Def.Through.Length == 2 && p.Def.Side.Length >= 1 && p.ForceNodes is null
+                    && Vector2.Dot(p.Arms[0].Away, p.Arms[1].Away) < -MathF.Cos(StraightThroughDeg * MathF.PI / 180))
                 {
                     float tx = 0, ty = 0;
                     for (int i = 0; i < 2; i++)
