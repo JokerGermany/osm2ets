@@ -132,6 +132,7 @@ public static class Overlaps
                     continue;
                 }
                 CutEnd(r, atStart, need);
+                LiftEnd(r, atStart, near);
                 warnings.Add($"Info: gesperrte Zufahrt {r.Id} am Fahrbahnrand um {need:0} m gekürzt bei ({p.X:0},{p.Y:0})");
                 trimmed++;
             }
@@ -146,6 +147,33 @@ public static class Overlaps
 
     /// <summary>So weit (m) darf eine gesperrte Zufahrt in den Modellrand der Autobahn ragen.</summary>
     public const float StubOverlap = 1f;
+
+    /// <summary>Freies Ende einer gesperrten Zufahrt auf die Höhe der Fahrbahn heben, in die es ragt
+    /// (sonst Stufe am Autobahnrand); über 15 m davor angleichen.</summary>
+    private static void LiftEnd(RoadEntry r, bool atStart, List<RoadEntry> near)
+    {
+        var e = atStart ? r.Points[0] : r.Points[^1];
+        var p = P(e);
+        float best = float.MaxValue, oy = float.NaN;
+        foreach (var o in near)
+            for (int i = 0; i < o.Points.Count - 1; i++)
+            {
+                float d = DistPointSeg(p, P(o.Points[i]), P(o.Points[i + 1]));
+                if (d < best) { best = d; oy = (float)((o.Points[i][1] + o.Points[i + 1][1]) / 2); }
+            }
+        if (float.IsNaN(oy)) return;
+        double dy = oy + 0.02 - e[1];
+        if (Math.Abs(dy) < 0.02) return;
+        const double blend = 15;
+        int n = r.Points.Count; double acc = 0;
+        for (int k = 0; k < n; k++)
+        {
+            int i = atStart ? k : n - 1 - k;
+            if (k > 0) { int j = atStart ? i - 1 : i + 1; acc += Vector2.Distance(P(r.Points[i]), P(r.Points[j])); }
+            if (acc >= blend) break;
+            r.Points[i][1] += dy * (1 - acc / blend);
+        }
+    }
 
     private static bool SameLevelNear(Vector2 p, float py, RoadEntry o)
     {
