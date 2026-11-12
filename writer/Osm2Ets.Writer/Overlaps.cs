@@ -121,9 +121,9 @@ public static class Overlaps
                 var near = roads.Where(o => o != r && !drop.Contains(o) && Touches(p, hw + 2f, o, halfWidth) && SameLevelNear(p, py, o)).ToList();
                 if (near.Count == 0) continue;
                 float need = 0;
-                // bis die Mittellinie (plus ein Viertel der eigenen Breite) am Fahrbahnrand liegt: die Sperre
-                // steht dann direkt an der Autobahn, ohne Lücke (vorher volle Breite + 1 m → ~4 m Lücke)
-                foreach (var o in near) need = MathF.Max(need, NeededTrim(r, atStart, o, hw * 0.25f, halfWidth));
+                // bis das Ende 1 m in den Modellrand der Autobahn reicht (Überschneidung auf gleicher Höhe
+                // erlaubt): die Sperre steht dann am Rand der Autobahn, ohne Lücke
+                foreach (var o in near) need = MathF.Max(need, NeededTrim(r, atStart, o, -StubOverlap, halfWidth));
                 if (need > MaxTrim || ArcLength(r) < need + 3)
                 {
                     // zu kurz: ganz weglassen statt auf der Fahrbahn liegen lassen – nur wenn das
@@ -143,6 +143,9 @@ public static class Overlaps
         }
         return trimmed;
     }
+
+    /// <summary>So weit (m) darf eine gesperrte Zufahrt in den Modellrand der Autobahn ragen.</summary>
+    public const float StubOverlap = 1f;
 
     private static bool SameLevelNear(Vector2 p, float py, RoadEntry o)
     {
