@@ -17,7 +17,9 @@ internal static class DeadEnds
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_DEAD_ENDS") != "1";
     public const string Scheme = "scheme18";   // „dead end“, im Editor 7,09 m lang
     public const float Inset = 0.5f;           // so weit vor dem Straßenende (m)
-    public const float Extra = 0.5f;           // je Seite über den Modellrand hinaus (m)
+    public const float Extra = 0.5f;
+    /// <summary>Sperre an einer Autobahn: so weit außerhalb ihres Modellrands (m).</summary>
+    public const float EdgeGap = 0.8f;           // je Seite über den Modellrand hinaus (m)
 
     public sealed record Placed(ulong Uid, string Road, string End, long? OsmNode, List<long> OsmWays, float X, float Y, float Z);
 
@@ -51,10 +53,28 @@ internal static class DeadEnds
             if (r.Runs.Any(x => x.Highway is "motorway" or "motorway_link") && first.TryGetValue(r, out var m0) && last.TryGetValue(r, out var m1))
             { major.Add(m0); major.Add(m1); }
         var majorSegs = new List<(Vector2, Vector2)>();
+        var majorHw = new List<float>();
         foreach (var r in roads)
             if (r.Runs.Any(x => x.Highway is "motorway" or "motorway_link"))
                 for (int i = 1; i < r.Points.Count; i++)
+                {
                     majorSegs.Add((new((float)r.Points[i - 1][0], (float)r.Points[i - 1][2]), new((float)r.Points[i][0], (float)r.Points[i][2])));
+                    var st = styles.TryGetValue(r, out var sa) ? sa[Math.Min(i - 1, sa.Length - 1)] : null;
+                    majorHw.Add(st is null ? 0 : st.Width / 2 + MathF.Abs(st.ModelCenter));
+                }
+        // Abstand vom Punkt bis zum Modellrand der nächsten Autobahn/Rampe (negativ = darin)
+        float EdgeDist(Vector2 p)
+        {
+            float best = float.MaxValue;
+            for (int k = 0; k < majorSegs.Count; k++)
+            {
+                var (a, b) = majorSegs[k];
+                var ab = b - a; float l2 = ab.LengthSquared();
+                float t = l2 > 0 ? Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1) : 0;
+                best = MathF.Min(best, Vector2.Distance(p, a + ab * t) - majorHw[k]);
+            }
+            return best;
+        }
         bool NearMajor(Vector2 p, float tol)
         {
             foreach (var (a, b) in majorSegs)
@@ -85,7 +105,14 @@ internal static class DeadEnds
                 var q = atStart ? fi.ForwardNode.Position : la.Node.Position;
                 var d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));
                 if (float.IsNaN(d.X)) continue;
-                var at = new Vector2(p.X, p.Z) + d * Inset;
+                // an der Autobahn: Sperre außerhalb, direkt am Modellrand der Autobahn (das Straßenende
+                // selbst ragt etwas in den Rand hinein, die Sperre darf das nicht)
+                var at = new Vector2(p.X, p.Z);
+                if (other is null)
+                {
+                    float ed = EdgeDist(at);
+                    if (ed < EdgeGap) at += d * (EdgeGap - ed);
+                }
                 var nn = new Vector2(-d.Y, d.X);
                 float half = styles[r][atStart ? 0 : ^1].Width / 2 + Extra;
                 var a2 = at + nn * half; var b2 = at - nn * half;
