@@ -13,6 +13,8 @@ public static class MinorPush
 {
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_MINOR_PUSH") != "1";
     public const float Gap = 0.5f;        // Luft zwischen den Modellrändern (m)
+    /// <summary>Feldwege neben Straßen: sichtbarer Grünstreifen zwischen den Modellrändern (m).</summary>
+    public const float TrackGap = 2.5f;
     public const float MaxPush = 12f;     // mehr nicht (sonst eher falsche Zuordnung)
     public const float Taper = 40f;
     public static float Sample = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_PUSH_SAMPLE"), System.Globalization.CultureInfo.InvariantCulture, out var sp) ? sp : 8f; // Punktabstand der Nebenstraßen beim Prüfen (m)
@@ -40,6 +42,7 @@ public static class MinorPush
                              List<(Vector3[] Nodes, float HalfWidth)> prefabs, List<string> warnings, bool links = false)
     {
         Moved = 0;
+        float gap = tracks ? TrackGap : Gap;
         if (links && !LinkPush) return;
         if (!Enabled) return;
         // Hindernisse: Segmente großer Straßen (Mitte des Modells) und Prefab-Sterne
@@ -114,7 +117,7 @@ public static class MinorPush
                     float u = Math.Clamp(Vector2.Dot(p - o.A, ab) / l2, 0, 1);
                     var q = o.A + ab * u; var dv = p - q; float d = dv.Length();
                     // bei Höhenunterschied Platz für eine Böschung (1 : Slope) lassen, sonst entsteht eine Wand
-                    float need = o.Hw + hwMe + Gap + Slope * dz - d;
+                    float need = o.Hw + hwMe + gap + Slope * dz - d;
                     if (need <= 0 || d < 1e-3f) continue;
                     if (o.R is null && Vector2.Distance(p, o.A) < 1f) continue;
                     object id = (object?)o.R ?? k;
@@ -123,7 +126,7 @@ public static class MinorPush
                     if (pass == 0) { sideSum[id] = (sideSum.TryGetValue(id, out var ss) ? ss : 0) + MathF.Sign(lat); continue; }
                     float side = sideSum.TryGetValue(id, out var sv) && sv != 0 ? MathF.Sign(sv) : MathF.Sign(lat);
                     // Abstand auf der gewählten Seite: liegt der Punkt drüben, muss er ganz herüber
-                    float needSide = o.Hw + hwMe + Gap + Slope * dz - side * lat;
+                    float needSide = o.Hw + hwMe + gap + Slope * dz - side * lat;
                     if (needSide <= 0) continue;
                     var v = nrm * side * needSide;
                     if (v.Length() > best.Length()) { best = v; bestId = id; }
@@ -141,7 +144,7 @@ public static class MinorPush
                         if (dz > MaxDz) continue;
                         var ab = o.B - o.A; float l2 = ab.LengthSquared(); if (l2 < 1e-6f) continue;
                         float u = Math.Clamp(Vector2.Dot(np - o.A, ab) / l2, 0, 1);
-                        if (o.Hw + hwMe + Gap + Slope * dz - Vector2.Distance(np, o.A + ab * u) > 0.5f)
+                        if (o.Hw + hwMe + gap + Slope * dz - Vector2.Distance(np, o.A + ab * u) > 0.5f)
                         { conflict[bestId] = (conflict.TryGetValue(bestId, out var cc) ? cc : 0) + 1; break; }
                     }
                     continue;

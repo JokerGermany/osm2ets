@@ -127,8 +127,7 @@ public static class Overlaps
                 {
                     // zu kurz: ganz weglassen statt auf der Fahrbahn liegen lassen – nur wenn das
                     // andere Ende frei ist (sonst hinge eine Kreuzung daran)
-                    if ((atStart ? r.End : r.Start) is { Kind: "cut", Open: true }) { drop.Add(r); warnings.Add($"Gesperrte Zufahrt {r.Id} weggelassen bei ({p.X:0},{p.Y:0})"); }
-                    else warnings.Add($"Gesperrte Zufahrt {r.Id}: müsste um {need:0} m gekürzt werden – zu kurz, bleibt überlagert");
+                    { drop.Add(r); warnings.Add($"Gesperrte Zufahrt {r.Id} weggelassen bei ({p.X:0},{p.Y:0}) – zu kurz zum Kürzen"); }
                     continue;
                 }
                 CutEnd(r, atStart, need);
@@ -154,7 +153,7 @@ public static class Overlaps
         }
         if (best < 0) return false;
         var run = o.Runs.FirstOrDefault(x => x.From <= best && best < x.To) ?? o.Runs[0];
-        if (run.Bridge || run.Tunnel) return false;
+        // Brücke/Tunnel nur über die Höhe ausschließen (eine Brücke auf gleicher Höhe zählt)
         float oy = (float)((o.Points[best][1] + o.Points[best + 1][1]) / 2);
         return MathF.Abs(oy - py) < 3f;
     }
