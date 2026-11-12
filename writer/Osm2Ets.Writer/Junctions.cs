@@ -70,7 +70,7 @@ public static class Junctions
     /// <summary>OSM-Knoten mit noch nicht gesetzter Kreuzung (dürfen kurze Arme „übernehmen“).</summary>
     public static readonly HashSet<long> PendingNodes = [];
 
-    public static void Reset() { Fixed.Clear(); PlacedEnds.Clear(); Dropped.Clear(); PendingNodes.Clear(); }
+    public static void Reset() { Fixed.Clear(); PlacedEnds.Clear(); Dropped.Clear(); PendingNodes.Clear(); ShiftedForks.Clear(); ForksShifted = 0; }
 
     private static bool OtherEndPending(RoadEntry r, Vector3 anchor)
     {
@@ -196,6 +196,188 @@ public static class Junctions
         r.Highway is "track" or "path" or "footway" or "cycleway" or "bridleway" or "pedestrian" or "steps"
         || (r.Highway == "service" && r.Service is "parking_aisle" or "driveway" or "drive-through" or "emergency_access");
 
+    public static bool UseForkShift = Environment.GetEnvironmentVariable("OSM2ETS_NO_FORK_SHIFT") is null;
+    public static int ForksShifted;
+    public const float MaxForkShift = 120f;
+    private static readonly HashSet<long> ShiftedForks = [];
+
+    /// <summary>
+    /// Gabelung (Stamm und zwei fast parallele Äste, z. B. zweibahnige Rampe teilt sich in zwei
+    /// Einbahnstraßen, ch_42029): Am OSM-Knoten liegen die Äste noch fast aufeinander, die Astknoten des
+    /// Prefabs aber schon um ihren Abstand auseinander – ein Ast lief in einer S-Kurve zurück. Wie bei
+    /// den Ausfahrten wandert die Gabelung entlang der Äste, bis diese so weit auseinander sind wie die
+    /// Astknoten. Der Stamm wird auf der Mittellinie zwischen den Ästen bis dorthin verlängert.
+    /// </summary>
+    private static void ShiftFork(Plan p, Vector3[] local)
+    {
+        if (!ShiftedForks.Add(p.OsmNode)) return;   // Prepare kann mehrfach laufen
+        int trunkNode = p.Def.Side[0];
+        var br = Enumerable.Range(0, local.Length).Where(k => k != trunkNode).ToArray();
+        if (br.Length != 2) return;
+        var l1 = new Vector2(local[br[0]].X, local[br[0]].Z); var l2 = new Vector2(local[br[1]].X, local[br[1]].Z);
+        float w = Vector2.Distance(l1, l2);
+        float half = Vector2.Distance(new Vector2(local[trunkNode].X, local[trunkNode].Z), (l1 + l2) / 2) / 2;
+        int ia = -1, ib = -1; float best = float.MaxValue;
+        for (int i = 0; i < 3; i++) for (int j = i + 1; j < 3; j++)
+        {
+            float a = MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(p.Arms[j].Away)));
+            if (a < best) { best = a; ia = i; ib = j; }
+        }
+        if (best * 180 / MathF.PI > 45) return;
+        int it = 3 - ia - ib;
+        var trunk = p.Arms[it].Road; var A = p.Arms[ia].Road; var B = p.Arms[ib].Road;
+        if (A == trunk || B == trunk || A == B) return;
+        bool aS = StartsAt(A, p.Anchor), bS = StartsAt(B, p.Anchor), tS = StartsAt(trunk, p.Anchor);
+        var pa = Line(A, aS); var pb = Line(B, bS);
+        float la = Arc(pa), lb = Arc(pb);
+        float found = -1;
+        for (float sh = 0; sh <= MathF.Min(MaxForkShift, MathF.Min(la, lb) - half - 30); sh += 1f)
+        {
+            // Astknoten liegen etwa half hinter der Mitte des Prefabs
+            var q = PointAt(pa, sh + half);
+            if (DistLine(pb, q) >= w) { found = sh; break; }
+        }
+        if (found < 5) return;
+        // Mittellinie zwischen den Ästen vom Knoten bis found (alle 5 m)
+        var y0 = p.Anchor.Y;
+        var mid = new List<double[]>();
+        for (float s0 = 0; ; s0 = MathF.Min(s0 + 5, found))
+        {
+            var qa = PointAt(pa, s0); var qb = PointAt(pb, ArcAtNearest(pb, qa));
+            var m = (qa + qb) / 2;
+            float y = HeightAt(A, aS, s0);
+            mid.Add([m.X, y, m.Y]);
+            if (s0 >= found) break;
+        }
+        float sb = ArcAtNearest(pb, PointAt(pa, found));
+        CutNear(A, aS, found);
+        CutNear(B, bS, sb);
+        // Äste beginnen jetzt an ihren Schnittpunkten; der neue Knoten liegt auf der Mittellinie:
+        // Astanfänge auf den Mittelpunkt ziehen wäre falsch (die Arme enden an den Prefab-Knoten) –
+        // die Arme werden später ohnehin auf die Knoten gekürzt
+        mid[0] = tS ? trunk.Points[0] : trunk.Points[^1];
+        AppendAtNode(trunk, tS, mid);
+        var np = mid[^1];
+        // Astanfänge an den neuen Knoten heranführen (sonst Lücke zwischen Ast und Knoten)
+        Prepend(A, aS, np); Prepend(B, bS, np);
+        p.Anchor = new Vector3((float)np[0], (float)np[1], (float)np[2]);
+        p.Arms = p.Arms.Select(a => new Arm(a.Road, Away(a.Road, StartsAt(a.Road, p.Anchor)))).ToArray();
+        ForksShifted++;
+        if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+            Console.Error.WriteLine($"FORKSHIFT {p.OsmNode} {found:0} m (w {w:0.0}, half {half:0.0}) anchor ({np[0]:0.0},{np[2]:0.0})");
+    }
+
+    private static float HeightAt(RoadEntry r, bool fromStart, float s)
+    {
+        var pts = fromStart ? r.Points : Enumerable.Reverse(r.Points).ToList();
+        for (int i = 1; i < pts.Count; i++)
+        {
+            double d = Dist(pts[i - 1], pts[i]);
+            if (s <= d) return (float)(pts[i - 1][1] + (pts[i][1] - pts[i - 1][1]) * (d > 0 ? s / d : 0));
+            s -= (float)d;
+        }
+        return (float)pts[^1][1];
+    }
+
+    /// <summary>Setzt am Knoten-Ende einen neuen ersten Punkt davor (gleicher Lauf).</summary>
+    private static void Prepend(RoadEntry r, bool atStart, double[] q)
+    {
+        if (atStart)
+        {
+            r.Points.Insert(0, (double[])q.Clone());
+            foreach (var x in r.Runs) { if (x.From > 0) x.From++; x.To++; }
+            r.Runs[0].From = 0;
+        }
+        else
+        {
+            r.Points.Add((double[])q.Clone());
+            r.Runs[^1].To = r.Points.Count - 1;
+        }
+    }
+
+    private static List<Vector2> Line(RoadEntry r, bool fromStart)
+    {
+        var l = r.Points.Select(P).ToList();
+        if (!fromStart) l.Reverse();
+        return l;
+    }
+
+    private static float Arc(List<Vector2> l) { float a = 0; for (int i = 1; i < l.Count; i++) a += Vector2.Distance(l[i - 1], l[i]); return a; }
+
+    private static Vector2 PointAt(List<Vector2> l, float s)
+    {
+        for (int i = 1; i < l.Count; i++)
+        {
+            float d = Vector2.Distance(l[i - 1], l[i]);
+            if (s <= d) return Vector2.Lerp(l[i - 1], l[i], d > 0 ? s / d : 0);
+            s -= d;
+        }
+        return l[^1];
+    }
+
+    private static float DistLine(List<Vector2> l, Vector2 q)
+    {
+        float best = float.MaxValue;
+        for (int i = 1; i < l.Count; i++)
+        {
+            var a = l[i - 1]; var ab = l[i] - a; float l2 = ab.LengthSquared();
+            float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1) : 0;
+            best = MathF.Min(best, Vector2.Distance(q, a + ab * t));
+        }
+        return best;
+    }
+
+    private static float ArcAtNearest(List<Vector2> l, Vector2 q)
+    {
+        float best = float.MaxValue, at = 0, acc = 0;
+        for (int i = 1; i < l.Count; i++)
+        {
+            var a = l[i - 1]; var ab = l[i] - a; float l2 = ab.LengthSquared(), len = MathF.Sqrt(l2);
+            float t = l2 > 0 ? Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1) : 0;
+            float d = Vector2.Distance(q, a + ab * t);
+            if (d < best) { best = d; at = acc + t * len; }
+            acc += len;
+        }
+        return at;
+    }
+
+    private static List<double[]> CutNear(RoadEntry r, bool atStart, float s)
+    {
+        if (!atStart) Reverse(r);
+        var pts = r.Points; double acc = 0; int k = 0;
+        while (k < pts.Count - 2 && acc + Dist(pts[k], pts[k + 1]) < s) { acc += Dist(pts[k], pts[k + 1]); k++; }
+        double seg = Dist(pts[k], pts[k + 1]), t = seg > 0 ? Math.Clamp((s - acc) / seg, 0, 1) : 0;
+        var a = pts[k]; var b = pts[k + 1];
+        var cut = new[] { a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t };
+        var piece = pts.Take(k + 1).Append(cut).ToList();
+        r.Points = new List<double[]> { cut }.Concat(pts.Skip(k + 1)).ToList();
+        r.Runs = r.Runs.Where(x => x.To > k).Select(x => { x.From = Math.Max(0, x.From - k); x.To -= k; return x; }).ToList();
+        r.Runs[0].From = 0; r.Runs[^1].To = r.Points.Count - 1;
+        if (!atStart) Reverse(r);
+        return piece;
+    }
+
+    private static void AppendAtNode(RoadEntry r, bool atStart, List<double[]> piece)
+    {
+        if (!atStart) Reverse(r);
+        var add = piece.Skip(1).Reverse().ToList();
+        int n = add.Count;
+        r.Points = add.Concat(r.Points).ToList();
+        foreach (var x in r.Runs) { if (x.From > 0) x.From += n; x.To += n; }
+        r.Runs[0].From = 0;
+        if (!atStart) Reverse(r);
+    }
+
+    private static void Reverse(RoadEntry r)
+    {
+        int last = r.Points.Count - 1;
+        r.Points.Reverse();
+        foreach (var x in r.Runs) { int f = x.From; x.From = last - x.To; x.To = last - f; }
+        r.Runs.Reverse();
+    }
+
+    private static double Dist(double[] a, double[] b) => Math.Sqrt(Math.Pow(b[0] - a[0], 2) + Math.Pow(b[2] - a[2], 2));
+
     private static Vector2 Away(RoadEntry r, bool atStart)
     {
         var p = r.Points;
@@ -232,6 +414,8 @@ public static class Junctions
         var local = Interchanges.CalibrateNodes(ppd, unit, Quaternion.Identity);
         var localIn = Interchanges.WorldDirectionsOf(ppd, local);
         Vector2 Out(int k) => -new Vector2(localIn[k].X, localIn[k].Z);
+        if (UseForkShift && p.Arms.Length == 3 && p.Def.Side.Length == 1 && p.Def.Through.Length == 2)
+            ShiftFork(p, local);
 
         // Kandidaten: durchgehende Arme auf Through[0]/[1] (beide Richtungen),
         // Seitenarme auf die Side-Knoten (alle Zuordnungen)
