@@ -102,6 +102,40 @@ public static class Overlaps
                 trimmed++;
             }
         }
+        // Gesperrte Zufahrten (access=no|private), die frei an einer Autobahn/Rampe enden (keine
+        // Kreuzung, Fahrbahn bleibt ungeteilt): bis an den Fahrbahnrand zurücknehmen
+        var major = roads.Where(r => r.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link")).ToList();
+        var drop = new HashSet<RoadEntry>();
+        foreach (var r in roads)
+            foreach (var atStart in new[] { true, false })
+            {
+                var end = atStart ? r.Start : r.End;
+                var run = atStart ? r.Runs[0] : r.Runs[^1];
+                if (run.Access is null || end?.Kind == "node" || major.Contains(r)) continue;
+                var p = P(atStart ? r.Points[0] : r.Points[^1]);
+                float hw = halfWidth(run);
+                var near = major.Where(o => Touches(p, hw + 2f, o, halfWidth)).ToList();
+                if (near.Count == 0) continue;
+                float need = 0;
+                foreach (var o in near) need = MathF.Max(need, NeededTrim(r, atStart, o, hw, halfWidth));
+                need += 1f;   // etwas Abstand zum Fahrbahnrand (Sperre)
+                if (need > MaxTrim || ArcLength(r) < need + 3)
+                {
+                    // zu kurz: ganz weglassen statt auf der Fahrbahn liegen lassen – nur wenn das
+                    // andere Ende frei ist (sonst hinge eine Kreuzung daran)
+                    if ((atStart ? r.End : r.Start) is { Kind: "cut", Open: true }) drop.Add(r);
+                    else warnings.Add($"Gesperrte Zufahrt {r.Id}: müsste um {need:0} m gekürzt werden – zu kurz, bleibt überlagert");
+                    continue;
+                }
+                CutEnd(r, atStart, need);
+                trimmed++;
+            }
+        if (drop.Count > 0)
+        {
+            roads.RemoveAll(drop.Contains);
+            pairs.RemoveAll(p => drop.Contains(p.From) || drop.Contains(p.To));
+            warnings.Add($"Info: {drop.Count} gesperrte Zufahrten an der Autobahn zu kurz zum Kürzen – weggelassen");
+        }
         return trimmed;
     }
 

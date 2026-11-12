@@ -195,6 +195,74 @@ def escape_lanes(net, network_nodes: set) -> dict:
     return {"edges": len(marked)}
 
 
+def restricted_stubs(net, xy: dict, loc: dict, start_nodes: set, length_m: float,
+                     id_start: int = -1_500_000_000) -> dict:
+    """3b. Gesperrte Zufahrten: Kanten mit Rolle 'blocked' (highway=service, access=no|private),
+    die an einem Knoten aus ``start_nodes`` (Autobahnfahrbahn/-rampe) beginnen, werden bis
+    ``length_m`` Echtmeter weit übernommen (an Abzweigen alle gesperrten Äste, jeweils mit der
+    Restlänge). Ganze Kanten bekommen die Rolle 'connector', das letzte Stück wird angeschnitten
+    (neuer Endknoten, offenes Ende). Rückgabe wie extend_ends."""
+    from array import array
+    from .network import ROLE_CONNECTOR, Edge
+    from .osmread import Way
+
+    stats = {"ends": 0, "edges": 0, "partial": [], "partial_src": [], "locations": {}}
+    if length_m <= 0:
+        return stats
+    next_id = id_start
+    marked: set[int] = set()
+    cut_src: set[int] = set()
+    todo = []
+    for n in start_nodes:
+        for ei, _ in net.adjacency.get(n, ()):
+            if net.edges[ei].role == "blocked":
+                todo.append((ei, n, length_m))
+                stats["ends"] += 1
+    while todo:
+        ei, node, left = todo.pop()
+        e = net.edges[ei]
+        if ei in marked or ei in cut_src or e.role != "blocked":
+            continue
+        ids = e.node_ids(reverse=(e.v == node and e.u != node))
+        if any(i not in xy for i in ids):
+            continue
+        acc, cut = 0.0, None
+        for k in range(1, len(ids)):
+            seg = math.dist(xy[ids[k - 1]], xy[ids[k]])
+            if acc + seg >= left:
+                cut = (k, (left - acc) / seg if seg > 0 else 0.0)
+                break
+            acc += seg
+        if cut is None:
+            marked.add(ei)
+            stats["edges"] += 1
+            far, rest = ids[-1], left - acc
+            if far in start_nodes or rest <= 1.0:
+                continue
+            for ej, _ in net.adjacency.get(far, ()):
+                if ej != ei:
+                    todo.append((ej, far, rest))
+            continue
+        k, t = cut
+        a, b = ids[k - 1], ids[k]
+        (la, pa), (lb, pb) = loc[a], loc[b]
+        nid = next_id
+        next_id -= 1
+        stats["locations"][nid] = (la + t * (lb - la), pa + t * (pb - pa))
+        keep = ids[:k] + [nid]
+        nodes = keep if node == e.u else keep[::-1]
+        way = Way(id=e.way.id, nodes=array("q", nodes), tags=dict(e.way.tags))
+        stats["partial"].append(Edge(idx=-1, way=way, i0=0, i1=len(nodes) - 1,
+                                     oneway=e.oneway, role=ROLE_CONNECTOR))
+        stats["partial_src"].append(ei)
+        cut_src.add(ei)
+    for ei in marked:
+        net.edges[ei].role = ROLE_CONNECTOR
+    log.info("Gesperrte Zufahrten an der Autobahn: %d Anschlüsse, %d ganze Kanten, %d angeschnitten",
+             stats["ends"], stats["edges"], len(stats["partial"]))
+    return stats
+
+
 def extend_ends(net, xy: dict, loc: dict, classes: frozenset, length_m: float,
                 id_start: int = -1_000_000_000) -> dict:
     """4. Straßenenden weiterführen: An jedem Ende der Auswahl, an dem es in OSM weitergeht,

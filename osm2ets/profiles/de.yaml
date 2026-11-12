@@ -95,6 +95,11 @@ extras:
   rest_loop_max_m: 1500
   # 3. Notfallbuchten/Notauffahrten (highway=escape), die direkt an der Strecke liegen
   escape: true
+  # 3b. Gesperrte Zufahrten (highway=service mit access=no|private), die direkt an einer
+  #     Autobahnfahrbahn oder -rampe anschließen: als kurzer, gesperrter Stummel (im Spiel
+  #     nicht im Navi) bis zu dieser Länge (Echtmeter), auch wenn die Stufe solche Wege
+  #     sonst ausschließt. 0 = aus.
+  restricted_stub_m: 300
   # 4. Straßenenden weiterführen: Wo die Auswahl endet, OSM aber weitergeht, die
   #    anschließenden Straßen so weit (Spielmeter; bei 1:1 = Echtmeter) mitnehmen – an weiteren Abzweigen nur
   #    geradeaus. Danach endet die Straße offen. 0 = aus.

@@ -215,6 +215,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         "rest_loop_max_m": _float(ext, "rest_loop_max_m", "extras", default=1500.0, positive=False),
         "escape": bool(ext.get("escape", True)),
         "end_extension_m": _float(ext, "end_extension_m", "extras", default=50.0, positive=False),
+        "restricted_stub_m": _float(ext, "restricted_stub_m", "extras", default=300.0, positive=False),
         "via_highway": _str_set(ext.get("via_highway", drivable_default), "extras.via_highway"),
         "visible_crossing_m": _float(ext, "visible_crossing_m", "extras", default=200.0, positive=False),
         "visible_near_m": _float(ext, "visible_near_m", "extras", default=60.0, positive=False),

@@ -71,16 +71,67 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     excl_service = lod.exclude_service if lod.exclude_service is not None else profile.exclude_service
     excl_access = lod.exclude_access if lod.exclude_access is not None else profile.exclude_access
     all_ways = read_ways(input_path, lod.all_classes | extra_classes, excl_access, excl_service)
+    stub_len = float(ext.get("restricted_stub_m", 0))
+    blocked_ways: list = []
+    if stub_len > 0 and excl_access and "service" in (lod.all_classes | extra_classes):
+        from .osmread import restricted_access
+        blocked_ways = [w for w in read_ways(input_path, frozenset({"service"}), frozenset(), excl_service)
+                        if w.tags.get("access") in excl_access]
     # Auswahl der Detailstufe nur auf ihren eigenen Klassen (sonst enden Anschlussstraßen
     # an jeder zusätzlichen Einmündung)
     ways = [w for w in all_ways if w.tags.get("highway") in lod.all_classes]
     net = Network(ways, profile)
     selected = net.select(lod)
+    stub_ways: list = []
+    if blocked_ways:
+        # nur gesperrte Wege, die (über andere gesperrte Wege) an Autobahn/Rampe der Auswahl
+        # hängen – sonst würde das Netz an jedem gesperrten Weg geteilt
+        mw = set()
+        for e in selected:
+            if e.highway in ("motorway", "motorway_link"):
+                mw.update(e.node_ids())
+        by_node: dict = {}
+        for w in blocked_ways:
+            for n in w.nodes:
+                by_node.setdefault(n, []).append(w)
+        seen, todo = set(), [w for n in mw for w in by_node.get(n, ())]
+        while todo:
+            w = todo.pop()
+            if w.id in seen:
+                continue
+            seen.add(w.id)
+            stub_ways.append(w)
+            for n in w.nodes:
+                todo.extend(by_node.get(n, ()))
+    # Gesperrte Zufahrten bekommen keine Verbindung zur Autobahn/Rampe: der Anschlussknoten wird
+    # durch einen eigenen Knoten an derselben Stelle ersetzt. Sonst entstünde dort eine Kreuzung,
+    # die Fahrbahn würde geteilt (Sperrlinien, Rampenführung); der Stummel endet frei mit Sperre.
+    detach: dict = {}
+    if stub_ways:
+        from array import array as _arr
+        from .osmread import Way as _Way
+        fresh = -1_600_000_000
+        moved = []
+        for w in stub_ways:
+            nodes = list(w.nodes)
+            for k, n in enumerate(nodes):
+                if n in mw:
+                    detach[fresh] = n
+                    nodes[k] = fresh
+                    fresh -= 1
+            moved.append(_Way(id=w.id, nodes=_arr("q", nodes), tags=w.tags) if nodes != list(w.nodes) else w)
+        stub_ways = moved
+    use_stubs = bool(stub_ways)
     industry_stats = links_stats = escape_stats = services_stats = ends_stats = vis_stats = None
-    if use_ind or use_links or use_escape or use_ends or use_vis:
+    stub_stats = None
+    if use_ind or use_links or use_escape or use_ends or use_vis or use_stubs:
         from .extras import escape_lanes, local_xy, same_level_links
         # alle Wege, damit an Einmündungen ins Netz geteilt wird; Netzwege selbst sind gesperrt
-        net2 = Network(all_ways, profile)
+        net2 = Network(all_ways + stub_ways, profile)
+        stub_ids = {w.id for w in stub_ways}
+        for e in net2.edges:
+            if e.way.id in stub_ids:
+                e.role = "blocked"   # für die übrigen Zusatzregeln gesperrt
         spans: dict = {}
         for e in selected:
             spans.setdefault(e.way.id, []).append((e.i0, e.i1, e.role))
@@ -98,7 +149,13 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         for e in net2.edges:
             if e.role is None:
                 cand.update(e.node_ids())
-        loc = read_node_locations(input_path, cand)
+        for e in net2.edges:
+            if e.role == "blocked":
+                cand.update(e.node_ids())
+        loc = read_node_locations(input_path, {n for n in cand | set(detach.values()) if n > 0})
+        for fid, orig in detach.items():
+            if orig in loc:
+                loc[fid] = loc[orig]
         xy = local_xy(loc)
         # 2. kurze Verbindungen zwischen zwei Straßen der Stufe
         major = {"motorway", "trunk", "motorway_link", "trunk_link"}
@@ -167,8 +224,20 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
             vis_stats = visible_roads(net2, local_xy(vis_loc), vis_loc, vis_classes, vis_cross, vis_near,
                                       height=height, extra_edges=end_parts,
                                       blocked=frozenset(ends_stats["partial_src"]) if ends_stats else frozenset())
+        # 3b. gesperrte Zufahrten direkt an Autobahn/Rampe (zuletzt: keine Verlängerung danach)
+        if use_stubs:
+            from .extras import restricted_stubs
+            mw = set()
+            for e in selected:
+                if e.highway in ("motorway", "motorway_link"):
+                    mw.update(e.node_ids())
+            stub_stats = restricted_stubs(net2, xy, loc, set(detach), stub_len)
+            stub_stats["locations"].update({f: loc[f] for f in detach if f in loc})
+            for e in net2.edges:
+                if e.role == "blocked":
+                    e.role = None
         new = [e for e in net2.edges if e.role not in (None, "taken")]
-        if new:
+        if new or (stub_stats and stub_stats["partial"]):
             # Netzkanten an den neuen Einmündungen teilen: Auswahl aus net2 übernehmen
             resel = []
             for e in net2.edges:
@@ -180,7 +249,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                         resel.append(e)
                         break
             selected = resel + new
-        for st in (ends_stats, vis_stats):
+        for st in (ends_stats, vis_stats, stub_stats):
             if st and st["partial"]:
                 top = max(e.idx for e in selected) + 1 if selected else 0
                 for k, e in enumerate(st["partial"]):
@@ -194,7 +263,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         needed.update(c.node_ids())
     log.info("Lese Koordinaten für %d Knoten ...", len(needed))
     locations = read_node_locations(input_path, {n for n in needed if n > 0})
-    for st in (ends_stats, vis_stats):
+    for st in (ends_stats, vis_stats, stub_stats):
         if st:
             locations.update(st["locations"])   # berechnete Endpunkte (Verlängerungen, Sichtstücke)
 
@@ -266,6 +335,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     stats["industry_access"] = industry_stats
     stats["same_level_links"] = links_stats
     stats["escape_lanes"] = escape_stats
+    stats["restricted_stubs"] = ({k: v for k, v in stub_stats.items() if k in ("ends", "edges")}
+                                 if stub_stats else None)
     stats["services_access"] = services_stats
     stats["end_extensions"] = ({k: v for k, v in ends_stats.items() if k in ("ends", "edges")}
                                | {"partial": len(ends_stats["partial"])}) if ends_stats else None

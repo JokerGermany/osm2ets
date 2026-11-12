@@ -44,6 +44,56 @@ internal static class DeadEnds
                 foreach (var o in new[] { nd.ForwardItem, nd.BackwardItem })
                     if (o is IMapItem oi && !reach.Contains(oi)) stack.Push(oi);
         }
+        // Gesperrte Zufahrten (access=no|private) direkt an Autobahn/Rampe: Sperre am Anschluss,
+        // damit der Stummel sichtbar, aber nicht befahrbar ist
+        var major = new HashSet<IMapItem>();
+        foreach (var r in roads)
+            if (r.Runs.Any(x => x.Highway is "motorway" or "motorway_link") && first.TryGetValue(r, out var m0) && last.TryGetValue(r, out var m1))
+            { major.Add(m0); major.Add(m1); }
+        var majorSegs = new List<(Vector2, Vector2)>();
+        foreach (var r in roads)
+            if (r.Runs.Any(x => x.Highway is "motorway" or "motorway_link"))
+                for (int i = 1; i < r.Points.Count; i++)
+                    majorSegs.Add((new((float)r.Points[i - 1][0], (float)r.Points[i - 1][2]), new((float)r.Points[i][0], (float)r.Points[i][2])));
+        bool NearMajor(Vector2 p, float tol)
+        {
+            foreach (var (a, b) in majorSegs)
+            {
+                var ab = b - a; float l2 = ab.LengthSquared();
+                float t = l2 > 0 ? Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1) : 0;
+                if (Vector2.Distance(p, a + ab * t) <= tol) return true;
+            }
+            return false;
+        }
+        foreach (var r in roads)
+        {
+            if (!first.TryGetValue(r, out var fi) || !last.TryGetValue(r, out var la)) continue;
+            foreach (var atStart in new[] { true, false })
+            {
+                var run = atStart ? r.Runs[0] : r.Runs[^1];
+                if (run.Access is null) continue;
+                var road = atStart ? fi : la;
+                var node = atStart ? fi.Node : la.ForwardNode;
+                var other = (IMapItem?)(atStart ? node.BackwardItem : node.ForwardItem);
+                bool atMajor = other is not null && (major.Contains(other)
+                    || other is Prefab pm && pm.Nodes.Any(n => (n.ForwardItem is IMapItem a && major.Contains(a)) || (n.BackwardItem is IMapItem b && major.Contains(b))));
+                // Abzweig ohne Prefab, am Fahrbahnrand gekürzt: OSM-Endpunkt liegt auf der Autobahn
+                // (Achse der Autobahn höchstens halbe Breite + Rand entfernt)
+                if (!atMajor && other is null && NearMajor(new(node.Position.X, node.Position.Z), 25f)) atMajor = true;
+                if (!atMajor || !done.Add(node)) continue;
+                var p = node.Position;
+                var q = atStart ? fi.ForwardNode.Position : la.Node.Position;
+                var d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));
+                if (float.IsNaN(d.X)) continue;
+                var at = new Vector2(p.X, p.Z) + d * Inset;
+                var nn = new Vector2(-d.Y, d.X);
+                float half = styles[r][atStart ? 0 : ^1].Width / 2 + Extra;
+                var a2 = at + nn * half; var b2 = at - nn * half;
+                var item = Buildings.Add(map, new Vector3(a2.X, p.Y, a2.Y), new Vector3(b2.X, p.Y, b2.Y), Scheme);
+                item.Stretch = 1f;
+                placed.Add(new Placed(item.Uid, r.Id, atStart ? "start" : "end", (atStart ? r.Start : r.End)?.OsmNode, run.OsmWays, p.X, p.Y, p.Z));
+            }
+        }
         foreach (var r in roads)
         {
             if (!first.TryGetValue(r, out var fi) || !last.TryGetValue(r, out var la)) continue;
