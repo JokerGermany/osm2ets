@@ -41,6 +41,27 @@ public static class Junctions
     /// Sonst liegen die Fahrbahnen auf den ersten Metern übereinander.
     /// </summary>
     public const float MaxBend = 75f;
+    /// <summary>So viel Straße (m) muss zwischen Prefab-Knoten und Brückenanfang bleiben.</summary>
+    public const float BridgeLead = 14f;
+    public const float MaxBridgeShift = 15f;
+    public static int BridgeShifted;
+
+    /// <summary>Bogenlänge vom Straßenende bis zum ersten Brückenpunkt (−1 ohne Brücke in 60 m).</summary>
+    private static float DistToBridge(RoadEntry r, bool atStart)
+    {
+        int n = r.Points.Count; float acc = 0;
+        for (int k = 0; k < n - 1; k++)
+        {
+            int i = atStart ? k : n - 1 - k;
+            int seg = atStart ? i : i - 1;
+            var run = r.Runs.FirstOrDefault(x => x.From <= seg && seg < x.To);
+            if (run is { Bridge: true }) return acc;
+            int j = atStart ? i + 1 : i - 1;
+            acc += Vector2.Distance(P(r.Points[i]), P(r.Points[j]));
+            if (acc > 60) break;
+        }
+        return -1;
+    }
     /// <summary>Durchgehende Straße gilt als gerade, wenn ihre Arme höchstens so weit (Grad) von
     /// 180° abweichen; nur dann richtet sich das Prefab allein nach ihr (sonst Mittel aller Arme –
     /// eine abknickende Hauptstraße bog sonst die anschließende Brücke über die Autobahn).</summary>
@@ -540,6 +561,21 @@ public static class Junctions
         var shift = p.SnapArm >= 0
             ? p.SnapTo.Plan.NodePos[p.SnapTo.Plan.NodeOf[p.SnapTo.Arm]] - placed[p.NodeOf[p.SnapArm]]
             : p.Anchor - center;
+        // Brücke dicht hinter der Kreuzung: Prefab von ihr weg verschieben, damit zwischen
+        // Prefab-Knoten und Brückenanfang Platz für deren Verlängerung über die untere Straße bleibt
+        // (sonst stand das Widerlager auf der Autobahn)
+        if (p.SnapArm < 0)
+            for (int i = 0; i < p.Arms.Length; i++)
+            {
+                float db = DistToBridge(p.Arms[i].Road, StartsAt(p.Arms[i].Road, p.Anchor));
+                if (db < 0) continue;
+                var nl = placed[p.NodeOf[i]] - center; nl.Y = 0;
+                float deficit = nl.Length() + BridgeLead - db;
+                if (deficit <= 0) continue;
+                deficit = MathF.Min(deficit, MaxBridgeShift);
+                shift -= new Vector3(p.Arms[i].Away.X, 0, p.Arms[i].Away.Y) * deficit;
+                BridgeShifted++;
+            }
         if (p.SnapArm >= 0 && Vector2.Distance(P(V(p.Anchor)), P(V(center + shift))) > 30)
         { reason = "direkte Prefab-Verbindung läge zu weit vom OSM-Knoten"; return false; }
         p.NodePos = placed.Select(v => v + shift).ToArray();
