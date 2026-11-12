@@ -121,8 +121,9 @@ public static class Overlaps
                 var near = roads.Where(o => o != r && !drop.Contains(o) && Touches(p, hw + 2f, o, halfWidth) && SameLevelNear(p, py, o)).ToList();
                 if (near.Count == 0) continue;
                 float need = 0;
-                foreach (var o in near) need = MathF.Max(need, NeededTrim(r, atStart, o, hw, halfWidth));
-                need += 1f;   // etwas Abstand zum Fahrbahnrand (Sperre)
+                // bis die Mittellinie (plus ein Viertel der eigenen Breite) am Fahrbahnrand liegt: die Sperre
+                // steht dann direkt an der Autobahn, ohne Lücke (vorher volle Breite + 1 m → ~4 m Lücke)
+                foreach (var o in near) need = MathF.Max(need, NeededTrim(r, atStart, o, hw * 0.25f, halfWidth));
                 if (need > MaxTrim || ArcLength(r) < need + 3)
                 {
                     // zu kurz: ganz weglassen statt auf der Fahrbahn liegen lassen – nur wenn das
