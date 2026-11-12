@@ -148,6 +148,9 @@ public static class MapWriter
         var lastItem = new Dictionary<RoadEntry, Road>();
 
         // Prefabs zuerst setzen, dann die Straßen tangential an ihre Knoten heranführen
+        Interchanges.Structures = valid.SelectMany(e => e.Runs.Where(x => x.Bridge || x.Tunnel)
+            .SelectMany(x => Enumerable.Range(x.From, x.To - x.From).Select(i =>
+                (new Vector2((float)e.Points[i][0], (float)e.Points[i][2]), new Vector2((float)e.Points[i + 1][0], (float)e.Points[i + 1][2]))))).ToList();
         var placed = new List<Interchanges.Placed>();
         var directRamps = new HashSet<RoadEntry>();
         foreach (var plan in interchangePlans)
@@ -228,21 +231,27 @@ public static class MapWriter
             var covered = new HashSet<RunEntry>(bodies.SelectMany(b => new[] { b.Run, b.PartnerRun }).OfType<RunEntry>());
             var singles = mapping.BridgeBodies is { Count: > 0 }
                 ? BridgeBodies.PlanSingle(valid, mapping.Resolve, mapping.BodyFor, covered,
-                                          mapping.BridgeBody?.MaxLength ?? 200f, warnings, PrefabLowerRoads(placed))
+                                          mapping.BridgeBody?.MaxLength ?? 200f, warnings, PrefabLowerRoads(placed).Concat(JunctionLowerRoads(junctionPlans, prefabs)).ToList())
                 : [];
+            var segRun = new Dictionary<RoadEntry, int[]>();
             foreach (var r in bodies.Select(x => x.Road).Concat(singles.Select(x => x.Road)).Distinct())
             {
                 Validate(r, out var pts2, out var ros2);
                 styles[r] = Enumerable.Range(0, pts2.Count - 1).Select(i => mapping.Resolve(r.Runs[ros2[i]])).ToArray();
+                segRun[r] = ros2.ToArray();
             }
             foreach (var b in bodies)
             {
                 int seg = b.Run?.From ?? b.Segment;
                 styles[b.Road][seg] = styles[b.Road][seg] with { Body = mapping.BridgeBody!.Railing, BodyOffset = b.Offset };
             }
+            // Abschnitte über ihren Lauf zuordnen: Validate kann Punkte entfernen, dann passen die
+            // Punktnummern des Laufs nicht mehr zu den Abschnitten (Körper lag nur auf einem Teil der
+            // Brücke, mitten auf der Brücke stand ein Widerlager)
             foreach (var s in singles)
-                for (int k = s.Run.From; k < s.Run.To; k++)
-                    styles[s.Road][k] = styles[s.Road][k] with
+                for (int k = 0; k < styles[s.Road].Length; k++)
+                    if (!ReferenceEquals(s.Road.Runs[segRun[s.Road][k]], s.Run)) continue;
+                    else styles[s.Road][k] = styles[s.Road][k] with
                     {
                         Body = s.Type.Railing, BodyOffset = s.Type.Offset, BodyRight = s.Type.Side == "right", BodyParapet = s.Type.Parapet,
                     };
@@ -616,6 +625,28 @@ public static class MapWriter
     /// Ausgang) und Rampe als dreispurige Autobahn bzw. Rampe. Sonst stand ein Widerlager auf der
     /// Fahrbahn eines Prefabs unter einer Brücke (die Prefabs liegen nicht genau auf der OSM-Linie).
     /// </summary>
+    /// <summary>Kreuzungs-Prefabs als tiefere Straßen für die Brückenkörper: ihre Spurlinien (Mitte und
+    /// Fahrbahnränder aus der .ppd), sonst stand das Widerlager in der Kreuzungsfläche.</summary>
+    private static List<RoadEntry> JunctionLowerRoads(List<Junctions.Plan> plans, Interchanges.PpdSource? src)
+    {
+        var res = new List<RoadEntry>();
+        if (src is null) return res;
+        static double[] V(Vector3 v) => [v.X, v.Y, v.Z];
+        foreach (var jp in plans)
+        {
+            if (jp.NodePos.Length < 2) continue;
+            TruckLib.Models.Ppd.PrefabDescriptor ppd;
+            try { ppd = src.Get(jp.Def.Prefab.PpdPath); } catch { continue; }
+            foreach (var line in PrefabFootprint.LinesFromNodes(ppd, jp.NodePos, PrefabFootprint.JunctionSide))
+                res.Add(new RoadEntry
+                {
+                    Id = BridgeBodies.JunctionLineId, Points = line.Select(V).ToList(),
+                    Runs = [new RunEntry { From = 0, To = line.Count - 1, Highway = "service", Oneway = false, Lanes = 1 }],
+                });
+        }
+        return res;
+    }
+
     private static List<RoadEntry> PrefabLowerRoads(List<Interchanges.Placed> placed)
     {
         var res = new List<RoadEntry>();

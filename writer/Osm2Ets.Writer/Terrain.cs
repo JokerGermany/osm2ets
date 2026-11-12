@@ -319,6 +319,7 @@ public static class CarriagewaySeparation
 {
     public const float Median = 2.0f;
     public const float MaxShift = 6f;
+    public static float FadeFix = 20f, FadeLen = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_SEP_FADE"), System.Globalization.CultureInfo.InvariantCulture, out var sf) ? sf : 150f;
 
     public static int Apply(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles)
     {
@@ -371,13 +372,16 @@ public static class CarriagewaySeparation
             // an Prefab-Anschlüssen nichts verschieben (Lage ist dort durch das Prefab festgelegt)
             var cum = new float[n];
             for (int i = 1; i < n; i++) cum[i] = cum[i - 1] + Vector2.Distance(P(r.Points[i - 1]), P(r.Points[i]));
+            // die ersten/letzten FadeFix m fest, danach weich über FadeLen m einblenden (40 m gaben einen
+            // sichtbaren Bogen in der geraden Autobahn vor jeder Anschlussstelle, A 70 x −3150)
+            float fadeLen = MathF.Min(FadeLen, MathF.Max(40f, cum[n - 1] / 2 - FadeFix));
             float Fade(int i)
             {
-                // die ersten/letzten 30 m fest, danach über 40 m einblenden
                 float f = 1f;
-                if (r.End?.Kind == "prefab") f = Math.Min(f, (cum[n - 1] - cum[i] - 30f) / 40f);
-                if (r.Start?.Kind == "prefab") f = Math.Min(f, (cum[i] - 30f) / 40f);
-                return Math.Clamp(f, 0f, 1f);
+                if (r.End?.Kind == "prefab") f = Math.Min(f, (cum[n - 1] - cum[i] - FadeFix) / fadeLen);
+                if (r.Start?.Kind == "prefab") f = Math.Min(f, (cum[i] - FadeFix) / fadeLen);
+                f = Math.Clamp(f, 0f, 1f);
+                return f * f * (3 - 2 * f);
             }
             for (int i = 0; i < n; i++) sm[i] *= Fade(i);
             bool any = false;

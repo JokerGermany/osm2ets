@@ -160,6 +160,45 @@ public static class PrefabFootprint
         return pts;
     }
 
+    /// <summary>Spurlinien (Mitte und ±<paramref name="side"/>) eines noch nicht gesetzten Prefabs aus
+    /// seiner .ppd und den geplanten Weltlagen seiner Knoten (gleiche Reihenfolge wie in der .ppd).</summary>
+    public static List<List<Vector3>> LinesFromNodes(PrefabDescriptor ppd, IReadOnlyList<Vector3> world, float side)
+    {
+        var res = new List<List<Vector3>>();
+        int n = ppd.Nodes.Count;
+        if (n < 2 || world.Count != n) return res;
+        var L = new Vector2[n]; var Wp = new Vector2[n];
+        for (int i = 0; i < n; i++) { var l = ppd.Nodes[i].Position; L[i] = new(l.X, l.Z); Wp[i] = new(world[i].X, world[i].Z); }
+        var cl = L.Aggregate(Vector2.Zero, (a, v) => a + v) / n;
+        var cw = Wp.Aggregate(Vector2.Zero, (a, v) => a + v) / n;
+        float sxx = 0, sxy = 0;
+        for (int i = 0; i < n; i++) { var a = L[i] - cl; var b = Wp[i] - cw; sxx += a.X * b.X + a.Y * b.Y; sxy += a.X * b.Y - a.Y * b.X; }
+        float ang = MathF.Atan2(sxy, sxx);
+        var tr = cw - Rot(ang, cl);
+        float y = world.Average(v => v.Y);
+        Vector3 W(Vector3 l) { var p = Rot(ang, new Vector2(l.X, l.Z)) + tr; return new Vector3(p.X, y, p.Y); }
+        foreach (var c in ppd.NavCurves)
+        {
+            var a = c.StartPosition; var b = c.EndPosition;
+            float len = Vector3.Distance(a, b);
+            var ta = Dir(c.StartRotation, b - a) * len;
+            var tb = Dir(c.EndRotation, b - a) * len;
+            int m = Math.Max(2, (int)(len / 2f) + 1);
+            var mid = new List<Vector3>(); var lft = new List<Vector3>(); var rgt = new List<Vector3>();
+            for (int i = 0; i <= m; i++)
+            {
+                float t = (float)i / m, t2 = t * t, t3 = t2 * t;
+                var p = (2 * t3 - 3 * t2 + 1) * a + (t3 - 2 * t2 + t) * ta + (-2 * t3 + 3 * t2) * b + (t3 - t2) * tb;
+                var d = (6 * t2 - 6 * t) * a + (3 * t2 - 4 * t + 1) * ta + (-6 * t2 + 6 * t) * b + (3 * t2 - 2 * t) * tb;
+                var q = new Vector3(-d.Z, 0, d.X);
+                q = q.LengthSquared() > 1e-8f ? Vector3.Normalize(q) * side : Vector3.Zero;
+                mid.Add(W(p)); lft.Add(W(p + q)); rgt.Add(W(p - q));
+            }
+            res.Add(mid); res.Add(lft); res.Add(rgt);
+        }
+        return res;
+    }
+
     /// <summary>Spurpunkte nur der Anschluss-Prefabs (Autobahn-Ausfahrten/-Einfahrten).</summary>
     public static List<Vector2> KitLanes(Map map)
     {

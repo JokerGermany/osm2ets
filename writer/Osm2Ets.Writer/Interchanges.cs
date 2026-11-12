@@ -248,6 +248,7 @@ public static class Interchanges
     /// Rampen, deren Spurzahl einmal von 2 auf 1 fällt (beide Teile ≥ 80 m), am Wechsel teilen.
     /// Der neue Knoten bekommt eine künstliche (negative) Nummer; dort steht später das Spurende.
     /// </summary>
+    public const double DropStructureGap = 80;
     internal static List<(long Node, RoadEntry A, RoadEntry B)> SplitLaneDrops(List<RoadEntry> roads)
     {
         var res = new List<(long, RoadEntry, RoadEntry)>();
@@ -257,12 +258,16 @@ public static class Interchanges
             int k = r.Runs.FindIndex(x => x.Lanes == 1);
             if (k <= 0) continue;
             if (r.Runs.Take(k).Any(x => x.Lanes is null or < 2) || r.Runs.Skip(k).Any(x => x.Lanes != 1)) continue;
-            if (r.Runs.Any(x => x.Bridge || x.Tunnel)) continue;
             int b = r.Runs[k].From;
             double la = 0, lb = 0;
             for (int i = 0; i < b; i++) la += Dist(r.Points[i], r.Points[i + 1]);
             for (int i = b; i < r.Points.Count - 1; i++) lb += Dist(r.Points[i], r.Points[i + 1]);
             if (la < 80 || lb < 80) continue;
+            // Brücken/Tunnel nur dort störend, wo das Spurende-Prefab liegt (nicht irgendwo auf der
+            // Rampe – sonst blieb z. B. die zweispurige Rampe am Dreieck Bayreuth/Kulmbach einspurig)
+            var arc = new double[r.Points.Count];
+            for (int i = 1; i < arc.Length; i++) arc[i] = arc[i - 1] + Dist(r.Points[i - 1], r.Points[i]);
+            if (r.Runs.Any(x => (x.Bridge || x.Tunnel) && arc[x.To] > la - DropStructureGap && arc[x.From] < la + DropStructureGap)) continue;
             long id = synthNode--;
             var tail = new RoadEntry
             {
@@ -1376,6 +1381,7 @@ public static class Interchanges
         foreach (var x in p.MainOut.Runs) { x.From += add; x.To += add; }
         p.MainOut.Runs[0].From = 0;
         p.MainOut.Points = outPts;
+        LaneCentering.JoinLines(p.MainIn, p.MainOut);
         // gespeicherte OSM-Lage genauso teilen. Verworfen rechnete AxisAt aus den mittig gesetzten
         // Punkten zurück – die laufen am alten OSM-Knoten (Anschlussstelle) auf die OSM-Linie aus,
         // und die Zusatzspur-Straße darüber bekam eine S-Kurve von ±1,5 m (A 9 z −2600)
@@ -1570,8 +1576,23 @@ public static class Interchanges
         p.MainOut.Runs[0].From = 0;
         p.MainOut.Points = outPts;
         p.MainOut.Runs[^1].To = outPts.Count - 1;
-        LaneCentering.Original.Remove(p.MainIn);
-        LaneCentering.Original.Remove(p.MainOut);
+        LaneCentering.JoinLines(p.MainIn, p.MainOut);
+        // gespeicherte OSM-Lage genauso teilen (wie beim Verschieben stromauf)
+        if (LaneCentering.Original.TryGetValue(p.MainIn, out var oIn) && LaneCentering.Original.TryGetValue(p.MainOut, out var oOut)
+            && oIn.Points.Count == nIn + 1 && oOut.Points.Count == pts.Count)
+        {
+            var oa = oOut.Points[k]; var ob = oOut.Points[k + 1];
+            var oc = new[] { oa[0] + (ob[0] - oa[0]) * t, oa[1] + (ob[1] - oa[1]) * t, oa[2] + (ob[2] - oa[2]) * t };
+            var oInPts = oIn.Points.Concat(oOut.Points.Take(k + 1).Skip(1)).Append(oc).ToList();
+            var oOutPts = new List<double[]> { oc }; oOutPts.AddRange(oOut.Points.Skip(k + 1));
+            LaneCentering.Original[p.MainIn] = (oInPts, p.MainIn.Runs.Select(x => x.Span(x.From, x.To)).ToList());
+            LaneCentering.Original[p.MainOut] = (oOutPts, p.MainOut.Runs.Select(x => x.Span(x.From, x.To)).ToList());
+        }
+        else
+        {
+            LaneCentering.Original.Remove(p.MainIn);
+            LaneCentering.Original.Remove(p.MainOut);
+        }
         p.Anchor = MapWriter.ToVector(cut);
         p.Direction = Direction(p.MainIn, p.MainOut);
         p.Moved = d;
@@ -1629,11 +1650,13 @@ public static class Interchanges
     public const float ShiftReach = 300f;
 
     /// <summary>Straßenende um delta verschieben, zum Anfang hin (über reach m) weich auslaufend.</summary>
-    private static void TaperShift(RoadEntry r, Vector3 delta, float reach)
+    private static void TaperShift(RoadEntry r, Vector3 delta, float reach, bool atEnd = true)
     {
         int n = r.Points.Count;
+        if (n < 2) return;
         var s = new double[n];
-        for (int i = n - 2; i >= 0; i--) s[i] = s[i + 1] + Dist(r.Points[i], r.Points[i + 1]);   // Abstand zum Ende
+        if (atEnd) for (int i = n - 2; i >= 0; i--) s[i] = s[i + 1] + Dist(r.Points[i], r.Points[i + 1]);   // Abstand zum Ende
+        else for (int i = 1; i < n; i++) s[i] = s[i - 1] + Dist(r.Points[i - 1], r.Points[i]);
         double L = Math.Min(reach, s[0]);
         for (int i = 0; i < n; i++)
         {
@@ -1642,10 +1665,126 @@ public static class Interchanges
             r.Points[i][0] += delta.X * w; r.Points[i][2] += delta.Z * w;
         }
     }
+    public static float LateralReach = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_LAT_REACH"), System.Globalization.CultureInfo.InvariantCulture, out var lr) ? lr : 150f;
+    /// <summary>Seitliche Lage der Straße am Prefab-Knoten weich angleichen. Gemessen quer zur
+    /// OSM-Linie (Kurven zählen nicht mit): Versatz des Knotens gegen den der Straße
+    /// <see cref="LateralReach"/> Meter weiter. Der Unterschied wird über diese Strecke verteilt,
+    /// mit Zwischenpunkten alle 20 m (sonst legt ETS2 in lange Stücke einen Bogen).</summary>
+    private static void LateralTaper(RoadEntry? r, Vector3 node, bool atEnd)
+    {
+        bool dbg = Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null;
+        if (r is null || r.Points.Count < 2 || LateralReach <= 0) return;
+        if (!LaneCentering.OsmLine.TryGetValue(r, out var line) || line.Count < 2) { if (dbg) Console.Error.WriteLine($"LATTAPER {r.Id} no original"); return; }
+        float Off(Vector2 q)
+        {
+            float best = float.MaxValue, off = 0;
+            for (int i = 0; i < line.Count - 1; i++)
+            {
+                var a = line[i]; var ab = line[i + 1] - a; float L = ab.Length();
+                if (L < 1e-4f) continue;
+                float t = Math.Clamp(Vector2.Dot(q - a, ab) / (L * L), 0, 1);
+                float dd = Vector2.Distance(q, a + ab * t);
+                if (dd < best) { best = dd; var u = ab / L; off = (q - a).X * -u.Y + (q - a).Y * u.X; }
+            }
+            return off;
+        }
+        // Straße vom Knoten her als Polylinie mit Bogenlänge
+        var pts = r.Points.Select(p => (double[])p.Clone()).ToList();
+        if (atEnd) pts.Reverse();
+        var s = new float[pts.Count];
+        for (int i = 1; i < pts.Count; i++) s[i] = s[i - 1] + (float)Dist(pts[i - 1], pts[i]);
+        float reach = MathF.Min(LateralReach, s[^1] * 0.6f);
+        if (reach < 30) return;
+        double[] PtAt(float x)
+        {
+            int k = 0; while (k < pts.Count - 2 && s[k + 1] < x) k++;
+            float L = s[k + 1] - s[k], t = L > 1e-4f ? (x - s[k]) / L : 0;
+            var a = pts[k]; var b = pts[k + 1];
+            return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+        }
+        var far = PtAt(reach);
+        float offN = Off(new Vector2(node.X, node.Z)), offF = Off(P(far));
+        // der Versatz der Straße am Ende selbst (vor dem Angleichen) zählt nicht – gesucht ist, wohin
+        // der Knoten gegen die Linie der Straße weiter draußen liegt
+        float delta = offN - offF;
+        if (dbg) Console.Error.WriteLine($"LATTAPER {r.Id} atEnd {atEnd} node ({node.X:0.0},{node.Z:0.0}) offN {offN:0.00} offF {offF:0.00} reach {reach:0}");
+        if (MathF.Abs(delta) < 0.1f || MathF.Abs(delta) > 4f) return;
+        // aktuelle Lage im Angleichstück: Straße selbst um (Versatz bis offF) bereinigt, dann von offN
+        // nach offF weich übergehen
+        int m = Math.Max(2, (int)MathF.Ceiling(reach / 20));
+        var add = new List<double[]>();
+        for (int j = 0; j < m; j++)
+        {
+            float u = (float)j / m, x = reach * u, w = u * u * (3 - 2 * u);
+            var q = PtAt(x);
+            var q2 = PtAt(MathF.Min(x + 2, s[^1])); var q1 = PtAt(MathF.Max(x - 2, 0));
+            var d = Vector2.Normalize(new Vector2((float)(q2[0] - q1[0]), (float)(q2[2] - q1[2])));
+            if (atEnd) d = -d;   // Richtung der OSM-Linie (die Punkte laufen hier rückwärts)
+            var nrm = new Vector2(-d.Y, d.X);
+            float cur = Off(P(q)), want = offN * (1 - w) + offF * w;
+            float sh = want - cur;
+            add.Add([q[0] + nrm.X * sh, q[1], q[2] + nrm.Y * sh]);
+        }
+        add[0] = (double[])pts[0].Clone();
+        var rest = new List<double[]>();
+        for (int i = 0; i < pts.Count; i++) if (s[i] >= reach - 0.5f) rest.Add(pts[i]);
+        if (rest.Count == 0 || s[^1] - reach < 0.5f) rest = [pts[^1]];
+        var np = add.Concat(rest).ToList();
+        // Läufe über die Bogenlänge auf die neuen Punkte umrechnen
+        var ns = new float[np.Count];
+        for (int j = 0; j < add.Count; j++) ns[j] = reach * j / m;
+        for (int j = 0; j < rest.Count; j++) ns[add.Count + j] = s[pts.Count - rest.Count + j];
+        int n = r.Points.Count;
+        int Map(int oldIdx)
+        {
+            int ri = atEnd ? n - 1 - oldIdx : oldIdx;          // Index in der (ggf. umgedrehten) Liste
+            float x = s[ri];
+            int best = 0; float bd = float.MaxValue;
+            for (int j = 0; j < ns.Length; j++) if (MathF.Abs(ns[j] - x) < bd) { bd = MathF.Abs(ns[j] - x); best = j; }
+            return atEnd ? np.Count - 1 - best : best;
+        }
+        var runs = r.Runs.Select(x => (F: Map(x.From), T: Map(x.To), R: x)).ToList();
+        if (atEnd) np.Reverse();
+        foreach (var (F, T, R) in runs) { R.From = F; R.To = T; }
+        r.Runs = r.Runs.Where(x => x.To > x.From).ToList();
+        if (r.Runs.Count == 0) return;
+        r.Runs[0].From = 0; r.Runs[^1].To = np.Count - 1;
+        for (int j = 1; j < r.Runs.Count; j++) r.Runs[j].From = r.Runs[j - 1].To;
+        r.Points = np;
+        if (dbg) Console.Error.WriteLine($"LATPTS {r.Id} " + string.Join(" ", r.Points.Take(10).Select(q => $"({q[0]:0.0},{q[2]:0.0})")));
+    }
     /// <summary>Neu gesetzte Spurende-Prefabs (alt → neu), damit MapWriter seine Liste anpasst.</summary>
     public static readonly Dictionary<Prefab, Prefab> Replaced = [];
     /// <summary>Richtungsänderung (Grad je Meter) an beiden Enden zusammen, die das Rampenstück
     /// zwischen Spurende-Prefab und Einfahrt als flacher Bogen aufnehmen darf.</summary>
+    /// <summary>Brücken- und Tunnelabschnitte aller Straßen (von MapWriter gesetzt).</summary>
+    public static List<(Vector2 A, Vector2 B)> Structures = [];
+    public const float StructureMargin = 20f, StructureNear = 12f;
+
+    /// <summary>Gerader Abstand vom Knoten zum letzten Rampenpunkt (vom Ende her innerhalb
+    /// <paramref name="reach"/> m Bogenlänge), der auf oder unter einem Bauwerk liegt; sonst MaxValue.</summary>
+    private static float StructureDistance(RoadEntry r, Vector3 node, float reach)
+    {
+        var q = new Vector2(node.X, node.Z);
+        float acc = 0;
+        for (int i = r.Points.Count - 1; i >= 0; i--)
+        {
+            if (i < r.Points.Count - 1) acc += (float)Dist(r.Points[i], r.Points[i + 1]);
+            if (acc > reach) break;
+            var p = P(r.Points[i]);
+            bool own = r.Runs.Any(x => (x.Bridge || x.Tunnel) && x.From <= i && i <= x.To);
+            if (own || Structures.Any(sg => DistSeg2(p, sg.A, sg.B) < StructureNear))
+                return Vector2.Distance(p, q);
+        }
+        return float.MaxValue;
+    }
+
+    private static float DistSeg2(Vector2 p, Vector2 a, Vector2 b)
+    {
+        var ab = b - a; float l2 = ab.LengthSquared();
+        float t = l2 > 0 ? Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1) : 0;
+        return Vector2.Distance(p, a + ab * t);
+    }
     public static float JoinTurnPerM = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_JOIN_TURN"), System.Globalization.CultureInfo.InvariantCulture, out var jt) ? jt : 0.4f;
 
     /// <summary>Bogenlänge vom Rampenanfang bis zum Punkt, der q am nächsten liegt.</summary>
@@ -2061,10 +2200,29 @@ public static class Interchanges
                 var nd = Place(map, src, dp.Plan.K.Narrow!, NarrowIn, NarrowOut, arm, NarrowOut, join.Nodes[JoinRamp].Position, p.Grade);   // Neigung wie die Einfahrt (gemeinsamer Knoten)
                 // Rampe davor sanft auf den neuen Eingang verlegen: Versatz über ihre ganze Länge
                 // (höchstens ShiftReach m, z. B. ab der Brücke) verteilt, nicht erst in den letzten 40 m
-                TaperShift(dp.Plan.MainIn, nd.Nodes[NarrowIn].Position - old.Nodes[NarrowIn].Position, ShiftReach);
+                // Liegt das neue Spurende seitlich weit neben der Rampe, keinen Direktanschluss: der
+                // Versatz (bis 55 m) über 300 m verteilt legte die Rampe 11 m neben ihre OSM-Linie,
+                // unter der Wegbrücke dicht ans Widerlager
+                var ramp = dp.Plan.MainIn;
+                var delta = nd.Nodes[NarrowIn].Position - old.Nodes[NarrowIn].Position;
+                var re = ramp.Points[^1]; var rp = ramp.Points[^2];
+                var tan = Vector2.Normalize(new Vector2((float)(re[0] - rp[0]), (float)(re[2] - rp[2])));
+                var nrm2 = new Vector2(-tan.Y, tan.X);
+                float lat = Vector2.Dot(new Vector2(delta.X, delta.Z), nrm2);
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                    Console.Error.WriteLine($"TAPERSHIFT {ramp.Id} delta {delta.Length():0.0} lateral {lat:0.0}");
+                // Liegt ein Bauwerk (Brücke über oder unter der Rampe) im Verschiebebereich, bleibt die
+                // Rampe bis hinter das Bauwerk auf ihrer Linie und läuft von dort direkt auf das
+                // Spurende zu (sonst lag sie unter einer Wegbrücke 11 m neben ihrer OSM-Linie)
+                float structDist = StructureDistance(ramp, nd.Nodes[NarrowIn].Position, ShiftReach);
+                float blend = RampBlend;
+                if (structDist < float.MaxValue) blend = MathF.Max(RampBlend, structDist - StructureMargin);
+                else TaperShift(ramp, delta, ShiftReach);
+                if (Environment.GetEnvironmentVariable("OSM2ETS_IPROBE") is not null)
+                    Console.Error.WriteLine($"TAPERSHIFT {ramp.Id} structure at {structDist:0} m -> blend {blend:0}");
                 map.Delete(old);
                 join.Attach(JoinRamp, nd, NarrowOut);
-                SetTail(dp.Plan.MainIn, nd.Nodes[NarrowIn].Position, InwardDirections[nd][NarrowIn], Lead, RampBlend);
+                SetTail(dp.Plan.MainIn, nd.Nodes[NarrowIn].Position, InwardDirections[nd][NarrowIn], Lead, blend);
                 nd.Nodes[NarrowIn].Rotation = MathEx.GetNodeRotation(Sloped(InwardDirections[nd][NarrowIn], p.Grade));
                 Replaced[old] = nd;
                 p.DirectRamp = true;
@@ -2275,6 +2433,10 @@ public static class Interchanges
         var outNode = pl.Last.Nodes[pl.LastOut];
         var rampNode = pl.RampPrefab.Nodes[pl.RampNode];
         // ppd-Richtungen zeigen in das Prefab hinein
+        // seitlichen Versatz zwischen Prefab-Knoten und Straße weit verteilen statt auf MainBlend:
+        // sonst wird die gerade Autobahn an jeder Anschlussstelle „rund“ (A 70 x −3260, A 9)
+        LateralTaper(p.MainIn, inNode.Position, true);
+        LateralTaper(p.MainOut, outNode.Position, false);
         SetTail(p.MainIn, inNode.Position, InwardDirections[pl.First][pl.FirstIn], Lead, MainBlend);
         SetHead(p.MainOut, outNode.Position, -InwardDirections[pl.Last][pl.LastOut], Lead, MainBlend);
         var rampIn = InwardDirections[pl.RampPrefab][pl.RampNode];

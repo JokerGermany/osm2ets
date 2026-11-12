@@ -248,6 +248,7 @@ public sealed class Underpasses
             sp.Support.Add((a, b, o.A.Y, o.B.Y, o.Hw));
         }
         spans.Add(sp);
+        if (Environment.GetEnvironmentVariable("OSM2ETS_UPROBE") is not null) Console.Error.WriteLine($"UNDERPASS {id} ({line[0].X:0},{line[0].Z:0})-({line[^1].X:0},{line[^1].Z:0}) lower {string.Join(" ", sp.Lower.Select(l => $"{l.S:0}/{l.Y:0.0}/{l.W:0}"))} slopeA {sp.SlopeA:0.00} slopeB {sp.SlopeB:0.00} len {sp.Len:0} support {sp.Support.Count}");
     }
 
     private static float SlopeFor(float drop, float room)

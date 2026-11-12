@@ -17,6 +17,16 @@ public static class LaneCentering
 
     /// <summary>OSM-Lage und OSM-Läufe vor jeder Verschiebung (für die Prefab-Achse).</summary>
     public static readonly Dictionary<RoadEntry, (List<double[]> Points, List<RunEntry> Runs)> Original = [];
+    /// <summary>OSM-Linie je Straße (nur Lage, bleibt beim Teilen erhalten: beide Teile bekommen die
+    /// verbundene Linie).</summary>
+    public static readonly Dictionary<RoadEntry, List<System.Numerics.Vector2>> OsmLine = [];
+    public static bool PullRampNodes = Environment.GetEnvironmentVariable("OSM2ETS_LC_PULL") == "1";
+    public static void JoinLines(RoadEntry a, RoadEntry b)
+    {
+        if (!OsmLine.TryGetValue(a, out var la) || !OsmLine.TryGetValue(b, out var lb)) return;
+        var j = la.Concat(lb.Skip(1)).ToList();
+        OsmLine[a] = j; OsmLine[b] = j;
+    }
 
     private static Vector2 P(double[] p) => new((float)p[0], (float)p[2]);
 
@@ -24,6 +34,8 @@ public static class LaneCentering
     {
         Shifted = 0;
         Original.Clear();
+        OsmLine.Clear();
+        foreach (var r in roads) OsmLine[r] = r.Points.Select(p => new System.Numerics.Vector2((float)p[0], (float)p[2])).ToList();
         foreach (var r in roads)
             Original[r] = (r.Points.Select(p => (double[])p.Clone()).ToList(),
                            r.Runs.Select(x => new RunEntry { From = x.From, To = x.To, Lanes = x.Lanes, Highway = x.Highway, Oneway = x.Oneway }).ToList());
@@ -58,8 +70,11 @@ public static class LaneCentering
 
         foreach (var id in node.Keys.ToList())
             node[id] = (node[id].Sum / mainCount[id], node[id].N);
-        // Knoten mit Rampe (Anschlussstelle): Lage der OSM-Linie behalten – dort sitzt das Prefab,
-        // dessen zweispurige Achse mittig auf der OSM-Linie liegt
+        // Knoten mit Rampe (Anschlussstelle): früher Lage der OSM-Linie behalten. Abgeschaltet
+        // (OSM2ETS_LC_PULL=1 schaltet es ein): die Prefabs sitzen auf der Modelllinie, das Zurückziehen
+        // auf 50 m machte die gerade Autobahn vor jeder Anschlussstelle „rund“; der Rest wird an den
+        // Prefabs über 150 m angeglichen (Interchanges.LateralTaper)
+        if (PullRampNodes)
         foreach (var r in roads)
             if (r.Runs.Any(x => x.Highway is "motorway_link" or "trunk_link"))
                 foreach (var e in new[] { r.Start, r.End })
