@@ -442,6 +442,19 @@ public static class Junctions
                     sx += MathF.Cos(d); sy += MathF.Sin(d);
                 }
                 float rot = MathF.Atan2(sy, sx);
+                // Kreuzung/Einmündung mit durchgehender Straße: Prefab nur nach den beiden
+                // durchgehenden Armen drehen – sonst zöge ein schräger Seitenarm die gerade
+                // Hauptstraße in ein S (St 2183 an der Zufahrt zur A 70)
+                if (p.Def.Through.Length == 2 && p.Def.Side.Length >= 1 && p.ForceNodes is null)
+                {
+                    float tx = 0, ty = 0;
+                    for (int i = 0; i < 2; i++)
+                    {
+                        float d = Ang(p.Arms[i].Away) - Ang(Out(nodes[i]));
+                        tx += MathF.Cos(d); ty += MathF.Sin(d);
+                    }
+                    rot = MathF.Atan2(ty, tx);
+                }
                 float err = 0, worst = 0;
                 for (int i = 0; i < nodes.Count; i++)
                 {
@@ -505,7 +518,7 @@ public static class Junctions
         for (int i = 0; i < p.Arms.Length; i++)
         {
             if (i == p.SnapArm) continue;
-            float e = MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI;
+            float e = ArmDev(p.Arms[i], Out(p.NodeOf[i]), bestRot, p.Anchor);
             if (e > MaxArmDeg)
             { reason = $"{p.Arms[i].Road.Id} weicht {e:0}° von der Prefab-Richtung ab (höchstens {MaxArmDeg:0}°)"; return false; }
         }
