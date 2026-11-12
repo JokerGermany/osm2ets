@@ -146,7 +146,7 @@ public static class Overlaps
     }
 
     /// <summary>So weit (m) darf eine gesperrte Zufahrt in den Modellrand der Autobahn ragen.</summary>
-    public const float StubOverlap = 1f;
+    public const float StubOverlap = 0.3f;
 
     /// <summary>Freies Ende einer gesperrten Zufahrt auf die Höhe der Fahrbahn heben, in die es ragt
     /// (sonst Stufe am Autobahnrand); über 15 m davor angleichen.</summary>
@@ -154,12 +154,18 @@ public static class Overlaps
     {
         var e = atStart ? r.Points[0] : r.Points[^1];
         var p = P(e);
-        float best = float.MaxValue, oy = float.NaN;
+        float best = float.MaxValue, oy = float.NaN; Vector2 foot = p;
         foreach (var o in near)
             for (int i = 0; i < o.Points.Count - 1; i++)
             {
-                float d = DistPointSeg(p, P(o.Points[i]), P(o.Points[i + 1]));
-                if (d < best) { best = d; oy = (float)((o.Points[i][1] + o.Points[i + 1][1]) / 2); }
+                var a = P(o.Points[i]); var b = P(o.Points[i + 1]);
+                float d = DistPointSeg(p, a, b);
+                if (d < best)
+                {
+                    best = d; oy = (float)((o.Points[i][1] + o.Points[i + 1][1]) / 2);
+                    var ab = b - a; float l2 = ab.LengthSquared();
+                    foot = l2 > 0 ? a + ab * Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1) : a;
+                }
             }
         if (float.IsNaN(oy)) return;
         // letztes Stück gerade: Zwischenpunkte innerhalb von 10 m vor dem Ende entfernen (sonst ein
@@ -174,6 +180,26 @@ public static class Overlaps
             {
                 if (run.From > k) run.From--;
                 if (run.To >= k && run.To > 0) run.To--;
+            }
+        }
+        // rechtwinklig auf die Autobahn zulaufen: Endkante parallel zum Fahrbahnrand, kein Keil
+        // (eine schräge Endkante ragte auf einer Seite aus dem Randstreifen heraus)
+        var outN = p - foot;
+        if (outN.LengthSquared() > 1e-4f && r.Points.Count >= 2)
+        {
+            outN = Vector2.Normalize(outN);
+            int nb = atStart ? 1 : r.Points.Count - 2;
+            var q = p + outN * straight;
+            // nur wenn der Nachbarpunkt dadurch nicht hinter dem neuen Punkt liegt (Haken)
+            if (Vector2.Dot(P(r.Points[nb]) - q, outN) > 0)
+            {
+                int at = atStart ? 1 : r.Points.Count - 1;
+                r.Points.Insert(at, new double[] { q.X, e[1], q.Y });   // Höhe hebt die Angleichung unten
+                foreach (var run in r.Runs)
+                {
+                    if (run.From >= at && !(atStart && run.From == 0)) run.From++;
+                    if (run.To >= at) run.To++;
+                }
             }
         }
         double dy = oy + 0.02 - e[1];
