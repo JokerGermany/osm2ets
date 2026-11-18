@@ -59,6 +59,7 @@ public static class MapWriter
         if (rounded > 0) warnings.Add($"Info: {rounded} Ecken in Autobahn-/Rampenlinien gerundet (Bogen statt Knick am OSM-Knoten)");
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
         // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
+        if (prefabs is not null) Junctions.PrepareFork21(valid, warnings);
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)

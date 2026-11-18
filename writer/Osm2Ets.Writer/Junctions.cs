@@ -32,6 +32,116 @@ public static class Junctions
     // getrennten Fahrbahn wird): Knoten 0 = beide Richtungen, 1 = Einbahn hinein, 2 = Einbahn heraus (±15°).
     public static readonly Def SPLIT2 = new(new("ch_42029", "/prefab2/fork_temp/ger/ger_r1_split_short.ppd", "default", "ger_1"), [1, 2], [0]);
 
+    // Übergang Landstraße 1+1 ↔ 2+1 (ch_42001 „ger fork road 1 x 2 plus 1 tmpl“, 60 m): Knoten 0 = 2+1
+    // (zwei Spuren laufen aus dem Prefab heraus), Knoten 1 = Landstraße. Variante/Look ungeprüft (keine
+    // .pmd vorhanden) – "default"/"ger_1" wie bei den übrigen Gabelungen.
+    public static readonly Def FORK21 = new(new("ch_42001", "/prefab2/fork_temp/ger/ger_fork_road_1_x_2_plus_1_tmpl_v02.ppd", "default", "ger_1"), [0, 1], []);
+    public static bool UseFork21 = Environment.GetEnvironmentVariable("OSM2ETS_NO_FORK21") != "1";
+    /// <summary>So weit (m) vom Teilungsknoten wird die 2+1-Straße geteilt; davor liegt die Landstraße.</summary>
+    public const double Fork21Near = 45;
+    /// <summary>So viel 2+1-Straße (m) muss hinter dem Übergang mindestens bleiben.</summary>
+    public const double Fork21Far = 40;
+    private static readonly List<(long Node, RoadEntry Wide, RoadEntry Narrow)> PendingFork21 = [];
+    private static long synth21 = -2_000_000;
+
+    /// <summary>
+    /// Zweirichtungsstraße mit 2+1 oder 3+1 Spuren (zwei oder mehr vom Knoten weg, eine darauf zu), die
+    /// sich an einem Knoten in eine einspurige Einbahnstraße hinein und eine heraus teilt: Für 2+1 gibt
+    /// es kein Teilungs-Prefab. Die Straße wird deshalb <see cref="Fork21Near"/> m vom Knoten geteilt;
+    /// das Stück am Knoten wird zur Landstraße 1+1 (dort die Teilung <see cref="SPLIT2"/>), am neuen
+    /// Knoten sitzt der Übergang <see cref="FORK21"/>. Vor LaneCentering aufrufen (Versätze je Stück).
+    /// </summary>
+    public static int PrepareFork21(List<RoadEntry> roads, List<string> warnings)
+    {
+        PendingFork21.Clear();
+        if (!UseFork21) return 0;
+        var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
+        foreach (var r in roads)
+            foreach (var atStart in new[] { true, false })
+            {
+                var info = atStart ? r.Start : r.End;
+                if (info?.Kind == "node" && info.OsmNode is long id)
+                    (ends.TryGetValue(id, out var l) ? l : ends[id] = []).Add((r, atStart));
+            }
+        foreach (var (node, list) in ends)
+        {
+            if (list.Count != 3 || list.Any(e => e.R.Closed)) continue;
+            var runs = list.Select(e => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1]).ToList();
+            if (runs.Count(x => x.Oneway) != 2 || runs.Any(IsMinorWay)) continue;
+            int two = runs.FindIndex(x => !x.Oneway);
+            int inc = Enumerable.Range(0, 3).FirstOrDefault(i => i != two && !list[i].AtStart, -1);
+            int outg = Enumerable.Range(0, 3).FirstOrDefault(i => i != two && list[i].AtStart, -1);
+            if (inc < 0 || outg < 0 || runs[inc].Lanes is not (null or 1) || runs[outg].Lanes is not (null or 1)) continue;
+            var (t, tStart) = list[two];
+            var tr = runs[two];
+            int? away = tStart ? tr.LanesForward : tr.LanesBackward;
+            int? toward = tStart ? tr.LanesBackward : tr.LanesForward;
+            if (away is not >= 2 || toward != 1) continue;
+            if (t.Runs.Any(x => x.Oneway)) continue;
+            double len = Interchanges.ArcLengthOf(t);
+            double d = len >= Fork21Near + Fork21Far ? Fork21Near : len - Fork21Far;
+            if (d < 20)
+            {
+                warnings.Add($"Knoten {node}: {t.Id} ({len:0} m) zu kurz für Teilung und Übergang 2+1 → Landstraße");
+                continue;
+            }
+            if (!tStart) Connector.Reverse(t);
+            var far = SplitAtArc(t, d, synth21);
+            if (far is null) continue;
+            // Stück am Knoten: Landstraße mit je einer Spur
+            foreach (var x in t.Runs) { x.Lanes = 2; x.LanesForward = 1; x.LanesBackward = 1; }
+            roads.Add(far);
+            PendingFork21.Add((synth21, far, t));
+            synth21--;
+        }
+        if (PendingFork21.Count > 0)
+            warnings.Add($"Info: {PendingFork21.Count} Teilungen von 2+1-Straßen in zwei Einbahnstraßen: Landstraßen-Stück ({Fork21Near:0} m) und Übergang 2+1");
+        return PendingFork21.Count;
+    }
+
+    /// <summary>Teilt <paramref name="r"/> <paramref name="d"/> m nach ihrem Anfang; r behält den
+    /// vorderen Teil, zurück kommt der hintere (null, wenn kein sinnvoller Teilungspunkt).</summary>
+    private static RoadEntry? SplitAtArc(RoadEntry r, double d, long node)
+    {
+        var pts = r.Points;
+        double acc = 0;
+        int i = 0;
+        for (; i < pts.Count - 1; i++)
+        {
+            double sg = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+            if (acc + sg >= d) break;
+            acc += sg;
+        }
+        if (i >= pts.Count - 1) return null;
+        double seg = Math.Sqrt(Math.Pow(pts[i + 1][0] - pts[i][0], 2) + Math.Pow(pts[i + 1][2] - pts[i][2], 2));
+        double t = seg > 0 ? (d - acc) / seg : 0;
+        int cut;                        // Index des Teilungspunkts in der neuen Punktliste
+        var p = new List<double[]>(pts);
+        if (t * seg < 1.5 && i > 0) cut = i;                       // vorhandener Punkt davor
+        else if ((1 - t) * seg < 1.5 && i + 1 < pts.Count - 1) cut = i + 1;   // vorhandener Punkt danach
+        else
+        {
+            p.Insert(i + 1, [pts[i][0] + t * (pts[i + 1][0] - pts[i][0]), pts[i][1] + t * (pts[i + 1][1] - pts[i][1]), pts[i][2] + t * (pts[i + 1][2] - pts[i][2])]);
+            foreach (var x in r.Runs) { if (x.From > i) x.From++; if (x.To > i) x.To++; }
+            cut = i + 1;
+        }
+        if (cut <= 0 || cut >= p.Count - 1) return null;
+        var nearRuns = r.Runs.Where(x => x.From < cut).Select(x => x.Span(x.From, Math.Min(x.To, cut))).ToList();
+        var farRuns = r.Runs.Where(x => x.To > cut).Select(x => x.Span(Math.Max(x.From, cut) - cut, x.To - cut)).ToList();
+        var far = new RoadEntry
+        {
+            Id = r.Id + "w", Chain = r.Chain, Piece = r.Piece, Role = r.Role,
+            Start = new EndInfo { Kind = "node", OsmNode = node }, End = r.End,
+            Points = p.Skip(cut).ToList(), Runs = farRuns,
+        };
+        r.Points = p.Take(cut + 1).ToList();
+        r.Runs = nearRuns;
+        r.End = new EndInfo { Kind = "node", OsmNode = node };
+        far.LengthM = Interchanges.ArcLengthOf(far);
+        r.LengthM = Interchanges.ArcLengthOf(r);
+        return far;
+    }
+
     /// <summary>Größte erlaubte Abweichung eines Arms von der Prefab-Richtung (Grad).</summary>
     public const float MaxDeviation = 40f;
 
@@ -212,6 +322,17 @@ public static class Junctions
             var order = new List<int> { best.A, best.B };
             order.AddRange(Enumerable.Range(0, arms.Length).Where(i => i != best.A && i != best.B));
             plans.Add(new Plan { OsmNode = node, Anchor = anchor, Def = def, Arms = order.Select(i => arms[i]).ToArray() });
+        }
+        // Übergänge 2+1 → Landstraße an den künstlichen Knoten aus PrepareFork21
+        foreach (var (node, wide, narrow) in PendingFork21)
+        {
+            if (!roads.Contains(wide) || !roads.Contains(narrow)) continue;
+            bool wStart = wide.Start?.OsmNode == node, nStart = narrow.Start?.OsmNode == node;
+            var aw = new Arm(wide, Away(wide, wStart));
+            var an = new Arm(narrow, Away(narrow, nStart));
+            if (aw.Away.LengthSquared() < 0.5f || an.Away.LengthSquared() < 0.5f) continue;
+            var anc = MapWriter.ToVector(wStart ? wide.Points[0] : wide.Points[^1]);
+            plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = FORK21, Arms = [aw, an], ForceNodes = [0, 1] });
         }
         return plans;
     }
