@@ -140,7 +140,10 @@ public static class Overlaps
                 // nur Fahrbahnen auf gleicher Höhe (nicht die Brücke darüber / den Tunnel darunter)
                 float py = (float)(atStart ? r.Points[0] : r.Points[^1])[1];
                 var near = roads.Where(o => o != r && !drop.Contains(o) && Touches(p, hw + 2f, o, halfWidth) && SameLevelNear(p, py, o)).ToList();
-                if (near.Count == 0) continue;
+                // nur an Autobahn/Kraftstraße kürzen; ein Ende an einem Feldweg o. Ä. (gemeinsamer
+                // OSM-Knoten mitten im Weg) bleibt, wie es ist
+                if (near.Count == 0 || !near.Any(major.Contains)) continue;
+                near = near.Where(major.Contains).ToList();
                 float need = 0;
                 // Winkel der Zufahrt zur Autobahn: steil (≥ 45°) → rechtwinklig 0,3 m in den Modellrand;
                 // flach → dort abschneiden, wo sie weit genug von der Autobahn weg ist, und mit einem
@@ -155,13 +158,14 @@ public static class Overlaps
                     if (ShallowEnd(r, atStart, target, halfWidth, out float cut))
                     {
                         LiftEnd(r, atStart, near, perpendicular: false, lift: TransitionLift);
+                        SplitAtEdge(r, atStart, target, halfWidth, TransitionLift);
                         warnings.Add($"Info: gesperrte Zufahrt {r.Id} schräg an den Autobahnrand geführt ({cut:0} m gekürzt) bei ({p.X:0},{p.Y:0})");
                         trimmed++;
                         continue;
                     }
                 }
                 foreach (var o in near)
-                    need = MathF.Max(need, NeededTrim(r, atStart, o, -SteepOverlap, halfWidth));
+                    need = MathF.Max(need, NeededTrim(r, atStart, o, -SteepOverlap, halfWidth, step: 0.1f));
                 if (need > MaxTrim || ArcLength(r) < need + 3)
                 {
                     // zu kurz: ganz weglassen statt auf der Fahrbahn liegen lassen – nur wenn das
@@ -171,6 +175,9 @@ public static class Overlaps
                 }
                 CutEnd(r, atStart, need);
                 LiftEnd(r, atStart, near, perpendicular: !shallow, lift: shallow ? TransitionLift : 0.02f);
+                DropShortSegments(r, 1.5);
+                SquareEndReach(r, atStart, near[0], halfWidth);
+                SplitAtEdge(r, atStart, near[0], halfWidth, shallow ? TransitionLift : 0.02f);
                 warnings.Add($"Info: gesperrte Zufahrt {r.Id} am Fahrbahnrand um {need:0} m gekürzt bei ({p.X:0},{p.Y:0})");
                 trimmed++;
             }
@@ -184,7 +191,7 @@ public static class Overlaps
     }
 
     /// <summary>So weit (m) ragt eine steil auftreffende gesperrte Zufahrt in den Modellrand der Autobahn.</summary>
-    public const float SteepOverlap = 0.3f;
+    public const float SteepOverlap = 2.6f;   // so weit ragt eine steile Zufahrt in den Modellrand (Kiesstreifen bis zum Asphalt)
     /// <summary>Flache Zufahrt: Winkel (Grad) des geraden Endstücks zur Autobahn.</summary>
     public const float ShallowTurnDeg = 50f;
     /// <summary>Flache Zufahrt: Länge (m) des geraden Endstücks.</summary>
@@ -303,9 +310,12 @@ public static class Overlaps
                 float d = DistPointSeg(p, a, b);
                 if (d < best)
                 {
-                    best = d; oy = (float)((o.Points[i][1] + o.Points[i + 1][1]) / 2);
+                    best = d;
                     var ab = b - a; float l2 = ab.LengthSquared();
-                    foot = l2 > 0 ? a + ab * Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1) : a;
+                    float tf = l2 > 0 ? Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1) : 0;
+                    foot = a + ab * tf;
+                    // Höhe am Lotfußpunkt (nicht Mittel des Abschnitts: bei Gefälle cm daneben)
+                    oy = (float)(o.Points[i][1] + tf * (o.Points[i + 1][1] - o.Points[i][1]));
                 }
             }
         if (float.IsNaN(oy)) return;
@@ -373,7 +383,7 @@ public static class Overlaps
             }
         }
         double dy = oy + lift - e[1];
-        if (Math.Abs(dy) < 0.02) return;
+        if (Math.Abs(dy) < 0.002) return;
         // volle Höhe schon 10 m vor dem Ende, angeglichen über die 20 m davor – bei großem Höhenunterschied
         // länger, höchstens LiftGrade Steigung (sonst eine steile Rampe zum Autobahndamm hinauf)
         const double full = 10;
@@ -437,7 +447,7 @@ public static class Overlaps
     }
 
     /// <summary>Wie weit (Bogenlänge) das Ende von r gekürzt werden muss, damit es o nicht überdeckt.</summary>
-    private static float NeededTrim(RoadEntry r, bool atStart, RoadEntry o, float hw, Func<RunEntry, float> halfWidth, bool symmetric = false)
+    private static float NeededTrim(RoadEntry r, bool atStart, RoadEntry o, float hw, Func<RunEntry, float> halfWidth, bool symmetric = false, float step = 1f)
     {
         var pts = atStart ? r.Points : Enumerable.Reverse(r.Points).ToList();
         float acc = 0;
@@ -446,7 +456,7 @@ public static class Overlaps
             var a = P(pts[i]); var b = P(pts[i + 1]);
             float len = Vector2.Distance(a, b);
             // in 1-m-Schritten prüfen
-            for (float t = 0; t < len; t += 1f)
+            for (float t = 0; t < len; t += step)
             {
                 var p = Vector2.Lerp(a, b, len > 0 ? t / len : 0);
                 // Richtung am Ende: von r weg zum Knoten hin egal – rechts bezogen auf Fahrtrichtung von r
@@ -474,6 +484,80 @@ public static class Overlaps
             if (d < hw + hwo - Tolerance) return true;
         }
         return false;
+    }
+
+    /// <summary>Innere Punkte entfernen, die Abschnitte unter <paramref name="min"/> m erzeugen (Spielminimum 1,25 m).</summary>
+    /// <summary>
+    /// Ein Straßenende ist quer zur eigenen Richtung abgeschnitten. Trifft die Zufahrt nicht genau
+    /// rechtwinklig auf die Autobahn, bleibt an der stumpfen Ecke ein Erdkeil: Ende so weit
+    /// verlängern, dass auch diese Ecke so tief im Rand liegt wie die Mitte vorher (höchstens 3 m).
+    /// </summary>
+    private static void SquareEndReach(RoadEntry r, bool atStart, RoadEntry o, Func<RunEntry, float> halfWidth)
+    {
+        if (r.Points.Count < 2) return;
+        var e = atStart ? r.Points[0] : r.Points[^1];
+        var pr = atStart ? r.Points[1] : r.Points[^2];
+        var d = P(e) - P(pr); if (d.LengthSquared() < 1e-4f) return; d = Vector2.Normalize(d);
+        var tg = NearestDir(o, P(e)); if (tg == Vector2.Zero) return;
+        float cos = MathF.Abs(Vector2.Dot(d, tg)); float sin = MathF.Sqrt(MathF.Max(0, 1 - cos * cos));
+        if (cos < 0.05f || sin < 0.3f) return;
+        float hw = halfWidth(atStart ? r.Runs[0] : r.Runs[^1]);
+        float ext = MathF.Min(3f, hw * cos / sin);
+        e[0] += d.X * ext; e[2] += d.Y * ext;
+    }
+
+    /// <summary>
+    /// Knoten dort einfügen, wo das Ende der Zufahrt den Modellrand der Autobahn kreuzt: das letzte
+    /// Stück liegt dann ganz im Autobahnmodell und bekommt über die Geländefreihaltung kein
+    /// Straßengelände (sonst deckt dessen Seitenstreifen den Standstreifen ab).
+    /// </summary>
+    private static void SplitAtEdge(RoadEntry r, bool atStart, RoadEntry o, Func<RunEntry, float> halfWidth, float lift)
+    {
+        if (r.Points.Count < 2) return;
+        var e = atStart ? r.Points[0] : r.Points[^1];
+        var pr = atStart ? r.Points[1] : r.Points[^2];
+        float Out(double[] q) { var a = AxisRel(o, P(q), halfWidth); return a.Dist - a.Edge; }
+        float oe = Out(e), op = Out(pr);
+        if (!(oe < 0 && op > 0)) return;
+        double t = op / (op - oe);   // von pr nach e
+        double seg = Dist(pr, e);
+        if (seg * t < 1.4 || seg * (1 - t) < 1.4) return;
+        var np = new[] { pr[0] + t * (e[0] - pr[0]), pr[1] + t * (e[1] - pr[1]), pr[2] + t * (e[2] - pr[2]) };
+        // Randmodell der Autobahn (Bankett außerhalb des Modellrands) liegt über der Fahrbahnhöhe und
+        // deckte die Zufahrt dort ab: am Rand EdgeBandLift über der Autobahn, zum Ende hin wieder lift
+        np[1] = Math.Max(np[1], e[1] + (EdgeBandLift - lift));
+        if (atStart)
+        {
+            r.Points.Insert(1, np);
+            foreach (var x in r.Runs) { if (x.From >= 1) x.From++; x.To++; }
+            r.Runs[0].From = 0;
+        }
+        else
+        {
+            r.Points.Insert(r.Points.Count - 1, np);
+            r.Runs[^1].To++;
+        }
+        EdgeSplits++;
+        InsideEnds.Add((r, atStart));
+    }
+    public static int EdgeSplits;
+    /// <summary>So hoch über der Autobahn kreuzt eine Zufahrt deren Randmodell (Bankett).</summary>
+    public static float EdgeBandLift = float.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_BAND_LIFT"), System.Globalization.CultureInfo.InvariantCulture, out var bl) ? bl : 0.08f;
+    /// <summary>Zufahrtsenden, deren letztes Stück im Autobahnmodell liegt: dort kein Straßengelände.</summary>
+    public static readonly List<(RoadEntry Road, bool AtStart)> InsideEnds = [];
+
+    internal static void DropShortSegments(RoadEntry r, double min)
+    {
+        for (int j = 0; j < r.Points.Count - 1 && r.Points.Count > 2; )
+        {
+            if (Dist(r.Points[j], r.Points[j + 1]) >= min) { j++; continue; }
+            int q = j + 1 < r.Points.Count - 1 ? j + 1 : j;   // Endpunkte bleiben
+            if (q == 0) { j++; continue; }
+            r.Points.RemoveAt(q);
+            foreach (var x in r.Runs) { if (x.From >= q) x.From--; if (x.To >= q) x.To--; }
+            r.Runs = r.Runs.Where(x => x.To > x.From).ToList();
+            r.Runs[0].From = 0; r.Runs[^1].To = r.Points.Count - 1;
+        }
     }
 
     internal static void CutEnd(RoadEntry r, bool atStart, float dist)

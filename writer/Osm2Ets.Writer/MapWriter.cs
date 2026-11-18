@@ -226,6 +226,7 @@ public static class MapWriter
         }
         int separated = CarriagewaySeparation.Apply(valid, styles);
         // gesperrte Zufahrten erst jetzt (Lage der Autobahn steht), danach Stile neu auflösen
+        Overlaps.InsideEnds.Clear();
         if (Overlaps.TrimStubs(valid, pairs, run => mapping.Resolve(run).Width / 2, warnings) > 0)
         {
             styles.Clear();
@@ -307,6 +308,9 @@ public static class MapWriter
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("vor"));
         TerrainClearance.HardLimited = 0;
         int terrainClamped = TerrainClearance.Apply(valid, styles, obstacles);
+        foreach (var (ie, ist) in Overlaps.InsideEnds)
+            if (styles.TryGetValue(ie, out var ss) && ss.Length > 0)
+            { int k = ist ? 0 : ss.Length - 1; ss[k] = ss[k] with { TerrainLeft = 0, TerrainRight = 0 }; }
         if (TerrainClearance.HardLimited > 0) warnings.Add($"Info: Straßengelände an {TerrainClearance.HardLimited} Seiten schmaler als 2 m (fremder Fahrbahnrand näher)");
         if (TerrainClearance.Share) terrainClamped += TerrainClearance.ClampCurves(valid, styles);
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
