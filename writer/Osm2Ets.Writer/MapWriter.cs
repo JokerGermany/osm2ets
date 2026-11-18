@@ -234,7 +234,10 @@ public static class MapWriter
             {
                 if (Validate(entry, out var pts, out var ros) is { } verr) throw new InvalidOperationException($"{entry.Id}: {verr}");
                 styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
+                if (Overlaps.Through.Contains(entry))
+                    styles[entry] = styles[entry].Select(x => x with { Secret = true, ShowInUiMap = true }).ToArray();
             }
+            if (Overlaps.Through.Count > 0) warnings.Add($"Info: {Overlaps.Through.Count} gesperrte Wege zwischen zwei Fahrbahnen als Geheimstraße ohne Sperren");
         }
         // Brückenkörper (Railing mit Widerlagern) für Paare paralleler Autobahnbrücken über Straßen:
         // nach dem Auseinanderrücken (Abstand der Linien), Brücke des Trägers als ein Stück
@@ -622,7 +625,7 @@ public static class MapWriter
                 Console.Error.WriteLine($"T {a.X:0.0}..{b.X:0.0} z {a.Z:0.0} y {a.Y:0.0}/{b.Y:0.0} L {t.Left.Terrain.Size:0.0} R {t.Right.Terrain.Size:0.0} offs {t.Left.Terrain.QuadData.Offsets.Count}/{t.Right.Terrain.QuadData.Offsets.Count} cols {t.Left.Terrain.QuadData.Cols} rows {t.Left.Terrain.QuadData.Rows}/{t.Right.Terrain.QuadData.Rows}");
             }
         }
-        if (Reachability.Apply(map, valid.Where(e => e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link") && firstItem.ContainsKey(e)).Select(e => (IMapItem)firstItem[e])) is int unreach and > 0)
+        if (Reachability.Apply(map, valid.Where(e => e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link") && firstItem.ContainsKey(e)).Select(e => (IMapItem)firstItem[e]).Concat(Overlaps.Through.Where(firstItem.ContainsKey).Select(e => (IMapItem)firstItem[e]))) is int unreach and > 0)
             warnings.Add($"Info: {unreach} nicht erreichbare Straßenstücke/Prefabs (auch geheime) nicht auf der Karte");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen");

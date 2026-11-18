@@ -89,6 +89,7 @@ internal static class DeadEnds
         foreach (var r in roads)
         {
             if (!first.TryGetValue(r, out var fi) || !last.TryGetValue(r, out var la)) continue;
+            if (Overlaps.Through.Contains(r)) continue;   // Verbindung zwischen zwei Fahrbahnen: keine Sperren
             foreach (var atStart in new[] { true, false })
             {
                 var run = atStart ? r.Runs[0] : r.Runs[^1];

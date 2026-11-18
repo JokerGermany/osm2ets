@@ -160,6 +160,7 @@ public static class Overlaps
                         LiftEnd(r, atStart, near, perpendicular: false, lift: TransitionLift);
                         SplitAtEdge(r, atStart, target, halfWidth, TransitionLift);
                         Pin(r, atStart);
+                        fitted.Add((r, atStart));
                         warnings.Add($"Info: gesperrte Zufahrt {r.Id} schräg an den Autobahnrand geführt ({cut:0} m gekürzt) bei ({p.X:0},{p.Y:0})");
                         trimmed++;
                         continue;
@@ -180,6 +181,7 @@ public static class Overlaps
                 SquareEndReach(r, atStart, near[0], halfWidth);
                 SplitAtEdge(r, atStart, near[0], halfWidth, shallow ? TransitionLift : 0.02f);
                 Pin(r, atStart);
+                fitted.Add((r, atStart));
                 warnings.Add($"Info: gesperrte Zufahrt {r.Id} am Fahrbahnrand um {need:0} m gekürzt bei ({p.X:0},{p.Y:0})");
                 trimmed++;
             }
@@ -187,6 +189,11 @@ public static class Overlaps
         // reicht bis hierher und hob/senkte sie wieder)
         foreach (var (pt, y) in pinned) pt[1] = y;
         pinned.Clear();
+        // an beiden Enden an Autobahn/Rampe angepasst: Verbindung zwischen zwei Fahrbahnen des Netzes –
+        // befahrbar (keine Sperren), als Geheimstraße
+        Through.Clear();
+        foreach (var g in fitted.GroupBy(f => f.Road)) if (g.Select(f => f.AtStart).Distinct().Count() == 2) Through.Add(g.Key);
+        fitted.Clear();
         if (drop.Count > 0)
         {
             roads.RemoveAll(drop.Contains);
@@ -560,6 +567,9 @@ public static class Overlaps
         InsideEnds.Add((r, atStart));
     }
     public static int EdgeSplits;
+    private static readonly List<(RoadEntry Road, bool AtStart)> fitted = [];
+    /// <summary>Gesperrte Wege, die an beiden Enden an Autobahn/Rampe anschließen.</summary>
+    public static readonly HashSet<RoadEntry> Through = [];
     private static readonly List<(double[] Pt, double Y)> pinned = [];
     private static void Pin(RoadEntry r, bool atStart)
     {
