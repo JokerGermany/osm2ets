@@ -236,6 +236,10 @@ public static class Junctions
     private static void ShiftFork(Plan p, Vector3[] local)
     {
         if (!ShiftedForks.Add(p.OsmNode)) return;   // Prepare kann mehrfach laufen
+        // nur echte Gabelungen (Einbahn-Äste, z. B. Rampen); an gewöhnlichen Einmündungen von
+        // Straßen mit Gegenverkehr bleibt das Prefab am OSM-Knoten (sonst wanderte die Einmündung
+        // einer Zufahrt 80 m die Zufahrt entlang und ihr Bogen ging verloren)
+        if (p.Arms.Any(a => !(a.Road.Runs[0].Oneway || a.Road.Runs[^1].Oneway))) return;
         int trunkNode = p.Def.Side[0];
         var br = Enumerable.Range(0, local.Length).Where(k => k != trunkNode).ToArray();
         if (br.Length != 2) return;
@@ -403,7 +407,20 @@ public static class Junctions
 
     private static double Dist(double[] a, double[] b) => Math.Sqrt(Math.Pow(b[0] - a[0], 2) + Math.Pow(b[2] - a[2], 2));
 
-    private static Vector2 Away(RoadEntry r, bool atStart)
+    private static Vector2 Away(RoadEntry r, bool atStart) => AwayWithin(r, atStart, 40);
+
+    /// <summary>Abweichung (Grad) eines Arms von der Prefab-Knotenrichtung für die Bogenlänge:
+    /// die kleinere aus Richtung über 40 m und über die ersten 12 m. Biegt eine Straße direkt
+    /// hinter der Einmündung eng ab (Haarnadel einer Zufahrt), passt ihr Anfang zum Prefab –
+    /// dann kein langer Ausgleichsbogen, der die Haarnadel durch einen weiten Bogen ersetzt.</summary>
+    private static float ArmDev(Arm a, Vector2 outDir, float rot, Vector3 anchor)
+    {
+        float Dev(Vector2 v) => v == Vector2.Zero ? 999f : MathF.Abs(Wrap(Ang(v) - Ang(outDir) - rot)) * 180 / MathF.PI;
+        var near = AwayWithin(a.Road, StartsAt(a.Road, anchor), 12);
+        return MathF.Min(Dev(a.Away), Dev(near));
+    }
+
+    private static Vector2 AwayWithin(RoadEntry r, bool atStart, float dist)
     {
         var p = r.Points;
         Vector2 a = atStart ? P(p[0]) : P(p[^1]);
@@ -412,7 +429,7 @@ public static class Junctions
         while (i >= 0 && i < p.Count)
         {
             b = P(p[i]);
-            if (Vector2.Distance(a, b) > 40) break;
+            if (Vector2.Distance(a, b) > dist) break;
             i += atStart ? 1 : -1;
         }
         var v = b - a;
@@ -502,10 +519,7 @@ public static class Junctions
         p.Origin = p.NodeOf[originArm];
         p.Bend = new float[p.Arms.Length];
         for (int i = 0; i < p.Arms.Length; i++)
-        {
-            float e = MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI;
-            p.Bend[i] = BendLength(e);
-        }
+            p.Bend[i] = BendLength(ArmDev(p.Arms[i], Out(p.NodeOf[i]), bestRot, p.Anchor));
 
         // Kurze Verbindung zu einer schon gesetzten Kreuzung: Prefabs direkt aneinandersetzen
         var localPos = Interchanges.CalibrateNodes(ppd, unit, Quaternion.Identity);
@@ -535,7 +549,7 @@ public static class Junctions
         if (p.SnapArm >= 0)
             for (int i = 0; i < p.Arms.Length; i++)   // Bögen zur neuen Drehung neu bestimmen
                 if (i != p.SnapArm)
-                    p.Bend[i] = BendLength(MathF.Abs(Wrap(Ang(p.Arms[i].Away) - Ang(Out(p.NodeOf[i])) - bestRot)) * 180 / MathF.PI);
+                    p.Bend[i] = BendLength(ArmDev(p.Arms[i], Out(p.NodeOf[i]), bestRot, p.Anchor));
 
         // Passt ein Arm im Winkel gar nicht zum Prefab (z. B. spitz einmündende Rampe an einem
         // T-Prefab), müsste die Straße auf bis zu 110 m in einem Bogen zum Prefab-Knoten umgelegt

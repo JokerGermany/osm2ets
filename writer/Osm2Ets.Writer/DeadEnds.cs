@@ -19,7 +19,7 @@ internal static class DeadEnds
     public const float Inset = 0.5f;           // so weit vor dem Straßenende (m)
     public const float Extra = 0.5f;
     /// <summary>Sperre an einer Autobahn: so weit außerhalb ihres Modellrands (m).</summary>
-    public const float EdgeGap = 0.8f;           // je Seite über den Modellrand hinaus (m)
+    public const float EdgeGap = 0.5f;
 
     public sealed record Placed(ulong Uid, string Road, string End, long? OsmNode, List<long> OsmWays, float X, float Y, float Z);
 
@@ -62,18 +62,19 @@ internal static class DeadEnds
                     var st = styles.TryGetValue(r, out var sa) ? sa[Math.Min(i - 1, sa.Length - 1)] : null;
                     majorHw.Add(st is null ? 0 : st.Width / 2 + MathF.Abs(st.ModelCenter));
                 }
-        // Abstand vom Punkt bis zum Modellrand der nächsten Autobahn/Rampe (negativ = darin)
-        float EdgeDist(Vector2 p)
+        // Abstand vom Punkt bis zum Modellrand der nächsten Autobahn/Rampe (negativ = darin) und deren Richtung
+        (float, Vector2) EdgeInfo(Vector2 p)
         {
-            float best = float.MaxValue;
+            float best = float.MaxValue; Vector2 tg = Vector2.Zero;
             for (int k = 0; k < majorSegs.Count; k++)
             {
                 var (a, b) = majorSegs[k];
                 var ab = b - a; float l2 = ab.LengthSquared();
                 float t = l2 > 0 ? Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1) : 0;
-                best = MathF.Min(best, Vector2.Distance(p, a + ab * t) - majorHw[k]);
+                float e = Vector2.Distance(p, a + ab * t) - majorHw[k];
+                if (e < best) { best = e; tg = l2 > 0 ? ab / MathF.Sqrt(l2) : Vector2.Zero; }
             }
-            return best;
+            return (best, tg);
         }
         bool NearMajor(Vector2 p, float tol)
         {
@@ -105,16 +106,23 @@ internal static class DeadEnds
                 var q = atStart ? fi.ForwardNode.Position : la.Node.Position;
                 var d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));
                 if (float.IsNaN(d.X)) continue;
-                // an der Autobahn: Sperre außerhalb, direkt am Modellrand der Autobahn (das Straßenende
-                // selbst ragt etwas in den Rand hinein, die Sperre darf das nicht)
+                // an der Autobahn: Sperre am Rand der Autobahn, parallel zu ihr (die Zufahrt läuft
+                // schräg auf den Randstreifen, ihr Ende ragt hinein)
                 var at = new Vector2(p.X, p.Z);
-                if (other is null)
-                {
-                    float ed = EdgeDist(at);
-                    if (ed < EdgeGap) at += d * (EdgeGap - ed);
-                }
                 var nn = new Vector2(-d.Y, d.X);
                 float half = styles[r][atStart ? 0 : ^1].Width / 2 + Extra;
+                if (other is null)
+                {
+                    var (ed, tg) = EdgeInfo(at);
+                    if (ed < EdgeGap) at += d * (EdgeGap - ed);
+                    // längs zur Autobahn nur bei steil auftreffender Zufahrt; endet sie in einer
+                    // Übergangsspur parallel zur Autobahn, steht die Sperre quer zu dieser
+                    if (tg != Vector2.Zero && MathF.Abs(Vector2.Dot(d, tg)) < 0.7f)
+                    {
+                        float sin = MathF.Max(0.5f, MathF.Abs(d.X * tg.Y - d.Y * tg.X));
+                        nn = tg; half /= sin;
+                    }
+                }
                 var a2 = at + nn * half; var b2 = at - nn * half;
                 var item = Buildings.Add(map, new Vector3(a2.X, p.Y, a2.Y), new Vector3(b2.X, p.Y, b2.Y), Scheme);
                 item.Stretch = 1f;

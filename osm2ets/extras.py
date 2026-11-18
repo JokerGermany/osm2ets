@@ -196,7 +196,8 @@ def escape_lanes(net, network_nodes: set) -> dict:
 
 
 def restricted_stubs(net, xy: dict, loc: dict, start_nodes: set, length_m: float,
-                     id_start: int = -1_500_000_000) -> dict:
+                     id_start: int = -1_500_000_000, goal_nodes: frozenset = frozenset(),
+                     goal_extra_m: float = 0.0) -> dict:
     """3b. Gesperrte Zufahrten: Kanten mit Rolle 'blocked' (highway=service, access=no|private),
     die an einem Knoten aus ``start_nodes`` (Autobahnfahrbahn/-rampe) beginnen, werden bis
     ``length_m`` Echtmeter weit übernommen (an Abzweigen alle gesperrten Äste, jeweils mit der
@@ -227,6 +228,11 @@ def restricted_stubs(net, xy: dict, loc: dict, start_nodes: set, length_m: float
         if any(i not in xy for i in ids):
             continue
         acc, cut = 0.0, None
+        # erreicht die Kante (bis goal_extra_m über die Länge hinaus) eine Straße der Karte:
+        # ganz übernehmen, damit der Stummel dort einmündet statt kurz davor im Feld zu enden
+        el = edge_length(e, xy) if ids[-1] in goal_nodes else None
+        if el is not None and el <= left + goal_extra_m:
+            left = max(left, el + 1.0)
         for k in range(1, len(ids)):
             seg = math.dist(xy[ids[k - 1]], xy[ids[k]])
             if acc + seg >= left:
@@ -237,7 +243,7 @@ def restricted_stubs(net, xy: dict, loc: dict, start_nodes: set, length_m: float
             marked.add(ei)
             stats["edges"] += 1
             far, rest = ids[-1], left - acc
-            if far in start_nodes or rest <= 1.0:
+            if far in start_nodes or far in goal_nodes or rest <= 1.0:
                 continue
             for ej, _ in net.adjacency.get(far, ()):
                 if ej != ei:

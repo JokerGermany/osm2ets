@@ -198,6 +198,7 @@ public static class MapWriter
                     if (!e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link")) SubdivideLinear(e, MinorPush.Sample);
             MinorPush.Apply(valid, run => { var st = mapping.Resolve(run); return (st.Width / 2, st.ModelCenter); }, pfObs, warnings, links: true);
             MinorPush.Apply(valid, run => { var st = mapping.Resolve(run); return (st.Width / 2, st.ModelCenter); }, pfObs, warnings);
+            MinorPush.Apply(valid, run => { var st = mapping.Resolve(run); return (st.Width / 2, st.ModelCenter); }, pfObs, warnings, tracks: true);
             // eingefügte Prüfpunkte, die gerade geblieben sind, wieder entfernen
             if (MinorPush.Enabled)
                 foreach (var e in valid)
@@ -224,6 +225,16 @@ public static class MapWriter
             styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
         }
         int separated = CarriagewaySeparation.Apply(valid, styles);
+        // gesperrte Zufahrten erst jetzt (Lage der Autobahn steht), danach Stile neu auflösen
+        if (Overlaps.TrimStubs(valid, pairs, run => mapping.Resolve(run).Width / 2, warnings) > 0)
+        {
+            styles.Clear();
+            foreach (var entry in valid)
+            {
+                if (Validate(entry, out var pts, out var ros) is { } verr) throw new InvalidOperationException($"{entry.Id}: {verr}");
+                styles[entry] = Enumerable.Range(0, pts.Count - 1).Select(i => mapping.Resolve(entry.Runs[ros[i]])).ToArray();
+            }
+        }
         // Brückenkörper (Railing mit Widerlagern) für Paare paralleler Autobahnbrücken über Straßen:
         // nach dem Auseinanderrücken (Abstand der Linien), Brücke des Trägers als ein Stück
         {
@@ -464,7 +475,7 @@ public static class MapWriter
         PrefabFootprint.FixPitch(map);
         if (PrefabFootprint.PitchFixed > 0) warnings.Add($"Info: Neigung von {PrefabFootprint.PitchFixed} Prefab-Knoten an die Prefab-Lage angepasst");
         if (prefabs is not null)
-            warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt, {Junctions.BridgeShifted} von Brücken weggerückt, {Interchanges.OsmAux} Zusatzspuren mit OSM-Länge");
+            warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt, {Junctions.BridgeShifted} von Brücken weggerückt, {Interchanges.OsmAux} Zusatzspuren mit OSM-Länge, {Overlaps.Transitions} gesperrte Zufahrten schräg an den Autobahnrand geführt");
         if (prefabs is not null)
             warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
 

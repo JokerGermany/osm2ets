@@ -238,7 +238,17 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
             for fid, orig in detach.items():
                 if orig in sloc:
                     sloc[fid] = sloc[orig]
-            stub_stats = restricted_stubs(net3, local_xy(sloc), sloc, set(detach), stub_len)
+            goal = set()
+            for e in selected:
+                goal.update(e.node_ids())
+            for st in (vis_stats, ends_stats, industry_stats, links_stats):
+                for e in (st or {}).get("partial", []):
+                    goal.update(e.node_ids())
+            for e in net2.edges:
+                if e.role not in (None, "taken"):
+                    goal.update(e.node_ids())
+            stub_stats = restricted_stubs(net3, local_xy(sloc), sloc, set(detach), stub_len,
+                                          goal_nodes=goal, goal_extra_m=stub_len)
             stub_stats["locations"].update(sloc)
             stub_stats["partial"] = [e for e in net3.edges if e.role == "connector"] + stub_stats["partial"]
         new = [e for e in net2.edges if e.role not in (None, "taken")]
@@ -260,6 +270,28 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
                 for k, e in enumerate(st["partial"]):
                     e.idx = top + k
                 selected = selected + st["partial"]
+    if stub_stats and stub_stats["partial"]:
+        # Stummel, die auf einer Straße der Karte enden (z. B. Zufahrt von der Autobahn zur
+        # Staatsstraße): dort die Straße teilen, damit eine Einmündung entsteht
+        from dataclasses import replace as _replace
+        sends = set()
+        for e in stub_stats["partial"]:
+            sends.update(n for n in (e.u, e.v) if n > 0)
+        split = []
+        for e in selected:
+            if e in stub_stats["partial"]:
+                split.append(e)
+                continue
+            cuts = [i for i in range(e.i0 + 1, e.i1) if e.way.nodes[i] in sends]
+            if not cuts:
+                split.append(e)
+                continue
+            b = [e.i0] + cuts + [e.i1]
+            split.extend(_replace(e, i0=b[k], i1=b[k + 1]) for k in range(len(b) - 1))
+        top = max(x.idx for x in split) + 1
+        for k, e in enumerate(split):
+            e.idx = k + top
+        selected = split
     chains = build_chains(selected)
     log.info("%d durchgehende Ketten", len(chains))
 
