@@ -3,8 +3,8 @@ using TruckLib.ScsMap;
 namespace Osm2Ets.Writer;
 
 /// <summary>
-/// Geheimstraßen (erst nach dem Befahren auf der Karte), die der Spieler nicht erreichen kann,
-/// erscheinen gar nicht auf der Karte: man kann sie nie befahren, also nie aufdecken. Erreichbar =
+/// Straßen und Kreuzungs-Prefabs (auch geheime), die der Spieler nicht erreichen kann, erscheinen gar nicht auf
+/// der Karte: man kann sie nie befahren (Sichtstücke). Erreichbar =
 /// über Knoten und Prefabs verbunden mit einem Autobahn-/Kraftstraßenstück. Straßen hinter einer
 /// Sperrbake (gesperrte Zufahrt, Ende ins Nichts) hängen nicht an diesem Netz und fallen damit heraus.
 /// Ohne Autobahn in der Karte: Teil mit den meisten sichtbaren, nicht geheimen Straßen.
@@ -43,8 +43,10 @@ public static class Reachability
             mains.Add(score.MaxBy(kv => kv.Value).Key);
         }
         int n2 = 0;
-        foreach (var r in items.OfType<Road>().Where(r => r.Secret && !mains.Contains(Find(r.Uid))))
+        foreach (var r in items.OfType<Road>().Where(r => (r.Secret || r.ShowInUiMap) && !mains.Contains(Find(r.Uid))))
         { r.Secret = false; r.ShowInUiMap = false; n2++; }
+        foreach (var pf in items.OfType<Prefab>().Where(p => (p.Secret || p.ShowInUiMap) && !mains.Contains(Find(p.Uid))))
+        { pf.Secret = false; pf.ShowInUiMap = false; n2++; }
         return n2;
     }
 }

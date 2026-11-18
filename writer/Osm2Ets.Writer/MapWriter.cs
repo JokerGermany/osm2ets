@@ -619,7 +619,7 @@ public static class MapWriter
             }
         }
         if (Reachability.Apply(map, valid.Where(e => e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link") && firstItem.ContainsKey(e)).Select(e => (IMapItem)firstItem[e])) is int unreach and > 0)
-            warnings.Add($"Info: {unreach} Geheimstraßen-Stücke nicht erreichbar – nicht auf der Karte statt geheim");
+            warnings.Add($"Info: {unreach} nicht erreichbare Straßenstücke/Prefabs (auch geheime) nicht auf der Karte");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen");
         if (AreaCheck.Run(map, input.Areas) is { } ac)
