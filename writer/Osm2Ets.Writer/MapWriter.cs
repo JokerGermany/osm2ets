@@ -618,6 +618,8 @@ public static class MapWriter
                 Console.Error.WriteLine($"T {a.X:0.0}..{b.X:0.0} z {a.Z:0.0} y {a.Y:0.0}/{b.Y:0.0} L {t.Left.Terrain.Size:0.0} R {t.Right.Terrain.Size:0.0} offs {t.Left.Terrain.QuadData.Offsets.Count}/{t.Right.Terrain.QuadData.Offsets.Count} cols {t.Left.Terrain.QuadData.Cols} rows {t.Left.Terrain.QuadData.Rows}/{t.Right.Terrain.QuadData.Rows}");
             }
         }
+        if (Reachability.Apply(map, valid.Where(e => e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link") && firstItem.ContainsKey(e)).Select(e => (IMapItem)firstItem[e])) is int unreach and > 0)
+            warnings.Add($"Info: {unreach} Geheimstraßen-Stücke nicht erreichbar – nicht auf der Karte statt geheim");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen");
         if (AreaCheck.Run(map, input.Areas) is { } ac)

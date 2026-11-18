@@ -376,7 +376,8 @@ static void MinorWaysHiddenFromNavigation()
     var (map, _) = MapWriter.Build(input, MappingConfig.Load(ShippedMapping()));
     Road At(double x) => map.MapItems.Values.OfType<Road>().Single(r => Math.Abs(r.Node.Position.X - x) < 0.5);
     var t = At(0); var f = At(100); var a = At(200); var s = At(300);
-    Check(t.Secret && t.GpsAvoid && !t.AiVehicles, $"Feldweg: secret {t.Secret}, gps_avoid {t.GpsAvoid}, ai {t.AiVehicles}");
+    // Feldweg hier ohne Anschluss ans Netz: nicht erreichbar → nicht geheim, sondern nicht auf der Karte
+    Check(!t.Secret && !t.ShowInUiMap && t.GpsAvoid && !t.AiVehicles, $"Feldweg: secret {t.Secret}, gps_avoid {t.GpsAvoid}, ai {t.AiVehicles}");
     Check(!f.ShowInUiMap && f.GpsAvoid && !f.AiVehicles, $"Fußweg: ui_map {f.ShowInUiMap}, gps_avoid {f.GpsAvoid}");
     Check(!a.ShowInUiMap && a.GpsAvoid, $"Parkplatzgasse: ui_map {a.ShowInUiMap}, gps_avoid {a.GpsAvoid}");
     Check(s.ShowInUiMap && !s.GpsAvoid && !s.Secret, $"Wohnstraße unverändert: ui_map {s.ShowInUiMap}, gps_avoid {s.GpsAvoid}, secret {s.Secret}");
