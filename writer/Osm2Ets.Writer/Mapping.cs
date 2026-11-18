@@ -272,6 +272,11 @@ public sealed class MatchSpec
     public bool? Tunnel { get; set; }
     public int? LanesMin { get; set; }
     public int? LanesMax { get; set; }
+    /// <summary>Spuren in / gegen die Linienrichtung (lanes:forward/backward), z. B. 3+1.</summary>
+    public int? LanesForwardMin { get; set; }
+    public int? LanesForwardMax { get; set; }
+    public int? LanesBackwardMin { get; set; }
+    public int? LanesBackwardMax { get; set; }
     /// <summary>Nur einspurige Wege: lanes fehlt oder ≤ 1 und width fehlt oder ≤ dieser Breite (m).</summary>
     public double? NarrowMaxWidth { get; set; }
     /// <summary>Regulärer Ausdruck auf das OSM-ref-Tag.</summary>
@@ -301,6 +306,10 @@ public sealed class MatchSpec
         if (Tunnel is not null && Tunnel != run.Tunnel) return false;
         if (LanesMin is not null && (run.Lanes is null || run.Lanes < LanesMin)) return false;
         if (LanesMax is not null && (run.Lanes is null || run.Lanes > LanesMax)) return false;
+        if (LanesForwardMin is not null && (run.LanesForward is null || run.LanesForward < LanesForwardMin)) return false;
+        if (LanesForwardMax is not null && (run.LanesForward is null || run.LanesForward > LanesForwardMax)) return false;
+        if (LanesBackwardMin is not null && (run.LanesBackward is null || run.LanesBackward < LanesBackwardMin)) return false;
+        if (LanesBackwardMax is not null && (run.LanesBackward is null || run.LanesBackward > LanesBackwardMax)) return false;
         if (NarrowMaxWidth is not null && (run.Lanes > 1 || run.Width > NarrowMaxWidth)) return false;
         if (refRegex is not null && !refRegex.IsMatch(run.Ref ?? "")) return false;
         if (Service is not null && (run.Service is null || !Service.Contains(run.Service))) return false;

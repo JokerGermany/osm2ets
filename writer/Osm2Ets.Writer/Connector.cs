@@ -99,7 +99,7 @@ public static class Connector
     {
         int segments = r.Points.Count - 1;
         r.Points.Reverse();
-        r.Runs = r.Runs.Select(x => { var (f, t) = (segments - x.To, segments - x.From); x.From = f; x.To = t; return x; })
+        r.Runs = r.Runs.Select(x => { var (f, t) = (segments - x.To, segments - x.From); x.From = f; x.To = t; (x.LanesForward, x.LanesBackward) = (x.LanesBackward, x.LanesForward); return x; })
                        .OrderBy(x => x.From).ToList();
         (r.Start, r.End) = (r.End, r.Start);
     }

@@ -108,6 +108,10 @@ public sealed class RunEntry
     public string? Shoulder { get; set; }
     /// <summary>OSM width=* in Metern, sonst null.</summary>
     public double? Width { get; set; }
+    /// <summary>OSM lanes:forward (in Richtung der Straßenlinie).</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("lanes_forward")] public int? LanesForward { get; set; }
+    /// <summary>OSM lanes:backward (gegen die Richtung der Straßenlinie).</summary>
+    [System.Text.Json.Serialization.JsonPropertyName("lanes_backward")] public int? LanesBackward { get; set; }
     public List<long> OsmWays { get; set; } = [];
 
     /// <summary>Kopie mit anderen Grenzen (gleiche Attribute).</summary>

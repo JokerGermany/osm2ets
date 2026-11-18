@@ -46,11 +46,22 @@ class Projector:
 def run_key(part, role: str) -> tuple:
     """Attribute, nach denen ein Straßenstück im Writer unterschieden wird."""
     tags = part.edge.way.tags
+    fw, bw = parse_lanes_dir(tags)
+    if part.reverse:
+        fw, bw = bw, fw
+    lanes = parse_lanes(tags)
+    if part.direction != 0:
+        # Einbahnstraße: Spuren in Fahrrichtung (lanes:forward/backward, falls lanes fehlt)
+        own = fw if part.direction > 0 else bw
+        if lanes is None and own is not None:
+            lanes = own
+    elif lanes is None and fw is not None and bw is not None:
+        lanes = fw + bw
     return (
         part.edge.highway,
         role,
         part.direction != 0,
-        parse_lanes(tags),
+        lanes,
         is_bridge(tags),
         is_tunnel(tags),
         parse_layer(tags),
@@ -60,11 +71,28 @@ def run_key(part, role: str) -> tuple:
         tags.get("access"),
         tags.get("shoulder"),
         parse_width(tags),
+        fw,
+        bw,
     )
 
 
 RUN_FIELDS = ("highway", "role", "oneway", "lanes", "bridge", "tunnel", "layer", "ref", "maxspeed", "service",
-              "access", "shoulder", "width")
+              "access", "shoulder", "width", "lanes_forward", "lanes_backward")
+
+
+def _lane_count(raw):
+    if raw is None:
+        return None
+    try:
+        v = int(str(raw).split(";")[0].strip())
+    except ValueError:
+        return None
+    return v if v > 0 else None
+
+
+def parse_lanes_dir(tags: dict):
+    """OSM lanes:forward / lanes:backward (bezogen auf die Wegrichtung); fehlend → None."""
+    return _lane_count(tags.get("lanes:forward")), _lane_count(tags.get("lanes:backward"))
 
 
 def parse_width(tags: dict):

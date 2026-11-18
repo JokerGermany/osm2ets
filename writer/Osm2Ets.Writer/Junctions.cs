@@ -401,7 +401,7 @@ public static class Junctions
     {
         int last = r.Points.Count - 1;
         r.Points.Reverse();
-        foreach (var x in r.Runs) { int f = x.From; x.From = last - x.To; x.To = last - f; }
+        foreach (var x in r.Runs) { int f = x.From; x.From = last - x.To; x.To = last - f; (x.LanesForward, x.LanesBackward) = (x.LanesBackward, x.LanesForward); }
         r.Runs.Reverse();
     }
 
