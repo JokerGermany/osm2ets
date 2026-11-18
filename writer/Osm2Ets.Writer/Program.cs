@@ -25,7 +25,7 @@ public static class Program
                  Listet Railings (/def/world/railing*.sii) – z. B. Brückenkörper (--filter bridge).
           models --game <ETS2-Spielordner> [--filter <text>] [--all]
                  Listet Modelle (/def/world/model*.sii) – z. B. Brückenteile.
-          extract --game <ETS2-Spielordner> --paths <datei mit Pfaden> --out <ordner>
+          extract --game <ETS2-Spielordner> --paths <datei mit Pfaden, Ordner mit / am Ende> --out <ordner>
                  Kopiert einzelne Dateien (z. B. /prefab2/…/x.ppd) aus den .scs-Archiven.
           info   --map <karte.mbd>
                  Öffnet eine Karte und zeigt Kennzahlen.
@@ -208,7 +208,24 @@ public static class Program
             try { reader = TruckLib.HashFs.HashFsReader.Open(archive); } catch { continue; }
             using (reader)
             {
-                foreach (var path in wanted)
+                // Zeilen mit "/" am Ende: ganzen Ordner (rekursiv) aus diesem Archiv
+                var expanded = new List<string>();
+                foreach (var w in wanted)
+                {
+                    if (!w.EndsWith('/')) { expanded.Add(w); continue; }
+                    int before = expanded.Count;
+                    var stack = new Stack<string>(); stack.Push(w.TrimEnd('/'));
+                    while (stack.Count > 0)
+                    {
+                        var dir = stack.Pop();
+                        if (reader.TryGetEntry(dir, out _) != TruckLib.HashFs.EntryType.Directory) continue;
+                        var listing = reader.GetDirectoryListing(dir);
+                        foreach (var f in listing.Files) expanded.Add(f);
+                        foreach (var d in listing.Subdirectories) stack.Push(d);
+                    }
+                    if (expanded.Count > before) found.Add(w);
+                }
+                foreach (var path in expanded)
                 {
                     if (found.Contains(path)) continue;
                     if (reader.TryGetEntry(path, out var entry) != TruckLib.HashFs.EntryType.File) continue;
@@ -221,9 +238,9 @@ public static class Program
                 }
             }
         }
-        foreach (var p in wanted.Where(p => !found.Contains(p)))
-            Console.Error.WriteLine($"nicht gefunden: {p}");
-        return found.Count == wanted.Count ? 0 : 1;
+        var missing = wanted.Where(p => !found.Contains(p)).ToList();
+        foreach (var p in missing) Console.Error.WriteLine($"nicht gefunden: {p}");
+        return missing.Count == 0 ? 0 : 1;
     }
 
     private static int Info(Dictionary<string, string?> o)
