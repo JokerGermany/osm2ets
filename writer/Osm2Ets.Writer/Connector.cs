@@ -50,6 +50,10 @@ public static class Connector
                 double turn = 180.0 - Math.Acos(Math.Clamp(cos, -1, 1)) * 180.0 / Math.PI;
                 if (turn > MaxTurnDeg) continue;
                 double score = turn + (a.Road.Role == b.Road.Role ? 0 : 30) + (a.Road.Role == "core" ? 0 : 5);
+                // Zweirichtungsstraße läuft lieber in eine Zweirichtungsstraße weiter als in eine Einbahn-
+                // Rampe (2+1 geht durch, die Ausfahrt zweigt ab)
+                bool oa = (a.AtStart ? a.Road.Runs[0] : a.Road.Runs[^1]).Oneway, ob = (b.AtStart ? b.Road.Runs[0] : b.Road.Runs[^1]).Oneway;
+                if (oa != ob) score += 40;
                 candidates.Add((score, a, b));
             }
         }

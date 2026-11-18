@@ -32,6 +32,20 @@ public static class Junctions
     // getrennten Fahrbahn wird): Knoten 0 = beide Richtungen, 1 = Einbahn hinein, 2 = Einbahn heraus (±15°).
     public static readonly Def SPLIT2 = new(new("ch_42029", "/prefab2/fork_temp/ger/ger_r1_split_short.ppd", "default", "ger_1"), [1, 2], [0]);
 
+    // Kreuzung mit Abbiegespur an allen vier Armen (ch_42010 „ger r1 turn x r1 turn tmpl“,
+    // prefab.mod_switzerland_reskin.sii; Varianten laut .pmd: default, no_lines; Looks ger_1…ger_5):
+    // jeder Arm 2+1 mit zwei Spuren zur Kreuzung hin (ger24 vom Prefab weg), Knoten 0/2 und 1/3 gegenüber.
+    public static readonly Def XTURN4 = new(new("ch_42010", "/prefab2/cross_temp/ger/ger_r1_turn_x_r1_turn_tmpl.ppd", "default", "ger_1"), [0, 2], [1, 3]);
+    public static bool UseTurnCross = Environment.GetEnvironmentVariable("OSM2ETS_NO_TURNCROSS") != "1";
+
+    /// <summary>Zweirichtungs-Arm mit zwei (oder mehr) Spuren zum Knoten hin und einer weg.</summary>
+    private static bool TurnArm(RunEntry x, bool atStart)
+    {
+        int? toward = atStart ? x.LanesBackward : x.LanesForward;
+        int? away = atStart ? x.LanesForward : x.LanesBackward;
+        return !x.Oneway && toward >= 2 && away == 1;
+    }
+
     // Übergang Landstraße 1+1 ↔ 2+1 (ch_42001 „ger fork road 1 x 2 plus 1 tmpl“, 60 m): Knoten 0 = 2+1
     // (zwei Spuren laufen aus dem Prefab heraus), Knoten 1 = Landstraße. Variante/Look ungeprüft (keine
     // .pmd vorhanden) – "default"/"ger_1" wie bei den übrigen Gabelungen.
@@ -193,6 +207,15 @@ public static class Junctions
 
     public sealed record Arm(RoadEntry Road, Vector2 Away);
 
+    /// <summary>Kürzester Rest (m) eines Arms, dessen anderes Ende frei ist (kein Prefab).</summary>
+    public const float MinShortTail = 1.5f;
+
+    private static bool EndsAtPrefab(RoadEntry r, Vector3 anchor)
+    {
+        var other = StartsAt(r, anchor) ? r.End : r.Start;
+        return other?.Kind == "prefab";
+    }
+
     /// <summary>Straßen, deren Richtung wegen Knoten 0 eines Prefabs festliegt (nicht mehr umdrehen).</summary>
     public static readonly HashSet<RoadEntry> Fixed = [];
 
@@ -317,6 +340,15 @@ public static class Junctions
             bool r2 = roadTypeAt(list[best.A].R, list[best.A].AtStart) == "ger29"
                    && roadTypeAt(list[best.B].R, list[best.B].AtStart) == "ger29";
             var def = list.Count == 3 ? (r2 ? TR2 : TR1) : (r2 ? XR2 : XR1);
+            if (UseTurnCross && list.Count == 4 && Enumerable.Range(0, 4).All(i => TurnArm(runs[i], list[i].AtStart)))
+                def = XTURN4;
+            // 2+1-Arme passen nicht an die schmalen Landstraßen-Prefabs (1+1): dort kein Prefab – die
+            // Zweirichtungsstraßen laufen direkt durch, der übrige Arm zweigt daneben ab
+            if (def != XTURN4 && Enumerable.Range(0, list.Count).Any(i => roadTypeAt(list[i].R, list[i].AtStart) is "ger24" or "ger25"))
+            {
+                warnings.Add($"Info: Knoten {node}: 2+1-Straße an der Kreuzung – kein passendes Prefab, Straßen ohne Prefab verbunden");
+                continue;
+            }
             var anchor = MapWriter.ToVector(list[0].AtStart ? list[0].R.Points[0] : list[0].R.Points[^1]);
             // Arme so ordnen: durchgehend A, durchgehend B, dann die übrigen
             var order = new List<int> { best.A, best.B };
@@ -734,6 +766,9 @@ public static class Junctions
             float arc = (float)Interchanges.ArcLengthOf(p.Arms[i].Road);
             if (arc < r + MinTail && OtherEndPending(p.Arms[i].Road, p.Anchor) && arc > r + 1.5f)
             { p.Bend[i] = 0; continue; }   // Nachbar-Prefab schließt dann direkt an
+            // kurzer Arm, am anderen Ende kein Prefab: ein kurzes Reststück genügt (ohne Bogen)
+            if (arc < r + MinTail && arc >= r + MinShortTail && !EndsAtPrefab(p.Arms[i].Road, p.Anchor))
+            { p.Bend[i] = 0; continue; }
             if (arc < r + MinTail)
             { reason = $"{p.Arms[i].Road.Id} zu kurz ({arc:0} m, nötig {r + MinTail:0} m)"; return false; }
             // Bogen notfalls verkürzen, damit vom Arm genug übrig bleibt

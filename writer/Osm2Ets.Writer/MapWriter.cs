@@ -463,6 +463,7 @@ public static class MapWriter
                             continue;
                         }
                         var at = pf.Nodes[ni].Position;
+                        if (!firstItem.ContainsKey(a.Road)) continue;   // Arm später ganz entfallen (zu kurz)
                         if (Junctions.StartsAt(a.Road, at)) pf.Attach(ni, firstItem[a.Road].Node);
                         else pf.Attach(ni, lastItem[a.Road].ForwardNode);
                     }
