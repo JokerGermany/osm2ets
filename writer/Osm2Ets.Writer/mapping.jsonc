@@ -87,6 +87,15 @@
       "road_type": "ger5", "width": 6.5, "terrain_left": 10, "terrain_right": 10 },
     { "name": "Einbahn zweispurig", "match": { "oneway": true, "lanes_min": 2 }, "road_type": "ger9", "width": 9 },
     { "name": "Einbahn", "match": { "oneway": true }, "road_type": "ger5", "width": 6.5 },
+    // 2+1 ohne Mitteltrennung, gemessen (ETS2, road_look.template.sii und .pmd):
+    //   ger25 = "ger road 1 plus 2 tmpl": gesamt −4,75…9,50, Mittellinie bei 0, rechts (in Linienrichtung) 2 Spuren
+    //   ger24 = "ger road 2 plus 1 tmpl": gesamt −9,50…4,75, links (gegen die Linienrichtung) 2 Spuren
+    // Randlinien (lines_full) −4,70…9,45 bzw. −9,45…4,70: Linie um ∓2,375 m versetzt, so dass die drei
+    // Spuren mittig auf der OSM-Linie liegen (wie bei ger16). 3+1 gibt es in ETS2 nicht: ersatzweise 2+1.
+    { "name": "2+1 ohne Mitteltrennung, zwei Spuren in Linienrichtung (3+1 ersatzweise)", "match": { "oneway": false, "lanes_forward_min": 2, "lanes_backward_min": 1, "lanes_backward_max": 1 },
+      "road_type": "ger25", "width": 14.25, "model_center": 2.375, "offset": -2.375 },
+    { "name": "2+1 ohne Mitteltrennung, zwei Spuren gegen die Linienrichtung (1+3 ersatzweise)", "match": { "oneway": false, "lanes_backward_min": 2, "lanes_forward_min": 1, "lanes_forward_max": 1 },
+      "road_type": "ger24", "width": 14.25, "model_center": -2.375, "offset": 2.375 },
     { "name": "Vierspurig ohne Mitteltrennung", "match": { "oneway": false, "lanes_min": 4 }, "road_type": "ger29", "width": 15 },
     { "name": "Anschlussstraßen", "match": { "role": ["connector"] }, "road_type": "ger1",
       "terrain_left": 10, "terrain_right": 10 }
