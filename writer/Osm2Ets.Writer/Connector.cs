@@ -19,6 +19,7 @@ public static class Connector
     public static (List<(RoadEntry From, RoadEntry To)> Pairs, int Reversed) Plan(List<RoadEntry> roads, IEnumerable<RoadEntry>? fixedRoads = null)
     {
         var fixedOrientation = new HashSet<RoadEntry>(fixedRoads ?? []);
+        var hardFixed = new HashSet<RoadEntry>(fixedOrientation);
         var reversedSet = new HashSet<RoadEntry>();
         var used = new HashSet<(RoadEntry, bool)>();
         var pairs = new List<(RoadEntry, RoadEntry)>();
@@ -70,7 +71,26 @@ public static class Connector
             {
                 // eins von beiden umdrehen, wenn erlaubt
                 var flip = CanFlip(b.Item1, fixedOrientation) ? b.Item1 : CanFlip(a.Item1, fixedOrientation) ? a.Item1 : null;
-                if (flip is null) continue;
+                if (flip is null)
+                {
+                    // beide schon festgelegt: eine Seite samt ihrer bisher verbundenen Kette umdrehen, wenn
+                    // die Kette nirgends an ein Prefab gebunden ist und keine Einbahnstraße enthält
+                    var chain = ChainOf(b.Item1, pairs);
+                    if (!chain.All(r => !hardFixed.Contains(r) && r.Runs.All(x => !x.Oneway)))
+                    {
+                        chain = ChainOf(a.Item1, pairs);
+                        if (!chain.All(r => !hardFixed.Contains(r) && r.Runs.All(x => !x.Oneway))) continue;
+                    }
+                    foreach (var r in chain) if (!reversedSet.Add(r)) reversedSet.Remove(r);
+                    for (int k = 0; k < pairs.Count; k++)
+                        if (chain.Contains(pairs[k].Item1)) pairs[k] = (pairs[k].Item2, pairs[k].Item1);
+                    aStart = a.Item2 ^ reversedSet.Contains(a.Item1);
+                    bStart = b.Item2 ^ reversedSet.Contains(b.Item1);
+                    fixedOrientation.Add(a.Item1); fixedOrientation.Add(b.Item1);
+                    used.Add(a); used.Add(b);
+                    pairs.Add(aStart ? (b.Item1, a.Item1) : (a.Item1, b.Item1));
+                    continue;
+                }
                 if (!reversedSet.Add(flip)) reversedSet.Remove(flip);
                 aStart = a.Item2 ^ reversedSet.Contains(a.Item1);
                 bStart = b.Item2 ^ reversedSet.Contains(b.Item1);
@@ -83,6 +103,23 @@ public static class Connector
 
         foreach (var r in reversedSet) Reverse(r);
         return (pairs, reversedSet.Count);
+    }
+
+    /// <summary>Alle über bisherige Paare verbundenen Straßen.</summary>
+    private static HashSet<RoadEntry> ChainOf(RoadEntry start, List<(RoadEntry, RoadEntry)> pairs)
+    {
+        var set = new HashSet<RoadEntry> { start };
+        bool grew = true;
+        while (grew)
+        {
+            grew = false;
+            foreach (var (x, y) in pairs)
+            {
+                if (set.Contains(x) && set.Add(y)) grew = true;
+                if (set.Contains(y) && set.Add(x)) grew = true;
+            }
+        }
+        return set;
     }
 
     private static bool CanFlip(RoadEntry r, HashSet<RoadEntry> fixedSet) =>
