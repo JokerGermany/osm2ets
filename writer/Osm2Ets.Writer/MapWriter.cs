@@ -59,7 +59,8 @@ public static class MapWriter
         if (rounded > 0) warnings.Add($"Info: {rounded} Ecken in Autobahn-/Rampenlinien gerundet (Bogen statt Knick am OSM-Knoten)");
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
         // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
-        if (prefabs is not null) { Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); }
+        Junctions.Stations = input.Areas.Where(a => a.Kind is "fuel" or "services" or "rest_area").ToList();
+        if (prefabs is not null) { Junctions.PrepareFuel(valid, warnings); Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); }
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
@@ -633,7 +634,7 @@ public static class MapWriter
             warnings.Add($"Info: {unreach} nicht erreichbare Straßenstücke/Prefabs (auch geheime) nicht auf der Karte");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen");
-        if (AreaCheck.Run(map, input.Areas) is { } ac)
+        if (AreaCheck.Run(map, input.Areas.Where(a => a.Kind is not ("fuel" or "services" or "rest_area")).ToList()) is { } ac)
             warnings.Add($"Info: Lage zu area:highway: {ac.Points} Spurpunkte an Autobahnflächen, {ac.Outside} mehr als {AreaCheck.Tol:0} m außerhalb" +
                          $" ({100.0 * ac.Outside / Math.Max(ac.Points, 1):0.0} %), höchstens {ac.Max:0.0} m" +
                          (ac.Spots.Count > 0 ? "; Stellen: " + string.Join(", ", ac.Spots.Take(6).Select(sp => $"({sp.At.X:0},{sp.At.Y:0}) {sp.N}× bis {sp.Max:0.0} m")) : ""));

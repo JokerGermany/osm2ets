@@ -16,7 +16,7 @@ from .config import Profile, validate_geometry
 from .elevation import DemSampler, align_partner_points, apply_elevation
 from .geometry import NO_NODE, Projector, build_runs, chain_pieces, clip_piece, densify, finalize_piece
 from .network import Network, build_chains
-from .osmread import read_areas, read_node_locations, read_ways
+from .osmread import read_areas, read_node_locations, read_stations, read_ways
 from .qa import crossing_clearances
 
 log = logging.getLogger(__name__)
@@ -420,10 +420,10 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
 
 
 def _areas(input_path: str, projector, scale_h: float, bbox) -> list[dict]:
-    """area:highway-Flächen in Spielkoordinaten [x, z] (z = Süden), nur zur Lageprüfung."""
+    """area:highway-Flächen (nur zur Lageprüfung) und Tankstellen/Rastanlagen in Spielkoordinaten [x, z] (z = Süden)."""
     raw = read_areas(input_path)
     if not raw:
-        return []
+        return _stations(input_path, projector, scale_h, bbox)
     loc = read_node_locations(input_path, {n for _, _, refs in raw for n in refs})
     out = []
     for wid, kind, refs in raw:
@@ -435,6 +435,29 @@ def _areas(input_path: str, projector, scale_h: float, bbox) -> list[dict]:
         xy = projector.forward(np.array([p[0] for p in ll]), np.array([p[1] for p in ll])) / scale_h
         out.append({"osm_way": wid, "kind": kind,
                     "points": [[round(float(x), 2), round(float(-y), 2)] for x, y in xy]})
+    return out + _stations(input_path, projector, scale_h, bbox)
+
+
+def _stations(input_path: str, projector, scale_h: float, bbox) -> list[dict]:
+    """Tankstellen und Rastanlagen als Umriss [x, z] (Art fuel/services/rest_area); ein Knoten wird
+    zum Quadrat von 10 m. Der Writer setzt dort Tankstellen-Prefabs."""
+    raw = read_stations(input_path)
+    if not raw:
+        return []
+    loc = read_node_locations(input_path, {n for _, _, refs in raw for n in refs})
+    out = []
+    for sid, kind, refs in raw:
+        ll = [loc[n] for n in refs if n in loc]
+        if not ll or (len(refs) > 1 and len(ll) < 4):
+            continue
+        if bbox is not None and not any(bbox[0] <= lon <= bbox[2] and bbox[1] <= lat <= bbox[3] for lon, lat in ll):
+            continue
+        xy = projector.forward(np.array([p[0] for p in ll]), np.array([p[1] for p in ll])) / scale_h
+        pts = [[round(float(x), 2), round(float(-y), 2)] for x, y in xy]
+        if len(pts) == 1:
+            (x, z), = pts
+            pts = [[x - 5, z - 5], [x + 5, z - 5], [x + 5, z + 5], [x - 5, z + 5], [x - 5, z - 5]]
+        out.append({"osm_way": int(sid[1:]) if sid[0] == "w" else -int(sid[1:]), "kind": kind, "points": pts})
     return out
 
 

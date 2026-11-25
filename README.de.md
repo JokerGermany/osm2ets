@@ -392,6 +392,11 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
 - Übergänge 2+1 ↔ 1+1 (`ger fork road 1 x 2 plus 1 tmpl`, `ger fork road 1 x 1 plus 2 tmpl`) und der
   Übergang mit Sperrfläche sind gerade 60-m-Prefabs; sie werden nach dem Gefälle der Straße zwischen
   ihren Enden geneigt (bis 10 %; `OSM2ETS_NO_TRANSPITCH=1` setzt sie eben).
+- Tankstellen (`amenity=fuel`): Die Wege auf dem Gelände werden durch ein Tankstellen-Prefab ersetzt
+  (getankt wird nur an Tankpunkten in Prefabs). `gas_small_road_01_ger`, wo eine gerade Landstraße 1+1
+  (mindestens 188 m ohne Abzweig) vorbeiführt; sonst `gas_universal_03_balt` (Kategorie dlc_balt) mit
+  20 m Zufahrt von einem der bisherigen Anschlüsse; sonst bleibt alles wie in OSM.
+  `OSM2ETS_NO_FUEL=1` bzw. `OSM2ETS_NO_FUEL_BALT=1` schalten das ab.
 - Knotenrollen und Richtungen kommen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.
 
 ## Nächste Ausbaustufen

@@ -52,6 +52,23 @@ public static class Junctions
     // Mittellinie – gebaut für „ger road 1 plus 1 tmpl“ (ger26, 1+1 mit Sperrfläche in der Mitte). Übergang
     // zur normalen Landstraße: mod_ger_99 „ger fork road 1 x 1 plus 1 tmpl“ (60 m, Varianten clean/no_lines):
     // Knoten 0 = Sperrflächen-Seite (Spuren ±4,5 m), Knoten 1 = Landstraße (±2,25 m).
+    // Tankstellen (Kategorie mod_germany/gas_parking, Varianten ger/ger_asp, Looks ger_1…5):
+    // gas_small_road_01_ger – Landstraße 1+1 läuft gerade durch (Knoten 0/1 bei x ±69,05, z −13,75,
+    // Spuren ±2,25 m), die Anlage liegt links der Fahrt von Knoten 1 nach Knoten 0 (bis 31,5 m hinter
+    // der Straßenmitte), 2 Tankpunkte.
+    public static readonly Def GASR = new(new("mod_ger_84", "/prefab2/gas_parking/gas_small_road_01_ger.ppd", "ger", "ger_1"), [0, 1], []);
+    // Ersatz mit nur einer Zufahrt (Kategorie dlc_balt, Looks default…, Variante default): Knoten 0 =
+    // Zufahrt (Hin- und Rückspur ±2,25 m), Knoten 1 ohne Spuren; Anlage 61 × 55 m, links der Einfahrt
+    // bis 43 m, rechts 12 m. OSM2ETS_NO_FUEL_BALT=1 schaltet ihn ab.
+    public static readonly Def GASB = new(new("dlc_balt_149", "/prefab2/gas_station/gas_universal_03_balt.ppd", "default", "default"), [0, 1], []);
+    public static bool UseFuel = Environment.GetEnvironmentVariable("OSM2ETS_NO_FUEL") is null;
+    public static bool UseFuelBalt = Environment.GetEnvironmentVariable("OSM2ETS_NO_FUEL_BALT") is null;
+    /// <summary>Tankstellen (Umriss, Art) aus dem Zwischenformat, gesetzt vom Aufrufer.</summary>
+    public static List<AreaEntry> Stations = [];
+    private static readonly List<(long Node, RoadEntry A0, RoadEntry A1)> PendingGasR = [];
+    private static readonly List<(long Node, RoadEntry Access)> PendingGasB = [];
+    private static long synthGas = -1_500_000;
+    private const float GasHalf = 69.05f, GasTail = 25f, GasStraight = 1.5f, GasAccess = 20f, GasFree = 12f;
     public static readonly Def HATCH11 = new(new("mod_ger_99", "/prefab2/fork_temp/ger/ger_fork_road_1_x_1_plus_1_tmpl.ppd", "clean", "ger_1"), [0, 1], []);
     private const float TTurnPlainArm = 18.1f;       // Abstand Knoten 2 ↔ Prefab-Mitte (ch_14001)
     private const float HatchTransition = 60f;       // Länge von mod_ger_99
@@ -262,6 +279,216 @@ public static class Junctions
         }
         if (lanes > 0) warnings.Add($"Info: Aus-/Einfädelspuren weggelassener Rechtsabbieger entfallen ({lanes} Abschnitte)");
         return dropped;
+    }
+
+    /// <summary>
+    /// Tankstellen (amenity=fuel): Die Wege auf dem Gelände (OSM-Service-Wege, die der Generator als
+    /// Zufahrt aufnimmt) werden durch ein Tankstellen-Prefab ersetzt – sonst kann man dort nicht tanken
+    /// (Tankpunkte gibt es nur in Prefabs). Vorrang hat <see cref="GASR"/> an einer geraden Landstraße 1+1
+    /// (138 m ohne Abzweig, je 25 m Rest) neben der Tankstelle; passt das nicht, <see cref="GASB"/> mit
+    /// einer kurzen Zufahrt von einer der bisherigen Anschlussstellen. Sonst bleibt alles wie in OSM.
+    /// </summary>
+    public static int PrepareFuel(List<RoadEntry> roads, List<string> warnings)
+    {
+        PendingGasR.Clear(); PendingGasB.Clear();
+        if (!UseFuel) return 0;
+        int placed = 0;
+        foreach (var st in Stations.Where(a => a.Kind == "fuel"))
+        {
+            var poly = st.Points.Select(p => new Vector2((float)p[0], (float)p[1])).ToList();
+            if (poly.Count < 3) continue;
+            var c = poly.Aggregate(Vector2.Zero, (a, b) => a + b) / poly.Count;
+            // Gelände: Rastanlagen-/Servicefläche um die Tankstelle, sonst ihr Umriss
+            var site = Stations.Where(a => a.Kind is "services" or "rest_area")
+                .Select(a => a.Points.Select(p => new Vector2((float)p[0], (float)p[1])).ToList())
+                .FirstOrDefault(q => q.Count >= 3 && Inside(c, q)) ?? poly;
+            bool OnSite(RoadEntry r) => r.Runs.All(x => x.Highway == "service" || IsMinorWay(x))
+                && r.Points.Count(p => Inside(new((float)p[0], (float)p[2]), site) || DistToPoly(new((float)p[0], (float)p[2]), site) < 8) * 2 >= r.Points.Count;
+            var inner = roads.Where(OnSite).ToList();
+            string name = $"Tankstelle {(st.OsmWay > 0 ? "w" : "n")}{Math.Abs(st.OsmWay)}";
+            if (inner.Count == 0) { warnings.Add($"Info: {name}: keine Wege auf dem Gelände in der Karte, kein Tankstellen-Prefab"); continue; }
+            // Zufahrt für den Ersatz (vor dem Umbau bestimmen: danach sind die Anschlussknoten verbunden)
+            var counts = new Dictionary<long, int>();
+            foreach (var r in roads)
+                foreach (var e in new[] { r.Start, r.End })
+                    if (e?.OsmNode is long id) counts[id] = counts.GetValueOrDefault(id) + 1;
+            (long Node, Vector2 P, RoadEntry Via, Vector2 Dir, double Y, double Score)? acc = null;
+            foreach (var r in inner)
+                foreach (var atStart in new[] { true, false })
+                {
+                    if ((atStart ? r.Start : r.End)?.OsmNode is not long id) continue;
+                    var main = roads.Where(o => !inner.Contains(o) && (o.Start?.OsmNode == id || o.End?.OsmNode == id)).ToList();
+                    if (main.Count != 2 || !main.All(o => o.Runs.All(x => !x.Oneway && !IsMinorWay(x)))) continue;
+                    var p = new Vector2((float)(atStart ? r.Points[0][0] : r.Points[^1][0]), (float)(atStart ? r.Points[0][2] : r.Points[^1][2]));
+                    // Abstand zur nächsten Kreuzung (dort sitzt meist ein Kreuzungs-Prefab)
+                    double free = double.MaxValue;
+                    foreach (var o in roads)
+                    {
+                        if (inner.Contains(o)) continue;
+                        foreach (var (e, q) in new[] { (o.Start, o.Points[0]), (o.End, o.Points[^1]) })
+                            if (e?.OsmNode is long k && k != id && counts.GetValueOrDefault(k) - inner.Count(i => i.Start?.OsmNode == k || i.End?.OsmNode == k) >= 3)
+                                free = Math.Min(free, Vector2.Distance(p, new((float)q[0], (float)q[2])));
+                    }
+                    if (free < GasFree) continue;
+                    // die Anlage liegt links der Einfahrt: Zufahrt, bei der die Tankstelle links liegt
+                    var dir = AccessDir(main, id, p, c);
+                    double side = Vector2.Dot(c - p, new Vector2(dir.Y, -dir.X));
+                    double score = side - 0.2 * Vector2.Distance(p, c);
+                    double y = main[0].Start?.OsmNode == id ? main[0].Points[0][1] : main[0].Points[^1][1];
+                    if (acc is null || score > acc.Value.Score) acc = (id, p, r, dir, y, score);
+                }
+            foreach (var r in inner) roads.Remove(r);
+            JoinFreed(roads, inner);
+            // 1. Durchfahrt an einer geraden Landstraße
+            RoadEntry? best = null; double bestS = 0, bestCost = double.MaxValue;
+            foreach (var r in roads)
+            {
+                if (r.Closed || !r.Runs.All(PlainRun)) continue;
+                double len = Interchanges.ArcLengthOf(r);
+                if (len < 2 * (GasHalf + GasTail)) continue;
+                var (sc, lat) = Project(r, c);
+                if (MathF.Abs(lat) > 80) continue;
+                for (double sx = GasHalf + GasTail; sx <= len - GasHalf - GasTail; sx += 2)
+                {
+                    double cost = Math.Abs(sx - sc);
+                    if (cost >= bestCost || cost > 60) continue;
+                    if (!Straight(r, sx - GasHalf - 5, sx + GasHalf + 5)) continue;
+                    best = r; bestS = sx; bestCost = cost;
+                }
+            }
+            if (best is not null)
+            {
+                var pa = PointAlong(best, true, (float)bestS); var pb = PointAlong(best, true, (float)bestS + 2);
+                var d = Vector2.Normalize(pb - pa); var left = new Vector2(d.Y, -d.X);
+                bool stationLeft = Vector2.Dot(c - pa, left) > 0;
+                long node = synthGas--;
+                var far = SplitAtArc(best, bestS, node);
+                if (far is not null)
+                {
+                    far.Id = best.Id + "g"; roads.Add(far);
+                    // Anlage links der Fahrt von Knoten 1 nach Knoten 0: Arm 0 in Fahrtrichtung, wenn sie links liegt
+                    PendingGasR.Add(stationLeft ? (node, far, best) : (node, best, far));
+                    warnings.Add($"Info: {name}: Prefab gas_small_road_01_ger an {best.Id} ({bestCost:0} m längs von der OSM-Lage), {inner.Count} Wege des Geländes ersetzt");
+                    placed++;
+                    continue;
+                }
+            }
+            // 2. Prefab mit einer Zufahrt von einer bisherigen Anschlussstelle aus
+            if (!UseFuelBalt || acc is null)
+            {
+                // Gelände wie in OSM: verbundene Anschlussknoten wieder teilen, Wege zurück
+                foreach (var r in inner)
+                    foreach (var (e, q) in new[] { (r.Start, r.Points[0]), (r.End, r.Points[^1]) })
+                        if (e?.OsmNode is long k) Resplit(roads, k, new((float)q[0], (float)q[2]));
+                roads.AddRange(inner);
+                warnings.Add($"Info: {name}: kein Tankstellen-Prefab (keine gerade Landstraße 1+1 mit 188 m daneben, keine Zufahrt mit {GasFree:0} m Abstand zur nächsten Kreuzung), Gelände wie in OSM ohne Tankfunktion");
+                continue;
+            }
+            {
+                var (id, p, via, dir, y, _) = acc.Value;
+                Resplit(roads, id, p);   // Anschlussknoten wieder teilen
+                long node = synthGas--;
+                var run = via.Runs[0].Span(0, 2);
+                run.Oneway = false;
+                var access = new RoadEntry
+                {
+                    Id = $"gas{Math.Abs(st.OsmWay)}", Chain = via.Chain, Piece = 0, Role = via.Role,
+                    Start = new EndInfo { Kind = "node", OsmNode = id }, End = new EndInfo { Kind = "node", OsmNode = node },
+                    Points = [[p.X, y, p.Y], [p.X + dir.X * GasAccess / 2, y, p.Y + dir.Y * GasAccess / 2], [p.X + dir.X * GasAccess, y, p.Y + dir.Y * GasAccess]],
+                    Runs = [run],
+                };
+                access.LengthM = GasAccess;
+                roads.Add(access);
+                PendingGasB.Add((node, access));
+                warnings.Add($"Info: {name}: Prefab gas_universal_03_balt mit {GasAccess:0} m Zufahrt (keine gerade Landstraße für gas_small_road_01_ger), {inner.Count} Wege des Geländes ersetzt");
+                placed++;
+            }
+        }
+        return placed;
+
+        static bool PlainRun(RunEntry x) => !x.Oneway && !x.Bridge && !x.Tunnel && !IsMinorWay(x) && x.Highway != "service"
+            && (x.Lanes is null or <= 2) && (x.LanesForward is null or 1) && (x.LanesBackward is null or 1)
+            && x.Highway is not ("motorway" or "motorway_link" or "trunk_link");
+    }
+
+    /// <summary>Eine Straße, durch deren Inneres der Knoten (Lage p) läuft, dort wieder teilen.</summary>
+    private static void Resplit(List<RoadEntry> roads, long node, Vector2 p)
+    {
+        if (roads.Any(r => r.Start?.OsmNode == node || r.End?.OsmNode == node)) return;
+        foreach (var r in roads.ToList())
+        {
+            if (r.Closed) continue;
+            var (sp, _) = Project(r, p);
+            if (Vector2.Distance(PointAlong(r, true, (float)sp), p) > 0.5f || sp < 0.5 || sp > Interchanges.ArcLengthOf(r) - 0.5) continue;
+            var far = SplitAtArc(r, sp, node);
+            if (far is not null) { far.Id = r.Id + "a"; roads.Add(far); }
+            return;
+        }
+    }
+
+    /// <summary>Richtung der Zufahrt ins Gelände: quer zur Hauptstraße am Knoten, zur Tankstelle hin.</summary>
+    private static Vector2 AccessDir(List<RoadEntry> main, long id, Vector2 p, Vector2 c)
+    {
+        var a = Away(main[0], main[0].Start?.OsmNode == id);
+        var n = Vector2.Normalize(new Vector2(-a.Y, a.X));
+        return Vector2.Dot(c - p, n) >= 0 ? n : -n;
+    }
+
+    /// <summary>Knoten, an denen nach dem Entfernen der Geländewege nur noch zwei Straßen hängen, verbinden.</summary>
+    private static void JoinFreed(List<RoadEntry> roads, List<RoadEntry> removed, long keep = long.MinValue)
+    {
+        var nodes = removed.SelectMany(r => new[] { r.Start?.OsmNode, r.End?.OsmNode }).OfType<long>().Distinct().ToList();
+        foreach (var n in nodes) if (n != keep) JoinAt(roads, n);
+    }
+
+    /// <summary>Lage eines Punkts zur Straße: Bogenlänge des Lotfußpunkts und seitlicher Abstand (links +).</summary>
+    private static (double S, float Lat) Project(RoadEntry r, Vector2 p)
+    {
+        double s = 0, bestS = 0; float bestD = float.MaxValue, lat = 0;
+        for (int i = 0; i + 1 < r.Points.Count; i++)
+        {
+            var a = new Vector2((float)r.Points[i][0], (float)r.Points[i][2]); var b = new Vector2((float)r.Points[i + 1][0], (float)r.Points[i + 1][2]);
+            var ab = b - a; float l = ab.Length();
+            if (l < 1e-3f) continue;
+            float u = Math.Clamp(Vector2.Dot(p - a, ab) / (l * l), 0, 1);
+            float d = Vector2.Distance(p, a + ab * u);
+            if (d < bestD) { bestD = d; bestS = s + u * l; var dir = ab / l; lat = Vector2.Dot(p - a, new Vector2(dir.Y, -dir.X)); }
+            s += l;
+        }
+        return (bestS, lat);
+    }
+
+    /// <summary>Straße zwischen den Bogenlängen s0 und s1 höchstens GasStraight m neben ihrer Sehne.</summary>
+    private static bool Straight(RoadEntry r, double s0, double s1)
+    {
+        var a = PointAlong(r, true, (float)s0); var b = PointAlong(r, true, (float)s1);
+        var ab = b - a; float l = ab.Length();
+        if (l < 1) return false;
+        var n = new Vector2(-ab.Y, ab.X) / l;
+        for (double s = s0; s <= s1; s += 2)
+            if (MathF.Abs(Vector2.Dot(PointAlong(r, true, (float)s) - a, n)) > GasStraight) return false;
+        return true;
+    }
+
+    private static bool Inside(Vector2 p, List<Vector2> poly)
+    {
+        bool inside = false;
+        for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
+            if ((poly[i].Y > p.Y) != (poly[j].Y > p.Y) && p.X < (poly[j].X - poly[i].X) * (p.Y - poly[i].Y) / (poly[j].Y - poly[i].Y + 1e-9f) + poly[i].X)
+                inside = !inside;
+        return inside;
+    }
+
+    private static float DistToPoly(Vector2 p, List<Vector2> poly)
+    {
+        float best = float.MaxValue;
+        for (int i = 0, j = poly.Count - 1; i < poly.Count; j = i++)
+        {
+            var a = poly[j]; var ab = poly[i] - a; float l2 = ab.LengthSquared();
+            float u = l2 < 1e-6f ? 0 : Math.Clamp(Vector2.Dot(p - a, ab) / l2, 0, 1);
+            best = MathF.Min(best, Vector2.Distance(p, a + ab * u));
+        }
+        return best;
     }
 
     /// <summary>Verbindet die beiden Zweirichtungsstraßen an einem Knoten zu einer.</summary>
@@ -844,6 +1071,19 @@ public static class Junctions
             plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = FORK21, Arms = [aw, an], ForceNodes = [0, 1] });
         }
         foreach (var p in plans.Where(q => q.Def == TTURN).ToList()) HatchedPlainArm(p, roads, plans, warnings);
+        foreach (var (node, a0, a1) in PendingGasR)
+        {
+            if (!roads.Contains(a0) || !roads.Contains(a1)) continue;
+            bool s0 = a0.Start?.OsmNode == node, s1 = a1.Start?.OsmNode == node;
+            var anc = MapWriter.ToVector(s1 ? a1.Points[0] : a1.Points[^1]);
+            plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = GASR, Arms = [new Arm(a0, Away(a0, s0)), new Arm(a1, Away(a1, s1))], ForceNodes = [0, 1] });
+        }
+        foreach (var (node, acc) in PendingGasB)
+        {
+            if (!roads.Contains(acc)) continue;
+            var anc = MapWriter.ToVector(acc.Points[^1]);
+            plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = GASB, Arms = [new Arm(acc, Away(acc, false))], ForceNodes = [0] });
+        }
         return plans;
     }
 
@@ -1095,6 +1335,8 @@ public static class Junctions
     private static Vector3 PlanCenter(Plan p, IReadOnlyList<Vector3> pos, Quaternion rot)
     {
         if (p.Def == FSPLIT || p.Def == FJOIN || p.Def == SPLIT2) return (pos[0] + pos[1] + pos[2]) / 3;
+        if (p.Def == GASR) return (pos[0] + pos[1]) / 2;
+        if (p.Def == GASB) return pos[0];
         if (p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11)
         {
             // längs: Mitte des Übergangs; quer: auf der Achse der Landstraße (Knoten 1). Die 2+1-Seite
@@ -1203,6 +1445,9 @@ public static class Junctions
         var sidePerms = Permutations(p.Def.Side.Length).ToList();
         float bestErr = float.MaxValue;
         ushort[]? bestNodes = null; float bestRot = 0;
+        // Tankstelle mit einer Zufahrt: Knoten 0 an die Zufahrt, Anlage geradeaus dahinter
+        if (p.Def == GASB) { bestNodes = [0]; bestRot = Wrap(Ang(p.Arms[0].Away) - Ang(Out(0))); }
+        else
         foreach (var flip in new[] { false, true })
             foreach (var perm in sidePerms)
             {
@@ -1251,7 +1496,7 @@ public static class Junctions
         // beiden Straßen ausrichten und Knoten 1 auf die Landstraße legen – in Kurven läge das Prefab
         // sonst neben der Straße und die Landstraße knickte am Knoten ab
         Vector2? trans1 = null; int transIdx = 1;
-        bool isTrans = p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11;
+        bool isTrans = p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11 || p.Def == GASR;
         if (isTrans)
         {
             Densify(p.Arms[0].Road, 8); Densify(p.Arms[1].Road, 8);   // Platz für den Ausgleichsbogen
@@ -1340,7 +1585,7 @@ public static class Junctions
             originArm = new[] { 2, 0, 1 }.Where(i => !StartsAt(p.Arms[i].Road, p.Anchor)).DefaultIfEmpty(-1).First();
         // Übergang 2+1 ↔ Landstraße: Ursprung an der Landstraße, damit die 2+1-Straße sich in ihrer Kette
         // noch umdrehen lässt (sonst bleibt sie am anderen Ende ungepaart und wird als Abzweig gekürzt)
-        if ((p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11) && (!StartsAt(p.Arms[1].Road, p.Anchor) || !Fixed.Contains(p.Arms[1].Road)))
+        if ((p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11 || p.Def == GASR) && (!StartsAt(p.Arms[1].Road, p.Anchor) || !Fixed.Contains(p.Arms[1].Road)))
             originArm = 1;
         if (originArm < 0)
             originArm = Enumerable.Range(0, p.Arms.Length).FirstOrDefault(i =>

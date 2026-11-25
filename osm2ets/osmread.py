@@ -110,6 +110,29 @@ def read_areas(path: str, kinds: frozenset = AREA_KINDS) -> list[tuple[int, str,
     return out
 
 
+STATION_KINDS = ("fuel", "services", "rest_area")
+
+
+def read_stations(path: str) -> list[tuple[str, str, list[int]]]:
+    """Tankstellen (amenity=fuel) und Rastanlagen (highway=services|rest_area):
+    [(ID "w…"/"n…", Art, Knoten-IDs)] – geschlossene Wege als Umriss, Knoten als Punkt."""
+    out = []
+    fp = osmium.FileProcessor(path, osmium.osm.NODE | osmium.osm.WAY)
+    for o in fp:
+        t = o.tags
+        kind = "fuel" if t.get("amenity") == "fuel" else t.get("highway") if t.get("highway") in ("services", "rest_area") else None
+        if kind is None:
+            continue
+        if o.is_node():
+            out.append((f"n{o.id}", kind, [o.id]))
+        elif o.is_way():
+            refs = [n.ref for n in o.nodes]
+            if len(refs) >= 4 and refs[0] == refs[-1]:
+                out.append((f"w{o.id}", kind, refs))
+    log.info("%d Tankstellen/Rastanlagen gelesen", len(out))
+    return out
+
+
 def read_node_locations(path: str, node_ids: Iterable[int]) -> dict[int, tuple[float, float]]:
     """Liefert {Knoten-ID: (lon, lat)} für die angefragten Knoten.
 

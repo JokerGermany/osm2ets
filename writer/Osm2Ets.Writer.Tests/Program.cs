@@ -41,6 +41,7 @@ var tests = new List<(string Name, Action Body)>
     ("Einmündung mit Abbiegespur: gegenüber Sperrfläche bis zum Übergang 1+1", TurnTHatchedArm),
     ("Einmündung mit Abbiegespur: freier Rechtsabbieger aus der Sperrfläche entfällt", SlipDroppedInHatchedStretch),
     ("Füllgelände am Hang: grobes Quad stößt nicht durch die Prefab-Fahrbahn", SettleKeepsFillBelowPrefab),
+    ("Tankstelle an gerader Landstraße: Durchfahrts-Prefab, Geländewege entfallen", FuelInline),
 };
 
 int failed = 0;
@@ -1070,4 +1071,24 @@ static void SettleKeepsFillBelowPrefab()
     var offs = t.Right.Terrain.QuadData.Offsets;
     float near = offs.Where(o => o.Y == 6).Min(o => o.Data.Y), far = offs.Where(o => o.Y == 7).Min(o => o.Data.Y);
     Check(near > 0.5f && far > 2.99f, $"Hang zu stark abgesenkt: 17 m daneben {near:0.00}, 22 m daneben {far:0.00}");
+}
+
+static void FuelInline()
+{
+    // Landstraße 600 m nach Osten, Tankstelle 30 m südlich, Zufahrt als Service-Weg aufs Gelände
+    var r = MakeRoad("r", [[-300, 0, 0], [0, 0, 0], [300, 0, 0]], TRun(0, 2)); r.Start = TNode(1); r.End = TNode(2);
+    var svc = MakeRoad("s", [[0, 0, 0], [0, 0, 30]], new RunEntry { From = 0, To = 1, Highway = "service", Role = "connector" });
+    svc.Start = TNode(3); svc.End = TNode(4);
+    // Service-Weg hängt mitten an der Straße: Straße dort teilen wie im Zwischenformat
+    var r2 = MakeRoad("r2", [[0, 0, 0], [300, 0, 0]], TRun(0, 1)); r2.Start = TNode(3); r2.End = TNode(2);
+    r = MakeRoad("r", [[-300, 0, 0], [0, 0, 0]], TRun(0, 1)); r.Start = TNode(1); r.End = TNode(3);
+    var roads = new List<RoadEntry> { r, r2, svc };
+    Junctions.Reset();
+    Junctions.Stations = [new AreaEntry { Kind = "fuel", OsmWay = 7, Points = [[-20, 20], [20, 20], [20, 45], [-20, 45], [-20, 20]] }];
+    var w = new List<string>();
+    int n = Junctions.PrepareFuel(roads, w);
+    var plans = Junctions.Find(roads, (_, _) => "ger1", []);
+    Check(n == 1 && plans.Count(p => p.Def == Junctions.GASR) == 1, $"kein Tankstellen-Prefab geplant ({n}, {string.Join(" | ", w)})");
+    Check(!roads.Contains(svc) && roads.Count == 2, $"Geländeweg nicht ersetzt oder Straße nicht verbunden ({roads.Count} Straßen)");
+    Junctions.Stations = [];
 }

@@ -387,6 +387,11 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 - 2+1 ↔ 1+1 transitions (`ger fork road 1 x 2 plus 1 tmpl`, `ger fork road 1 x 1 plus 2 tmpl`)
   and the hatched transition are straight 60 m prefabs; they are tilted to the road's grade
   between their ends (up to 10 %; `OSM2ETS_NO_TRANSPITCH=1` places them level).
+- Fuel stations (`amenity=fuel`): the station's own service ways are replaced by a station prefab
+  (fuelling only works at prefab refuel points). `gas_small_road_01_ger` where a straight two-lane
+  road (≥ 188 m without junction) runs past; otherwise `gas_universal_03_balt` (category dlc_balt)
+  with a 20 m access road from one of the station's former connections; otherwise unchanged.
+  `OSM2ETS_NO_FUEL=1` / `OSM2ETS_NO_FUEL_BALT=1` disable them.
 - Node roles and directions come from the `.ppd` files, variants/looks from the `.pmd`.
 
 ## Roadmap
