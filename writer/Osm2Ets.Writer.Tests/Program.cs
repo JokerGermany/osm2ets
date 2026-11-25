@@ -40,6 +40,7 @@ var tests = new List<(string Name, Action Body)>
     ("Rampen: Zusammenführung 2+1 und Spurende 2→1", LinkJoinAndLaneDrop),
     ("Einmündung mit Abbiegespur: gegenüber Sperrfläche bis zum Übergang 1+1", TurnTHatchedArm),
     ("Einmündung mit Abbiegespur: freier Rechtsabbieger aus der Sperrfläche entfällt", SlipDroppedInHatchedStretch),
+    ("Füllgelände am Hang: grobes Quad stößt nicht durch die Prefab-Fahrbahn", SettleKeepsFillBelowPrefab),
 };
 
 int failed = 0;
@@ -1010,4 +1011,63 @@ static void SlipDroppedInHatchedStretch()
     Check(warnings.Any(w => w.Contains("Sperrfläche")), "Hinweis auf die Sperrfläche fehlt");
     var without = Roads(false);
     Check(Junctions.PrepareSlips(without, []) == 0 && without.Count == 6, "ohne Abbiegespur wird der Rechtsabbieger angeschlossen");
+}
+
+static void SettleKeepsFillBelowPrefab()
+{
+    // Prefab-Fahrbahn: Spurmitten bei z 12, x 0…28, Höhe 0 (= Fläche − Rand). Füllstück nach Osten bei
+    // z 0, Südseite: die Reihe 11 m (unter dem Prefab) liegt tief, die Reihe 17 m (Hang daneben) 3 m hoch.
+    // Die Fläche dazwischen lag über der Fahrbahn („Erde auf der Straße“).
+    Terrain Fill()
+    {
+        var t = Terrain.Add(new Map(), Vector3.Zero, new Vector3(28, 0, 0), "dirt", 22, 22);
+        var q = t.Right.Terrain.QuadData;
+        q.Offsets.Clear();
+        t.Left.Terrain.QuadData.Offsets.Clear();
+        float[] zs = [0, 1, 2, 3, 5, 11, 17, 22];
+        for (int j = 0; j < zs.Length; j++)
+            for (int i = 0; i <= 2; i++)
+                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(14 * i, zs[j] >= 17 ? 3f : -0.5f, zs[j]) });
+        return t;
+    }
+    // höchste Füllfläche (beide Dreiecksteilungen) im Bereich der Prefab-Fahrbahn
+    float Worst(Terrain t)
+    {
+        var v = t.Right.Terrain.QuadData.Offsets.ToDictionary(o => (o.X, o.Y), o => t.Node.Position + o.Data);
+        float worst = float.NegativeInfinity;
+        for (float x = 0; x <= 28; x += 0.5f)
+            for (float z = 9.5f; z <= 14.5f; z += 0.25f)
+                foreach (var ((i, j), a) in v)
+                {
+                    if (!v.TryGetValue(((ushort)(i + 1), j), out var b) || !v.TryGetValue(((ushort)(i + 1), (ushort)(j + 1)), out var c) ||
+                        !v.TryGetValue((i, (ushort)(j + 1)), out var d)) continue;
+                    if (x < a.X || x > b.X || z < a.Z || z > d.Z) continue;
+                    foreach (var (p, q, r) in new[] { (a, b, c), (a, c, d), (a, b, d), (b, c, d) })
+                    {
+                        float den = (q.Z - r.Z) * (p.X - r.X) + (r.X - q.X) * (p.Z - r.Z);
+                        float w1 = ((q.Z - r.Z) * (x - r.X) + (r.X - q.X) * (z - r.Z)) / den;
+                        float w2 = ((r.Z - p.Z) * (x - r.X) + (p.X - r.X) * (z - r.Z)) / den;
+                        if (w1 < -1e-4f || w2 < -1e-4f || 1 - w1 - w2 < -1e-4f) continue;
+                        worst = MathF.Max(worst, w1 * p.Y + w2 * q.Y + (1 - w1 - w2) * r.Y);
+                    }
+                }
+        return worst;
+    }
+    var lanes = Enumerable.Range(0, 15).Select(k => new Vector3(2 * k, 0, 12)).ToList();
+    var before = Fill();
+    float w0 = Worst(before);
+    Check(w0 > 1, $"Prüfaufbau: Füllfläche sollte über der Fahrbahn liegen ({w0:0.00})");
+    var without = new CoverCap();
+    without.Settle([before]);
+    Check(MathF.Abs(Worst(before) - w0) < 1e-3f, "ohne Prefab-Fahrbahn sollte Settle nichts ändern");
+    var t = Fill();
+    var cc = new CoverCap();
+    cc.AddPrefabLanes(lanes);
+    cc.Settle([t]);
+    float w = Worst(t);
+    Check(w <= CoverCap.SettleTol + 0.01f, $"Füllgelände {w:0.00} m über der erlaubten Höhe der Prefab-Fahrbahn");
+    // der Hang daneben bleibt Hang (nicht bis auf Fahrbahnhöhe gezogen), weiter weg unverändert
+    var offs = t.Right.Terrain.QuadData.Offsets;
+    float near = offs.Where(o => o.Y == 6).Min(o => o.Data.Y), far = offs.Where(o => o.Y == 7).Min(o => o.Data.Y);
+    Check(near > 0.5f && far > 2.99f, $"Hang zu stark abgesenkt: 17 m daneben {near:0.00}, 22 m daneben {far:0.00}");
 }

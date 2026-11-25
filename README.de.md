@@ -58,7 +58,9 @@ Wie Füll- und Straßengelände zusammenpassen:
   Rand des Straßengeländes setzt es diesen mit höchstens 0,7 Steigung nach oben oder unten fort,
   so dass der Rand auf das Füllgelände trifft.
 - Die Füllquads sind grob (bis 16 m); nach dem Setzen wird jedes Quad gegen die Fläche darüber
-  geprüft und dort abgesenkt, wo es durchstoßen würde.
+  geprüft und dort abgesenkt, wo es durchstoßen würde. Dazu zählt auch die Fahrbahn der Prefabs
+  (um ihre Spurmitten, bei Kreuzungs-Prefabs 0,3 m Abstand): am Hang lag ein Quad zwischen einer
+  hohen Ecke neben einer Kreuzung und einer tiefen darunter sonst über dem Asphalt.
 - Neben Prefabs (ohne eigenes Straßengelände) gilt für jede Rasterabfrage eine Böschung als
   Untergrenze: bis 5 m neben der Spurmitte auf Spurhöhe, dann mit 0,7 fallend. Liegt ein Prefab
   mindestens 3 m höher als eine Straße daneben, läuft deren Straßengelände als gerade Rampe bis an

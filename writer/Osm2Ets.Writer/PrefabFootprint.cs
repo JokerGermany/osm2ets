@@ -28,7 +28,12 @@ public static class PrefabFootprint
     /// <summary>Spurhöhe relativ zu den Knoten (aus: OSM2ETS_LANE_ABSY=1).</summary>
     public static bool UseNodeRelative = Environment.GetEnvironmentVariable("OSM2ETS_LANE_ABSY") != "1";
 
-    public static List<Vector3> All3(Map map)
+    public static List<Vector3> All3(Map map) => Lanes3(map, true);
+
+    /// <summary>Nur die Spurmitten (ohne die Punkte daneben), Höhe wie bei <see cref="All3"/>.</summary>
+    public static List<Vector3> Centres3(Map map) => Lanes3(map, false);
+
+    private static List<Vector3> Lanes3(Map map, bool sides)
     {
         var res = new List<Vector3>();
         foreach (var (pf, ppd) in Ppd.ToList())
@@ -42,7 +47,7 @@ public static class PrefabFootprint
             // nur 0,18 m Abstand zur Knotenebene kam die Erde in Innenecken durch (mod_ger_67, x 1768, z −2540)
             float drop = 0f;
             if (side <= 0) { side = JunctionSide; drop = JunctionDrop; }
-            var pts = LanesOf(pf, ppd, side);
+            var pts = LanesOf(pf, ppd, sides ? side : 0f);
             if (pts is null) continue;
             var (h0, g, o) = Plane(pf);
             // Die Ebene geht durch die Knoten; Spurhöhen relativ zur mittleren Knotenhöhe der .ppd

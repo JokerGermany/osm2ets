@@ -57,7 +57,9 @@ How fill and road terrain fit together:
   below the surface actually written (both quad diagonals checked). Beyond the edge of road
   terrain it continues the edge with at most 0.7 slope up or down, so the edge meets the fill.
 - The fill quads are coarse (up to 16 m); after placing them every quad is checked against the
-  surface above and lowered where it would poke through.
+  surface above and lowered where it would poke through. This includes the road surface of
+  prefabs (around their lane centres, 0.3 m margin at junction prefabs): on slopes a quad between
+  a high corner beside a junction and a low one under it otherwise lay above the asphalt.
 - Next to prefabs (which have no road terrain of their own) every grid query has an embankment as
   lower bound: at lane height up to 5 m from the lane centre, then falling at 0.7. Where a prefab
   lies at least 3 m above a road next to it, that road's terrain runs as a straight ramp up to the

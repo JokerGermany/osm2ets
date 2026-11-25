@@ -49,6 +49,16 @@ public sealed class CoverCap
     private readonly List<float> srcFloor = [];
     private readonly Dictionary<(int, int), (List<int> Idx, float Min, float Max)> sIndex = [];
 
+    // Prefab-Fahrbahnen: Quadrate um die Spurmitten (alle Ecken auf Fläche − Rand), nur für Settle.
+    // Die Ecken der Füllquads begrenzt RoadCap schon; an Hängen lag aber die Fläche eines groben
+    // Füllquads zwischen einer hohen Ecke neben dem Prefab und einer begrenzten Ecke darunter über
+    // dem Asphalt – Erde auf der Fahrbahn (Einmündung an der B 85 bei x −3697, z −3210, bis 0,7 m).
+    private readonly Dictionary<(int, int), List<int>> pIndex = [];
+    /// <summary>Halbe Kantenlänge der Quadrate um die Prefab-Spurmitten (m): halbe Spur samt Rand.</summary>
+    public const float PrefabHalf = 2.75f;
+    public static bool UsePrefabSettle = Environment.GetEnvironmentVariable("OSM2ETS_SETTLE_NOPREFAB") is null;
+    public int PrefabSquares { get; private set; }
+
     public int QuadCount => quads.Count;
     public int SourceCount => src.Count;
     public static int ConeLowered, ConeRaised, CoverLowered, Settled, SettledQuads;
@@ -67,6 +77,53 @@ public sealed class CoverCap
                 if (!qIndex.TryGetValue((i, j), out var l)) qIndex[(i, j)] = l = [];
                 l.Add(k);
             }
+    }
+
+    /// <summary>
+    /// Spurmitten der Prefabs (Höhe = Fläche − Rand, siehe <see cref="PrefabFootprint.Centres3"/>) für
+    /// <see cref="Settle"/>: dort darf das Füllgelände nicht durch die Prefab-Fahrbahn stoßen.
+    /// </summary>
+    public void AddPrefabLanes(IEnumerable<Vector3> centres)
+    {
+        if (!UsePrefabSettle) return;
+        const float e = PrefabHalf;
+        foreach (var p in centres)
+        {
+            int k = quads.Count;
+            quads.Add((p + new Vector3(-e, 0, -e), p + new Vector3(e, 0, -e), p + new Vector3(e, 0, e), p + new Vector3(-e, 0, e)));
+            for (int i = (int)MathF.Floor((p.X - e) / Cell); i <= (int)MathF.Floor((p.X + e) / Cell); i++)
+                for (int j = (int)MathF.Floor((p.Z - e) / Cell); j <= (int)MathF.Floor((p.Z + e) / Cell); j++)
+                {
+                    if (!pIndex.TryGetValue((i, j), out var l)) pIndex[(i, j)] = l = [];
+                    l.Add(k);
+                }
+            PrefabSquares++;
+        }
+    }
+
+    /// <summary>Höchste erlaubte Füllhöhe unter einer Prefab-Fahrbahn an (x, z); NaN daneben.</summary>
+    private float PrefabAllowed(float x, float z)
+    {
+        if (!pIndex.TryGetValue(((int)MathF.Floor(x / Cell), (int)MathF.Floor(z / Cell)), out var l)) return float.NaN;
+        float best = float.NaN;
+        foreach (var k in l)
+        {
+            var (a, _, c, _) = quads[k];
+            if (x < a.X - 1e-4f || x > c.X + 1e-4f || z < a.Z - 1e-4f || z > c.Z + 1e-4f) continue;
+            if (float.IsNaN(best) || a.Y > best) best = a.Y;   // oberste Fläche zählt
+        }
+        return best;
+    }
+
+    /// <summary>
+    /// Für <see cref="Settle"/>: unter Fahrbahn/Straßengelände wie bisher, unter einer Prefab-Fahrbahn
+    /// zusätzlich deren Grenze (die tiefere gilt – sonst durfte das Füllgelände unter einem Prefab
+    /// über das Straßengelände daneben steigen und am Prefab-Rand hindurchstoßen).
+    /// </summary>
+    private float SettleAllowed(float x, float z)
+    {
+        float a = Allowed(x, z), b = PrefabAllowed(x, z);
+        return float.IsNaN(a) ? b : float.IsNaN(b) ? a : MathF.Min(a, b);
     }
 
     private void AddSource(Vector3 p, float margin)
@@ -347,6 +404,8 @@ public sealed class CoverCap
         }
         var h = pos.Select(p => p.Y).ToArray();
         // Gewicht beim Absenken: verdeckt 1, sichtbar 0,1
+        // (Prefab-Fahrbahnen zählen hier nicht als verdeckt: sie haben kein Straßengelände daneben – eine
+        // dort stark abgesenkte Ecke ergäbe im Quad daneben eine sichtbare Mulde)
         var vis = pos.Select(p => float.IsNaN(Allowed(p.X, p.Z)) ? 0.1f : 1f).ToArray();
         float Vis(int i) => vis[i];
         var touched = new bool[qs.Count];
@@ -357,6 +416,7 @@ public sealed class CoverCap
         var dirty = new bool[qs.Count]; Array.Fill(dirty, true);
         var stamp = new int[quads.Count]; int stampId = 0;
         var cand = new List<int>();
+        var indexes = new[] { qIndex, pIndex };
         for (int pass = 0; pass < 8; pass++)
         {
             int changed = 0;
@@ -375,19 +435,20 @@ public sealed class CoverCap
                 cand.Clear(); stampId++;
                 for (int ci = (int)MathF.Floor(x0 / Cell); ci <= (int)MathF.Floor(x1 / Cell); ci++)
                     for (int cj = (int)MathF.Floor(z0 / Cell); cj <= (int)MathF.Floor(z1 / Cell); cj++)
-                        if (qIndex.TryGetValue((ci, cj), out var l))
-                            foreach (var qi in l)
-                            {
-                                if (stamp[qi] == stampId) continue;
-                                stamp[qi] = stampId;
-                                var K = quads[qi];
-                                float kmin = MathF.Min(MathF.Min(K.A.Y, K.B.Y), MathF.Min(K.C.Y, K.D.Y));
-                                if (fmax <= kmin + tol) continue;
-                                float kx0 = MathF.Min(MathF.Min(K.A.X, K.B.X), MathF.Min(K.C.X, K.D.X)), kx1 = MathF.Max(MathF.Max(K.A.X, K.B.X), MathF.Max(K.C.X, K.D.X));
-                                float kz0 = MathF.Min(MathF.Min(K.A.Z, K.B.Z), MathF.Min(K.C.Z, K.D.Z)), kz1 = MathF.Max(MathF.Max(K.A.Z, K.B.Z), MathF.Max(K.C.Z, K.D.Z));
-                                if (kx1 < x0 || kx0 > x1 || kz1 < z0 || kz0 > z1) continue;
-                                cand.Add(qi);
-                            }
+                        foreach (var index in indexes)   // Fahrbahn/Straßengelände, Prefab-Fahrbahnen
+                            if (index.TryGetValue((ci, cj), out var l))
+                                foreach (var qi in l)
+                                {
+                                    if (stamp[qi] == stampId) continue;
+                                    stamp[qi] = stampId;
+                                    var K = quads[qi];
+                                    float kmin = MathF.Min(MathF.Min(K.A.Y, K.B.Y), MathF.Min(K.C.Y, K.D.Y));
+                                    if (fmax <= kmin + tol) continue;
+                                    float kx0 = MathF.Min(MathF.Min(K.A.X, K.B.X), MathF.Min(K.C.X, K.D.X)), kx1 = MathF.Max(MathF.Max(K.A.X, K.B.X), MathF.Max(K.C.X, K.D.X));
+                                    float kz0 = MathF.Min(MathF.Min(K.A.Z, K.B.Z), MathF.Min(K.C.Z, K.D.Z)), kz1 = MathF.Max(MathF.Max(K.A.Z, K.B.Z), MathF.Max(K.C.Z, K.D.Z));
+                                    if (kx1 < x0 || kx0 > x1 || kz1 < z0 || kz0 > z1) continue;
+                                    cand.Add(qi);
+                                }
                 if (cand.Count == 0) continue;
                 float worst = 0; bool found = false; Vector3 ww = default; (int, int, int) wt = default;
                 foreach (var (p, q, r, i1, i2, i3) in new[] { (A, B, Cc, ia, ib, ic), (A, Cc, D, ia, ic, id), (A, B, D, ia, ib, id), (B, Cc, D, ib, ic, id) })
@@ -404,7 +465,7 @@ public sealed class CoverCap
                         if (w1 < -1e-4f || w2 < -1e-4f || w3 < -1e-4f) return;
                         float fv = w1 * p.Y + w2 * q.Y + w3 * r.Y;
                         if (fv - tol <= worst) return;
-                        float al = Allowed(x, z);
+                        float al = SettleAllowed(x, z);
                         if (float.IsNaN(al)) return;
                         float ex = fv - al - tol;
                         if (ex > worst + 1e-4f) { worst = ex; found = true; ww = new Vector3(w1, w2, w3); wt = (i1, i2, i3); }
