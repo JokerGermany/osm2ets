@@ -485,7 +485,7 @@ public static class MapWriter
         PrefabFootprint.FixPitch(map);
         if (PrefabFootprint.PitchFixed > 0) warnings.Add($"Info: Neigung von {PrefabFootprint.PitchFixed} Prefab-Knoten an die Prefab-Lage angepasst");
         if (prefabs is not null)
-            warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt, {Junctions.BridgeShifted} von Brücken weggerückt, {Interchanges.OsmAux} Zusatzspuren mit OSM-Länge, {Overlaps.Transitions} gesperrte Zufahrten schräg an den Autobahnrand geführt");
+            warnings.Insert(0, $"Info: Kreuzungen mit Prefabs: {junctionPlans.Count} geplant, {junctionsSet} gesetzt, {Junctions.BridgeShifted} von Brücken weggerückt, {Interchanges.OsmAux} Zusatzspuren mit OSM-Länge, {Overlaps.Transitions} gesperrte Zufahrten schräg an den Autobahnrand geführt, {junctionPlans.Count(q => q.Placed is not null && q.Grade != 0)} Übergänge nach dem Gefälle geneigt");
         if (prefabs is not null)
             warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
 

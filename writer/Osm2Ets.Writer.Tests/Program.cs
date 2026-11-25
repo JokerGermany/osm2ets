@@ -38,6 +38,8 @@ var tests = new List<(string Name, Action Body)>
     ("Anschlussstelle: Autobahnende an zwei zweispurigen Ästen wird Gabelung 2+2", Split22AtTwoTwoLaneLinks),
     ("Anschlussstelle: vierspurige Strecke zwischen Einmündung 3+2 und Ausfahrt 4→3+1", Lane4MergeAndExit),
     ("Rampen: Zusammenführung 2+1 und Spurende 2→1", LinkJoinAndLaneDrop),
+    ("Einmündung mit Abbiegespur: gegenüber Sperrfläche bis zum Übergang 1+1", TurnTHatchedArm),
+    ("Einmündung mit Abbiegespur: freier Rechtsabbieger aus der Sperrfläche entfällt", SlipDroppedInHatchedStretch),
 };
 
 int failed = 0;
@@ -133,6 +135,13 @@ static void MappingResolve()
     Check(cfg.Resolve(shR).Right?.RightEdge == "ger_sh_as_15" && cfg.Resolve(shR).Right?.LeftEdge != "ger_sh_as_15", "shoulder=right: nur rechts");
     var shM = MakeRun(0, 1, "motorway", oneway: true); shM.Shoulder = "no";
     Check(cfg.Resolve(shM) == mw, "Autobahn: shoulder ändert nichts");
+    // Sperrfläche (setzt der Writer): Straßentyp ger26, sonst wie die Regel des Stücks
+    var hc = MakeRun(0, 1, "primary", role: "connector"); hc.Hatched = true;
+    var hcs = cfg.Resolve(hc);
+    Check(hcs.RoadType == "ger26" && hcs.TerrainLeft == conn.TerrainLeft, "Sperrfläche: ger26, Gelände wie Anschlussstraße");
+    var hv = MakeRun(0, 1, "primary", role: "visible"); hv.Hatched = true;
+    var hvs = cfg.Resolve(hv);
+    Check(hvs.RoadType == "ger26" && hvs.ShowInUiMap == false && hvs.GpsAvoid == true, "Sperrfläche auf Sichtstück: nicht auf Karte/Navi");
 }
 
 static void MappingRejectsInvalid()
@@ -950,4 +959,55 @@ static void LinkJoinAndLaneDrop()
     Check(plans.Any(p => p.Kind == "drop" && p.MainIn == c) && plans.Any(p => p.Kind == "entry" && p.MainIn == a && p.Ramp == b && p.MainOut == c),
           $"Zusammenführung/Spurende nicht erkannt ({string.Join(",", plans.Select(p => p.Kind))})");
     Check(c.Runs.All(x => x.Lanes == 2) && roads[3].Runs.All(x => x.Lanes == 1), "Spurzahlen nach dem Teilen falsch");
+}
+
+// Einmündung: von Westen Straße mit Abbiegespur (2 Spuren zum Knoten, 1 weg), Nebenstraße links
+// (Norden, z negativ), gegenüber Landstraße 1+1 nach Osten
+static RunEntry TRun(int a, int b, int? fwd = null, int? bwd = null, bool oneway = false) =>
+    new() { From = a, To = b, Highway = "primary", Role = "core", Oneway = oneway,
+            Lanes = oneway ? 1 : fwd + bwd ?? 2, LanesForward = fwd, LanesBackward = bwd };
+
+static EndInfo TNode(long id) => new() { Kind = "node", OsmNode = id };
+
+static void TurnTHatchedArm()
+{
+    var t = MakeRoad("t", [[-400, 0, 0], [-200, 0, 0], [0, 0, 0]], TRun(0, 2, 2, 1)); t.End = TNode(1);
+    var e = MakeRoad("e", [[0, 0, 0], [100, 0, 0], [200, 0, 0], [300, 0, 0]], TRun(0, 3)); e.Start = TNode(1);
+    var s = MakeRoad("s", [[0, 0, 0], [0, 0, -150], [0, 0, -300]], TRun(0, 2)); s.Start = TNode(1);
+    var roads = new List<RoadEntry> { t, e, s };
+    Junctions.Reset();
+    var plans = Junctions.Find(roads, (_, _) => "ger1", []);
+    var tt = plans.SingleOrDefault(p => p.Def == Junctions.TTURN);
+    var hp = plans.SingleOrDefault(p => p.Def == Junctions.HATCH11);
+    Check(tt is not null && hp is not null, $"Einmündung/Übergang nicht geplant ({plans.Count} Pläne)");
+    Check(roads.Count == 4 && tt!.Arms[1].Road == e && hp!.Arms[0].Road == e && hp.Arms[1].Road == roads[3],
+          "Arm gegenüber der Abbiegespur nicht für den Übergang geteilt");
+    double he = Interchanges.ArcLengthOf(e);
+    Check(he > 50 && he < 80, $"Stück mit Sperrfläche {he:0} m (Prefab-Arm + Bogen + halber Übergang erwartet)");
+    Check(e.Runs.All(x => x.Hatched && x.Role == "core"), "Sperrfläche fehlt oder Rolle geändert");
+    Check(roads[3].Runs.All(x => !x.Hatched) && t.Runs.All(x => !x.Hatched) && s.Runs.All(x => !x.Hatched),
+          "Sperrfläche außerhalb des Stücks vor dem Übergang");
+}
+
+static void SlipDroppedInHatchedStretch()
+{
+    // Rechtsabbieger vom gegenüberliegenden Arm (40 m vor der Einmündung) in die Nebenstraße
+    List<RoadEntry> Roads(bool turnLane)
+    {
+        var t = MakeRoad("t", [[-400, 0, 0], [0, 0, 0]], turnLane ? TRun(0, 1, 2, 1) : TRun(0, 1)); t.End = TNode(1);
+        var e1 = MakeRoad("e1", [[0, 0, 0], [40, 0, 0]], TRun(0, 1)); e1.Start = TNode(1); e1.End = TNode(2);
+        var e2 = MakeRoad("e2", [[40, 0, 0], [400, 0, 0]], TRun(0, 1)); e2.Start = TNode(2);
+        var s1 = MakeRoad("s1", [[0, 0, 0], [0, 0, -40]], TRun(0, 1)); s1.Start = TNode(1); s1.End = TNode(3);
+        var s2 = MakeRoad("s2", [[0, 0, -40], [0, 0, -400]], TRun(0, 1)); s2.Start = TNode(3);
+        var slip = MakeRoad("slip", [[40, 0, 0], [20, 0, -8], [8, 0, -20], [0, 0, -40]], TRun(0, 3, oneway: true));
+        slip.Start = TNode(2); slip.End = TNode(3);
+        return [t, e1, e2, s1, s2, slip];
+    }
+    var warnings = new List<string>();
+    var with = Roads(true);
+    Check(Junctions.PrepareSlips(with, warnings) == 1 && with.Count == 3 && with.All(r => r.Id != "slip"),
+          $"Rechtsabbieger nicht weggelassen ({with.Count} Straßen)");
+    Check(warnings.Any(w => w.Contains("Sperrfläche")), "Hinweis auf die Sperrfläche fehlt");
+    var without = Roads(false);
+    Check(Junctions.PrepareSlips(without, []) == 0 && without.Count == 6, "ohne Abbiegespur wird der Rechtsabbieger angeschlossen");
 }

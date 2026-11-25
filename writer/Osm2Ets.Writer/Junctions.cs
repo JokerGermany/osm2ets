@@ -48,6 +48,18 @@ public static class Junctions
     // Arm 1+1, Knoten 1 = Nebenstraße 1+1 links der Fahrtrichtung auf Arm 0. Lkw dürfen links abbiegen.
     public static readonly Def TTURN = new(new("ch_14001", "/prefab2/cross_temp/ger/ger_r1_turn_x_r1_t_tmpl.ppd", "default", "ger_1"), [0, 2], [1]);
     public static bool UseTurnT = Environment.GetEnvironmentVariable("OSM2ETS_NO_TURNT") != "1";
+    // Gegenüberliegender Arm der Einmündung mit Abbiegespur (TTURN, Knoten 2): Fahrstreifen 4,5 m neben der
+    // Mittellinie – gebaut für „ger road 1 plus 1 tmpl“ (ger26, 1+1 mit Sperrfläche in der Mitte). Übergang
+    // zur normalen Landstraße: mod_ger_99 „ger fork road 1 x 1 plus 1 tmpl“ (60 m, Varianten clean/no_lines):
+    // Knoten 0 = Sperrflächen-Seite (Spuren ±4,5 m), Knoten 1 = Landstraße (±2,25 m).
+    public static readonly Def HATCH11 = new(new("mod_ger_99", "/prefab2/fork_temp/ger/ger_fork_road_1_x_1_plus_1_tmpl.ppd", "clean", "ger_1"), [0, 1], []);
+    private const float TTurnPlainArm = 18.1f;       // Abstand Knoten 2 ↔ Prefab-Mitte (ch_14001)
+    private const float HatchTransition = 60f;       // Länge von mod_ger_99
+    // Sperrflächen-Straße zwischen Einmündung und Übergang: lang genug, dass sie den Richtungsunterschied
+    // zwischen dem geraden Einmündungsarm und dem (nach der Straße ausgerichteten) Übergang sanft ausgleicht
+    private const float HatchGap = 20f;
+    /// <summary>Straßenlänge ab der Einmündung, die Sperrfläche + Übergang brauchen.</summary>
+    public static float HatchNeed => TTurnPlainArm + HatchGap + HatchTransition + MinTail;
     // Universal-Gabelungen (prefab.mod_universal_roads.sii, Looks asph_new_*/asp_rough_*, für „un 2-1“
     // gebaut; Spurraster 4,5 m wie die ger-Prefabs). Nur zum Test (OSM2ETS_UN_SLIP=1): Rechtsabbieger an
     // 2+1-Straßen anschließen statt weglassen.
@@ -168,6 +180,37 @@ public static class Junctions
         }
         bool Joinable((RoadEntry A, bool AS, RoadEntry B, bool BS) m) =>
             UseSlipJoints && Class21(RunAt(m.A, m.AS)) == 1 && Class21(RunAt(m.B, m.BS)) == 1;
+        // Einmündungen mit Abbiegespur (wie TTURN in Find): Der gegenüberliegende Arm bekommt Sperrfläche und
+        // Übergang (HatchNeed); Abzweige/Einmündungen von Abbiegern in diesem Bereich lassen sich nicht anschließen.
+        var hatchBlocked = new HashSet<long>();
+        if (UseTurnT)
+            foreach (var (node, l) in ends)
+            {
+                if (l.Count != 3 || l.Any(e => e.R.Closed || RunAt(e.R, e.AtStart).Oneway || IsMinorWay(RunAt(e.R, e.AtStart)))) continue;
+                for (int i = 0; i < 3; i++)
+                    for (int j = 0; j < 3; j++)
+                    {
+                        if (i == j) continue;
+                        var x = l[i]; var y = l[j]; var sd = l[3 - i - j];
+                        if (!TurnArm(RunAt(x.R, x.AtStart), x.AtStart) || !PlainArm(RunAt(y.R, y.AtStart)) || !PlainArm(RunAt(sd.R, sd.AtStart))) continue;
+                        var ax = Away(x.R, x.AtStart); var ay = Away(y.R, y.AtStart); var asd = Away(sd.R, sd.AtStart);
+                        if (ax.LengthSquared() < 0.5f || ay.LengthSquared() < 0.5f || Vector2.Dot(Vector2.Normalize(ax), Vector2.Normalize(ay)) > -0.8f) continue;
+                        var h = -ax; var left = new Vector2(h.Y, -h.X);
+                        if (Vector2.Dot(asd, left) <= 0.3f) continue;
+                        float dist = 0; var (road, st) = (y.R, y.AtStart);
+                        for (int guard = 0; guard < 20; guard++)
+                        {
+                            dist += (float)Interchanges.ArcLengthOf(road);
+                            long? far = st ? road.End?.OsmNode : road.Start?.OsmNode;
+                            if (far is not long f || dist >= HatchNeed) break;
+                            hatchBlocked.Add(f);
+                            if (!ends.TryGetValue(f, out var lf)) break;
+                            var next = lf.Where(e => e.R != road && !RunAt(e.R, e.AtStart).Oneway).ToList();
+                            if (next.Count != 1) break;
+                            (road, st) = (next[0].R, next[0].AtStart);
+                        }
+                    }
+            }
         int dropped = 0, lanes = 0;
         foreach (var r in roads.ToList())
         {
@@ -179,7 +222,8 @@ public static class Junctions
             if (ma is null || mb is null) continue;
             var pa = P(r.Points[0]); var pb = P(r.Points[^1]);
             if (!junctions.Any(j => j.Key != a && j.Key != b && Vector2.Distance(j.P, pa) < BypassReach && Vector2.Distance(j.P, pb) < BypassReach)) continue;
-            if (Joinable(ma.Value) && Joinable(mb.Value)) continue;      // wird mit Prefabs angeschlossen
+            bool blocked = hatchBlocked.Contains(a) || hatchBlocked.Contains(b);
+            if (Joinable(ma.Value) && Joinable(mb.Value) && !blocked) continue;      // wird mit Prefabs angeschlossen
             roads.Remove(r); dropped++;
             var sa = Away(r, true); var arrive = -Away(r, false);
             // Ausfädelspur: Straße, aus der der Abbieger kommt, verliert zum Abzweig hin eine Spur,
@@ -209,7 +253,9 @@ public static class Junctions
                     lanes++;
                 }
             }
-            warnings.Add($"Info: freier Rechtsabbieger {r.Id} weggelassen (kein Prefab zum Anschließen, die Kreuzung übernimmt das Abbiegen)");
+            warnings.Add(blocked
+                ? $"Info: freier Rechtsabbieger {r.Id} weggelassen (Anschluss läge in Sperrfläche/Übergang vor einer Einmündung mit Abbiegespur, die Einmündung übernimmt das Abbiegen)"
+                : $"Info: freier Rechtsabbieger {r.Id} weggelassen (kein Prefab zum Anschließen, die Kreuzung übernimmt das Abbiegen)");
             ends = Ends();
             foreach (var node in new[] { a, b }) JoinAt(roads, node);
             ends = Ends();
@@ -365,6 +411,52 @@ public static class Junctions
         return PendingFork21.Count;
     }
 
+    /// <summary>
+    /// Gegenüberliegender Arm der Einmündung mit Abbiegespur: Straße mit Sperrfläche (
+    /// <see cref="RunEntry.Hatched"/>, Zuordnung "hatched" → ger26) ab der Einmündung, nach <see cref="TTurnPlainArm"/> +
+    /// <see cref="HatchGap"/> der Übergang <see cref="HATCH11"/> zur normalen Landstraße. Ist die Straße
+    /// dafür zu kurz, bekommt sie ganz die Sperrfläche (Stufe dann an ihrem anderen Ende).
+    /// </summary>
+    private static void HatchedPlainArm(Plan p, List<RoadEntry> roads, List<Plan> plans, List<string> warnings)
+    {
+        var arm = p.Arms[1];
+        var y = arm.Road;
+        bool atStart = y.Start?.OsmNode == p.OsmNode;
+        if (!atStart && y.End?.OsmNode != p.OsmNode) return;
+        float len = (float)Interchanges.ArcLengthOf(y);
+        float split = TTurnPlainArm + HatchGap + HatchTransition / 2;
+        RoadEntry hatched = y;
+        if (len >= HatchNeed && !y.Closed)
+        {
+            var far = SplitAtArc(y, atStart ? split : len - split, synth21);
+            if (far is not null)
+            {
+                synth21--;
+                far.Id = y.Id + (atStart ? "n" : "h");   // h = Stück mit Sperrfläche, n = Landstraße dahinter
+                roads.Add(far);
+                // Bezüge anderer Prefabs auf das Ende, das jetzt am neuen Stück hängt
+                foreach (var q in plans)
+                    for (int i = 0; i < q.Arms.Length; i++)
+                        if (q != p && q.Arms[i].Road == y && (far.Start?.OsmNode == q.OsmNode || far.End?.OsmNode == q.OsmNode))
+                            q.Arms[i] = new Arm(far, q.Arms[i].Away);
+                RoadEntry narrow;
+                if (atStart) { hatched = y; narrow = far; }
+                else { hatched = far; narrow = y; p.Arms[1] = new Arm(far, arm.Away); }
+                long node = (long)far.Start!.OsmNode!;
+                bool hStart = hatched.Start?.OsmNode == node, nStart = narrow.Start?.OsmNode == node;
+                var aw = new Arm(hatched, Away(hatched, hStart));
+                var an = new Arm(narrow, Away(narrow, nStart));
+                var anc = MapWriter.ToVector(nStart ? narrow.Points[0] : narrow.Points[^1]);
+                var hp = new Plan { OsmNode = node, Anchor = anc, Def = HATCH11, Arms = [aw, an], ForceNodes = [0, 1] };
+                plans.Add(hp);
+                HatchParent[hp] = p;
+            }
+        }
+        else
+            warnings.Add($"Knoten {p.OsmNode}: Arm {y.Id} gegenüber der Abbiegespur zu kurz für Sperrfläche + Übergang ({len:0} m, nötig {HatchNeed:0} m) – ganz mit Sperrfläche");
+        foreach (var x in hatched.Runs) x.Hatched = true;
+    }
+
     /// <summary>Teilt <paramref name="r"/> <paramref name="d"/> m nach ihrem Anfang; r behält den
     /// vorderen Teil, zurück kommt der hintere (null, wenn kein sinnvoller Teilungspunkt).</summary>
     private static RoadEntry? SplitAtArc(RoadEntry r, double d, long node)
@@ -480,7 +572,13 @@ public static class Junctions
     /// <summary>OSM-Knoten mit noch nicht gesetzter Kreuzung (dürfen kurze Arme „übernehmen“).</summary>
     public static readonly HashSet<long> PendingNodes = [];
 
-    public static void Reset() { Fixed.Clear(); PlacedEnds.Clear(); Dropped.Clear(); PendingNodes.Clear(); ShiftedForks.Clear(); ForksShifted = 0; }
+    public static void Reset() { Fixed.Clear(); PlacedEnds.Clear(); Dropped.Clear(); PendingNodes.Clear(); ShiftedForks.Clear(); ForksShifted = 0; HatchParent.Clear(); }
+
+    /// <summary>Übergang HATCH11 → Einmündung mit Abbiegespur, an deren gegenüberliegendem Arm er liegt.</summary>
+    public static readonly Dictionary<Plan, Plan> HatchParent = [];
+    /// <summary>Größtes Gefälle (Anteil), nach dem ein Übergang geneigt wird.</summary>
+    public const float MaxTransGrade = 0.10f;
+    public static bool UseTransPitch = Environment.GetEnvironmentVariable("OSM2ETS_NO_TRANSPITCH") != "1";
 
     private static bool OtherEndPending(RoadEntry r, Vector3 anchor)
     {
@@ -509,6 +607,7 @@ public static class Junctions
         public Vector3[] NodePos = [];
         public Vector3[] Inward = [];
         public Prefab? Placed;
+        public float Grade;                    // Neigung eines Übergangs längs (Anteil, 0 = eben)
     }
 
     public static List<Plan> Find(List<RoadEntry> roads, Func<RoadEntry, bool, string> roadTypeAt, List<string> warnings)
@@ -744,6 +843,7 @@ public static class Junctions
             var anc = MapWriter.ToVector(nStart ? narrow.Points[0] : narrow.Points[^1]);   // Landstraße liegt auf der OSM-Linie
             plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = FORK21, Arms = [aw, an], ForceNodes = [0, 1] });
         }
+        foreach (var p in plans.Where(q => q.Def == TTURN).ToList()) HatchedPlainArm(p, roads, plans, warnings);
         return plans;
     }
 
@@ -995,12 +1095,13 @@ public static class Junctions
     private static Vector3 PlanCenter(Plan p, IReadOnlyList<Vector3> pos, Quaternion rot)
     {
         if (p.Def == FSPLIT || p.Def == FJOIN || p.Def == SPLIT2) return (pos[0] + pos[1] + pos[2]) / 3;
-        if (p.Def == FORK21 || p.Def == DROP21)
+        if (p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11)
         {
             // längs: Mitte des Übergangs; quer: auf der Achse der Landstraße (Knoten 1). Die 2+1-Seite
             // (Knoten 0) liegt im Prefab schon um eine halbe Spur seitlich – wie die versetzte 2+1-Straße.
-            // Querabstand Knoten 1 ↔ Mitte in Prefab-Koordinaten (x): ch_42001 (0,25−2,50)/2, mod_ger_101 (0,25+2,25)/2
-            float lx = p.Def == FORK21 ? (0.254f - 2.5f) / 2 : (0.25f + 2.25f) / 2;
+            // Querabstand Knoten 1 ↔ Mitte in Prefab-Koordinaten (x): ch_42001 (0,25−2,50)/2, mod_ger_101 (0,25+2,25)/2,
+            // mod_ger_99 (−2,25+2,375)/2
+            float lx = p.Def == FORK21 ? (0.254f - 2.5f) / 2 : p.Def == DROP21 ? (0.25f + 2.25f) / 2 : (-2.25f + 2.375f) / 2;
             var xw = Vector3.Transform(Vector3.UnitX, rot); xw.Y = 0;
             return (pos[0] + pos[1]) / 2 + Vector3.Normalize(xw) * lx;
         }
@@ -1150,13 +1251,53 @@ public static class Junctions
         // beiden Straßen ausrichten und Knoten 1 auf die Landstraße legen – in Kurven läge das Prefab
         // sonst neben der Straße und die Landstraße knickte am Knoten ab
         Vector2? trans1 = null; int transIdx = 1;
-        bool isTrans = p.Def == FORK21 || p.Def == DROP21;
+        bool isTrans = p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11;
         if (isTrans)
         {
             Densify(p.Arms[0].Road, 8); Densify(p.Arms[1].Road, 8);   // Platz für den Ausgleichsbogen
             var lp = Interchanges.CalibrateNodes(ppd, unit, Quaternion.Identity);
             float half = Vector2.Distance(new(lp[0].X, lp[0].Z), new(lp[1].X, lp[1].Z)) / 2;
-            if (Interchanges.ArcLengthOf(p.Arms[0].Road) >= half + 25 && Interchanges.ArcLengthOf(p.Arms[1].Road) >= half + 25)
+            bool chordOk = Interchanges.ArcLengthOf(p.Arms[0].Road) >= half + 25 && Interchanges.ArcLengthOf(p.Arms[1].Road) >= half + 25;
+            // Übergang hinter einer schon gesetzten Einmündung mit Abbiegespur: deren gegenüberliegender Arm
+            // liegt fest. Die Sperrflächen-Straße (HatchGap lang) läuft von dort als gleichmäßiger Bogen zum
+            // Übergang; dessen Richtung so wählen, dass sein Landstraßen-Ende auf der OSM-Straße liegt
+            // (gerade Verlängerung des Arms läge in Kurven meterweit daneben, die Landstraße schlüge dann
+            // einen S-Bogen zurück)
+            Plan? tp = null;
+            if (p.Def == HATCH11 && HatchParent.TryGetValue(p, out tp) && tp.NodePos.Length > 0)
+            {
+                int tn = tp.NodeOf[1];
+                var outT = -new Vector2(tp.Inward[tn].X, tp.Inward[tn].Z);
+                if (outT.LengthSquared() > 0.01f)
+                {
+                    outT = Vector2.Normalize(outT);
+                    var pT = new Vector2(tp.NodePos[tn].X, tp.NodePos[tn].Z);
+                    float aT = Ang(outT);
+                    int n0 = p.NodeOf[0], n1 = p.NodeOf[1];
+                    var o = new Vector2(lp[n1].X - lp[n0].X, lp[n1].Z - lp[n0].Z);
+                    bool s1 = StartsAt(p.Arms[1].Road, p.Anchor);
+                    float reach = MathF.Min((float)Interchanges.ArcLengthOf(p.Arms[1].Road), 2 * half + 20);
+                    var samples = new List<Vector2>();
+                    for (float s = 0; s <= reach; s += 0.5f) samples.Add(PointAlong(p.Arms[1].Road, s1, s));
+                    float bestD = 0, bestCost = float.MaxValue;
+                    for (float dd = -20; dd <= 20.001f && samples.Count > 0; dd += 0.25f)
+                    {
+                        float d = dd * MathF.PI / 180, aH = aT + d, am = aT + d / 2;
+                        var n0w = pT + HatchGap * new Vector2(MathF.Cos(am), MathF.Sin(am));
+                        float rot = Wrap(Ang(-new Vector2(MathF.Cos(aH), MathF.Sin(aH))) - Ang(Out(n0)));
+                        float ao = Ang(o) + rot;
+                        var n1w = n0w + o.Length() * new Vector2(MathF.Cos(ao), MathF.Sin(ao));
+                        float cost = samples.Min(q => Vector2.Distance(q, n1w)) + 0.01f * MathF.Abs(dd);
+                        if (cost < bestCost) { bestCost = cost; bestD = d; }
+                    }
+                    float bm = aT + bestD / 2, bh = aT + bestD;
+                    trans1 = pT + HatchGap * new Vector2(MathF.Cos(bm), MathF.Sin(bm));
+                    transIdx = n0;
+                    bestRot = Wrap(Ang(-new Vector2(MathF.Cos(bh), MathF.Sin(bh))) - Ang(Out(n0)));
+                    if (Environment.GetEnvironmentVariable("OSM2ETS_DBG21") == "1") Console.Error.WriteLine($"DBG21 hatch {p.OsmNode} bogen {bestD * 180 / MathF.PI:0.00} abstand {bestCost:0.00}");
+                }
+            }
+            else if (chordOk)
             {
                 bool s0 = StartsAt(p.Arms[0].Road, p.Anchor), s1 = StartsAt(p.Arms[1].Road, p.Anchor);
                 var w = PointAlong(p.Arms[0].Road, s0, half);
@@ -1192,9 +1333,14 @@ public static class Junctions
         // TruckLib: am Ursprungsknoten muss eine Straße mit ihrem ENDE anschließen. Ursprung
         // daher auf einen Arm legen, der am Prefab endet (oder sich umdrehen lässt).
         int originArm = Enumerable.Range(0, p.Arms.Length).FirstOrDefault(i => !StartsAt(p.Arms[i].Road, p.Anchor), -1);
+        // Einmündung mit Abbiegespur: Ursprung lieber an der Nebenstraße oder am Abbiegearm – der
+        // gegenüberliegende Arm führt zum Übergang HATCH11, der ihn als Ursprung braucht, wenn seine
+        // Landstraßen-Seite schon an einem anderen Übergang festliegt
+        if (p.Def == TTURN)
+            originArm = new[] { 2, 0, 1 }.Where(i => !StartsAt(p.Arms[i].Road, p.Anchor)).DefaultIfEmpty(-1).First();
         // Übergang 2+1 ↔ Landstraße: Ursprung an der Landstraße, damit die 2+1-Straße sich in ihrer Kette
         // noch umdrehen lässt (sonst bleibt sie am anderen Ende ungepaart und wird als Abzweig gekürzt)
-        if ((p.Def == FORK21 || p.Def == DROP21) && (!StartsAt(p.Arms[1].Road, p.Anchor) || !Fixed.Contains(p.Arms[1].Road)))
+        if ((p.Def == FORK21 || p.Def == DROP21 || p.Def == HATCH11) && (!StartsAt(p.Arms[1].Road, p.Anchor) || !Fixed.Contains(p.Arms[1].Road)))
             originArm = 1;
         if (originArm < 0)
             originArm = Enumerable.Range(0, p.Arms.Length).FirstOrDefault(i =>
@@ -1264,6 +1410,31 @@ public static class Junctions
         var target = new Vector2(MathF.Cos(Ang(v0) + bestRot), MathF.Sin(Ang(v0) + bestRot));
         p.Rotation = Interchanges.YawTo(ppd, unit, new Vector3(v0.X, 0, v0.Y), new Vector3(target.X, 0, target.Y));
         var placed = Interchanges.CalibrateNodes(ppd, unit, p.Rotation);
+        // Übergang (gerade, 60 m) am Hang: nach dem Gefälle der Straße zwischen seinen Enden neigen. Eben
+        // gesetzt lag bei 6 % ein Ende 1,8 m unter, das andere 1,8 m über der Straße – steile Stücke davor
+        // und dahinter. Nicht, wenn er direkt an einem anderen Prefab hängt (gemeinsamer Knoten).
+        p.Grade = 0;
+        if (isTrans && p.SnapArm < 0 && UseTransPitch)
+        {
+            int k0 = p.NodeOf[0], k1 = p.NodeOf[1];
+            var run = placed[k1] - placed[k0]; run.Y = 0;
+            float len = run.Length(), r0 = len / 2;
+            float h0 = HeightAt(p.Arms[0].Road, StartsAt(p.Arms[0].Road, p.Anchor), r0);
+            float h1 = HeightAt(p.Arms[1].Road, StartsAt(p.Arms[1].Road, p.Anchor), r0);
+            float grade = len > 1 ? Math.Clamp((h1 - h0) / len, -MaxTransGrade, MaxTransGrade) : 0;
+            if (Environment.GetEnvironmentVariable("OSM2ETS_DBG21") == "1") Console.Error.WriteLine($"DBG21 grade {p.OsmNode} {p.Def.Prefab.Unit} h0 {h0:0.00} h1 {h1:0.00} anchor {p.Anchor.Y:0.00} grade {grade * 100:0.0} %");
+            if (MathF.Abs(grade) > 0.005f)
+            {
+                var axis = Vector3.Normalize(Vector3.Cross(Vector3.Normalize(run), Vector3.UnitY));
+                foreach (var sgn in new[] { 1f, -1f })
+                {
+                    var q = Quaternion.Normalize(Quaternion.Concatenate(p.Rotation, Quaternion.CreateFromAxisAngle(axis, sgn * MathF.Atan(grade))));
+                    var pl = Interchanges.CalibrateNodes(ppd, unit, q);
+                    var d = pl[k1] - pl[k0]; float rise = d.Y; d.Y = 0;
+                    if (MathF.Abs(rise / d.Length() - grade) < 0.2f * MathF.Abs(grade) + 1e-3f) { p.Rotation = q; placed = pl; p.Grade = grade; break; }
+                }
+            }
+        }
         // Kreuzungsmitte = Mitte der beiden durchgehenden Knoten
         var center = PlanCenter(p, placed, p.Rotation);
         var shift = p.SnapArm >= 0

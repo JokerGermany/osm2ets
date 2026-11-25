@@ -155,5 +155,10 @@
   // oder über einer Brücke, unmittelbar daneben. Nur ein Stück davon mit offenem Ende: Straßentyp
   // wie sonst (KI-Verkehr wie dort), aber nicht auf Karte/Navi, Navi meidet.
   "visible": { "show_in_ui_map": false, "gps_avoid": true },
+  // Stücke mit Sperrfläche in der Mitte: setzt der Writer am Arm gegenüber der Abbiegespur einer Einmündung
+  // (ch_14001 „ger r1 turn x r1 t“) bis zum Übergang mod_ger_99. ger26 = "ger road 1 plus 1 tmpl", 1+1 mit
+  // Sperrfläche (lane_offsets 2,25 m → Spuren 4,5 m neben der Mittellinie, wie Knoten 2 des Prefabs).
+  // Gelände, Navi usw. wie nach der Regel des Stücks. Breite wie 2+1 angenommen, nicht vermessen.
+  "hatched": { "road_type": "ger26", "width": 14.25 },
   "map": { "normal_scale": null, "city_scale": null }
 }

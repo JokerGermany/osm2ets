@@ -95,6 +95,9 @@ public sealed class RunEntry
     public int? Lanes { get; set; }
     /// <summary>Spurzahl laut OSM beim Einlesen (Lanes kann der Writer später ändern).</summary>
     [System.Text.Json.Serialization.JsonIgnore] public int? OsmLanes { get; set; }
+    /// <summary>Vom Writer gesetzt: Stück mit Sperrfläche in der Mitte (Arm gegenüber der Abbiegespur einer
+    /// Einmündung). Die Zuordnung "hatched" ersetzt dann den Straßentyp; Rolle und übrige Regeln bleiben.</summary>
+    [System.Text.Json.Serialization.JsonIgnore] public bool Hatched { get; set; }
     public bool Bridge { get; set; }
     public bool Tunnel { get; set; }
     public int Layer { get; set; }

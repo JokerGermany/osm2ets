@@ -377,6 +377,14 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 - Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits. Arms
   meeting at a sharp angle are bent onto an arc; junctions closer than their prefab radii
   are connected prefab-to-prefab; one-way arms via `ChangeOrigin`.
+- T junction with a left-turn lane (OSM `lanes:forward`/`lanes:backward` 2/1 on one arm, side road
+  on the left): `ger r1 turn x r1 t tmpl`. Its opposite arm gets the road with hatched centre
+  `ger26` ("ger road 1 plus 1 tmpl") and, after 20 m, the 60 m transition
+  `ger fork road 1 x 1 plus 1 tmpl` back to the normal two-lane road. A free right-turn slip
+  whose end would lie in that stretch is dropped (no prefab for it; the T handles the turn).
+- 2+1 ↔ 1+1 transitions (`ger fork road 1 x 2 plus 1 tmpl`, `ger fork road 1 x 1 plus 2 tmpl`)
+  and the hatched transition are straight 60 m prefabs; they are tilted to the road's grade
+  between their ends (up to 10 %; `OSM2ETS_NO_TRANSPITCH=1` places them level).
 - Node roles and directions come from the `.ppd` files, variants/looks from the `.pmd`.
 
 ## Roadmap

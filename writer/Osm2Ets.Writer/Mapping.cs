@@ -26,6 +26,9 @@ public sealed class MappingConfig
     /// <summary>Überschreibt Werte auf Sichtstücken (Rolle "visible": Straßen höherer Stufen, die man von der
     /// Strecke aus sieht – nur ein Stück davon, mit offenem Ende), zusätzlich zur Regel.</summary>
     public StyleSpec? Visible { get; set; }
+    /// <summary>Überschreibt Werte auf Stücken mit Sperrfläche in der Mitte (vom Writer gesetzt, siehe
+    /// RunEntry.Hatched), zusätzlich zur Regel.</summary>
+    public StyleSpec? Hatched { get; set; }
     /// <summary>Brückenkörper für Paare paralleler Autobahnbrücken über Straßen (siehe BridgeBodies).</summary>
     public BridgeBodySpec? BridgeBody { get; set; }
     /// <summary>Brückenkörper je Straßentyp für alle übrigen Brücken ("*" = alle anderen Typen).</summary>
@@ -71,6 +74,7 @@ public sealed class MappingConfig
         Restricted?.Validate("restricted", errors);
         if (Shoulder is not null) foreach (var (k, v) in Shoulder) v.Validate($"shoulder.{k}", errors);
         Visible?.Validate("visible", errors);
+        Hatched?.Validate("hatched", errors);
         BridgeBody?.Validate("bridge_body", errors);
         foreach (var (type, b) in BridgeBodies ?? [])
             b.Validate($"bridge_bodies.{type}", errors);
@@ -102,6 +106,8 @@ public sealed class MappingConfig
                 break;
             }
         }
+        if (run.Hatched && Hatched is not null)
+            style = Hatched.ToResolved(style);
         if (run.Bridge && Bridge is not null)
             style = Bridge.ToResolved(style);
         else if (run.Tunnel && Tunnel is not null)

@@ -381,6 +381,15 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
 - Kreuzungen: T/X (`ger_r1_x_r1_*_narrow_tmpl`), vierstreifige Varianten, Gabelungen.
   Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
   verbunden; Einbahn-Arme über `ChangeOrigin`.
+- Einmündung mit Linksabbiegespur (OSM `lanes:forward`/`lanes:backward` 2/1 an einem Arm,
+  Nebenstraße links): `ger r1 turn x r1 t tmpl`. Der gegenüberliegende Arm bekommt die Straße mit
+  Sperrfläche `ger26` ("ger road 1 plus 1 tmpl") und nach 20 m den 60-m-Übergang
+  `ger fork road 1 x 1 plus 1 tmpl` zurück zur normalen Landstraße. Ein freier Rechtsabbieger,
+  dessen Ende in diesem Bereich läge, entfällt (kein Prefab dafür; die Einmündung übernimmt das
+  Abbiegen).
+- Übergänge 2+1 ↔ 1+1 (`ger fork road 1 x 2 plus 1 tmpl`, `ger fork road 1 x 1 plus 2 tmpl`) und der
+  Übergang mit Sperrfläche sind gerade 60-m-Prefabs; sie werden nach dem Gefälle der Straße zwischen
+  ihren Enden geneigt (bis 10 %; `OSM2ETS_NO_TRANSPITCH=1` setzt sie eben).
 - Knotenrollen und Richtungen kommen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.
 
 ## Nächste Ausbaustufen
