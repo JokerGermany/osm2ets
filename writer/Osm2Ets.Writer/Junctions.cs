@@ -55,6 +55,14 @@ public static class Junctions
     public static readonly Def UNDIV = new(new("un_1412a", "/prefab2/fork_temp/un/un_fork_1-2_divide_0-1_45m.ppd", "default", "asph_new_01"), [0, 1], [2]);
     // Einfädeln in die einspurige Richtung: Knoten 2 = zuführender Arm (1 hinein), 0 = weiterführend, 1 = Einfädler.
     public static readonly Def UNMRG = new(new("un_1412d", "/prefab2/fork_temp/un/un_fork_1-2_merge_0-1_45m.ppd", "default", "asph_new_01"), [2, 0], [1]);
+    // Flache Abzweigung/Einmündung einer einspurigen Einbahnstraße an einer Landstraße 1+1 (Grundspiel,
+    // base.scs; Kategorie dlc_at, Looks ger_1…5, Variante lines_de mit deutscher Markierung; 15°, ~44 m):
+    // at_r1_r1_joint_mirrored: Knoten 0 = zuführend, 1 = weiterführend, 2 = Abzweig (rechts).
+    public static readonly Def ATDIV = new(new("at_23006", "/prefab2/fork_temp/at/at_r1_r1_joint_mirrored.ppd", "lines_de", "ger_1"), [0, 1], [2]);
+    // at_r1_r1_joint: Knoten 2 = zuführend, 0 = weiterführend, 1 = Einfädler (von rechts).
+    public static readonly Def ATMRG = new(new("at_2i02j", "/prefab2/fork_temp/at/at_r1_r1_joint.ppd", "lines_de", "ger_1"), [2, 0], [1]);
+    public static bool UseSlipJoints = Environment.GetEnvironmentVariable("OSM2ETS_NO_SLIPJOINT") != "1";
+    public static bool UseSlipDrop = Environment.GetEnvironmentVariable("OSM2ETS_NO_SLIPDROP") != "1";
     public static bool UseUnSlip = Environment.GetEnvironmentVariable("OSM2ETS_UN_SLIP") == "1";
     private const float UnForkLen = 40, UnForkShort = 10;
     private static bool PlainArm(RunEntry x) => !x.Oneway && (x.Lanes is null or <= 2)
@@ -119,6 +127,114 @@ public static class Junctions
                 break;
             }
         }
+    }
+
+    /// <summary>
+    /// Freie Rechtsabbieger (einspurige Einbahnstraße, die nahe einer Kreuzung/Einmündung flach von einer
+    /// Zweirichtungsstraße abzweigt und flach in eine andere einmündet). Lassen sich beide Enden nicht mit
+    /// den Abzweig-/Einmündungs-Prefabs (<see cref="ATDIV"/>/<see cref="ATMRG"/>, nur an 1+1) anschließen,
+    /// entfällt der Abbieger – die Kreuzung übernimmt das Abbiegen – samt seiner Ausfädelspur (endet am
+    /// Abzweig) und Einfädelspur (beginnt an der Einmündung). Die beiden übrigen Straßen an seinen Enden
+    /// werden zu einer verbunden. Vor LaneCentering aufrufen (Spurzahlen bestimmen den Versatz).
+    /// </summary>
+    public static int PrepareSlips(List<RoadEntry> roads, List<string> warnings)
+    {
+        if (!UseSlipDrop) return 0;
+        Dictionary<long, List<(RoadEntry R, bool AtStart)>> Ends()
+        {
+            var d = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
+            foreach (var r in roads)
+                foreach (var st in new[] { true, false })
+                    if ((st ? r.Start : r.End) is { Kind: "node", OsmNode: long id })
+                        (d.TryGetValue(id, out var l) ? l : d[id] = []).Add((r, st));
+            return d;
+        }
+        var ends = Ends();
+        RunEntry RunAt(RoadEntry r, bool st) => st ? r.Runs[0] : r.Runs[^1];
+        // Kreuzungsknoten: mindestens drei Zweirichtungsstraßen
+        var junctions = ends.Where(kv => kv.Value.Count(e => !RunAt(e.R, e.AtStart).Oneway && !IsMinorWay(RunAt(e.R, e.AtStart))) >= 3)
+                            .Select(kv => (kv.Key, P: P(kv.Value[0].AtStart ? kv.Value[0].R.Points[0] : kv.Value[0].R.Points[^1]))).ToList();
+        // Ende eines Abbiegers: genau zwei weitere Straßen, beide zweirichtungs und gegenüber, Abbieger flach
+        (RoadEntry A, bool AS, RoadEntry B, bool BS)? Main(RoadEntry slip, long node, bool atStart)
+        {
+            if (!ends.TryGetValue(node, out var l) || l.Count != 3) return null;
+            var m = l.Where(e => e.R != slip).ToList();
+            if (m.Count != 2 || m.Any(e => e.R.Closed || RunAt(e.R, e.AtStart).Oneway || IsMinorWay(RunAt(e.R, e.AtStart)))) return null;
+            var a0 = Away(m[0].R, m[0].AtStart); var a1 = Away(m[1].R, m[1].AtStart); var sa = AwayWithin(slip, atStart, 12);   // Abbieger biegen ab: Richtung am Knoten
+            if (a0.LengthSquared() < 0.5f || a1.LengthSquared() < 0.5f || sa.LengthSquared() < 0.5f) return null;
+            if (Vector2.Dot(a0, a1) > -0.8f) return null;
+            if (MathF.Max(Vector2.Dot(sa, a0), Vector2.Dot(sa, a1)) < MathF.Cos(50 * MathF.PI / 180)) return null;   // flach
+            return (m[0].R, m[0].AtStart, m[1].R, m[1].AtStart);
+        }
+        bool Joinable((RoadEntry A, bool AS, RoadEntry B, bool BS) m) =>
+            UseSlipJoints && Class21(RunAt(m.A, m.AS)) == 1 && Class21(RunAt(m.B, m.BS)) == 1;
+        int dropped = 0, lanes = 0;
+        foreach (var r in roads.ToList())
+        {
+            if (r.Closed || !r.Runs.All(x => x.Oneway && x.Lanes is null or 1)) continue;
+            if (Interchanges.ArcLengthOf(r) > 150) continue;
+            if (r.Start?.OsmNode is not long a || r.End?.OsmNode is not long b) continue;
+            var ma = Main(r, a, true); var mb = Main(r, b, false);
+            if (Environment.GetEnvironmentVariable("OSM2ETS_DBG21") == "1") Console.Error.WriteLine($"DBG21 slip {r.Id} a {a} {(ma is null ? "-" : "ok")} b {b} {(mb is null ? "-" : "ok")} ends {ends.GetValueOrDefault(a)?.Count}/{ends.GetValueOrDefault(b)?.Count}");
+            if (ma is null || mb is null) continue;
+            var pa = P(r.Points[0]); var pb = P(r.Points[^1]);
+            if (!junctions.Any(j => j.Key != a && j.Key != b && Vector2.Distance(j.P, pa) < BypassReach && Vector2.Distance(j.P, pb) < BypassReach)) continue;
+            if (Joinable(ma.Value) && Joinable(mb.Value)) continue;      // wird mit Prefabs angeschlossen
+            roads.Remove(r); dropped++;
+            var sa = Away(r, true); var arrive = -Away(r, false);
+            // Ausfädelspur: Straße, aus der der Abbieger kommt, verliert zum Abzweig hin eine Spur,
+            // wenn die weiterführende Straße in dieser Richtung weniger Spuren hat
+            foreach (var (node, m, outward) in new[] { (a, ma.Value, false), (b, mb.Value, true) })
+            {
+                var dir = outward ? arrive : sa;
+                // Straße auf der Seite, aus der der Verkehr kommt (Abzweig) bzw. in die er weiterfährt (Einmündung)
+                var cand = new[] { (m.A, m.AS), (m.B, m.BS) };
+                var (rr, st) = cand.OrderBy(c => outward ? -Vector2.Dot(Away(c.Item1, c.Item2), dir) : Vector2.Dot(Away(c.Item1, c.Item2), dir)).First();
+                var (or, ost) = cand.First(c => c.Item1 != rr || c.Item2 != st);
+                var x0 = RunAt(rr, st); var y0 = RunAt(or, ost);
+                // Abzweig: rr = zuführend (Spuren zum Knoten), or = weiterführend (Spuren weg)
+                // Einmündung: rr = weiterführend (Spuren weg), or = zuführend (Spuren zum Knoten)
+                int? Toward(RunEntry x, bool s0) => s0 ? x.LanesBackward : x.LanesForward;
+                int? AwayL(RunEntry x, bool s0) => s0 ? x.LanesForward : x.LanesBackward;
+                int extra = outward ? (AwayL(x0, st) ?? 1) - (Toward(y0, ost) ?? 1) : (Toward(x0, st) ?? 1) - (AwayL(y0, ost) ?? 1);
+                if (extra <= 0) continue;
+                var seq = st ? rr.Runs : Enumerable.Reverse(rr.Runs).ToList();
+                foreach (var x in seq)
+                {
+                    bool fwd = outward ? st : !st;           // Richtung des betroffenen Verkehrs relativ zur Straße
+                    int? l = fwd ? x.LanesForward : x.LanesBackward;
+                    if (l is not >= 2) break;
+                    if (fwd) x.LanesForward--; else x.LanesBackward--;
+                    if (x.Lanes is int ln) x.Lanes = ln - 1;
+                    lanes++;
+                }
+            }
+            warnings.Add($"Info: freier Rechtsabbieger {r.Id} weggelassen (kein Prefab zum Anschließen, die Kreuzung übernimmt das Abbiegen)");
+            ends = Ends();
+            foreach (var node in new[] { a, b }) JoinAt(roads, node);
+            ends = Ends();
+        }
+        if (lanes > 0) warnings.Add($"Info: Aus-/Einfädelspuren weggelassener Rechtsabbieger entfallen ({lanes} Abschnitte)");
+        return dropped;
+    }
+
+    /// <summary>Verbindet die beiden Zweirichtungsstraßen an einem Knoten zu einer.</summary>
+    private static void JoinAt(List<RoadEntry> roads, long node)
+    {
+        var l = new List<(RoadEntry R, bool AtStart)>();
+        foreach (var r in roads)
+            foreach (var st in new[] { true, false })
+                if ((st ? r.Start : r.End)?.OsmNode == node) l.Add((r, st));
+        if (l.Count != 2 || l[0].R == l[1].R || l.Any(e => e.R.Closed || e.R.Runs.Any(x => x.Oneway))) return;
+        var (r1, s1) = l[0]; var (r2, s2) = l[1];
+        if (s1) Connector.Reverse(r1);           // r1 endet jetzt am Knoten
+        if (!s2) Connector.Reverse(r2);          // r2 beginnt jetzt am Knoten
+        int off = r1.Points.Count - 1;
+        r1.Points = r1.Points.Concat(r2.Points.Skip(1)).ToList();
+        r1.Runs = r1.Runs.Concat(r2.Runs.Select(x => x.Span(x.From + off, x.To + off))).ToList();
+        r1.End = r2.End;
+        r1.LengthM = Interchanges.ArcLengthOf(r1);
+        roads.Remove(r2);
     }
 
     /// <summary>Teilt Zweirichtungsstraßen dort, wo sie innerhalb einer OSM-Linie zwischen 2+1 und
@@ -455,6 +571,16 @@ public static class Junctions
                 }
                 continue;
             }
+            if (UseSlipJoints && list.Count == 3 && oneway == 1)
+            {
+                int si = runs.FindIndex(x => x.Oneway);
+                var slip = list[si].R;
+                if (slip.Runs.All(x => x.Oneway && x.Lanes is null or 1))
+                {
+                    var jp = SlipPlan(roads, slip, node, list[si].AtStart, true);
+                    if (jp is not null) { plans.Add(jp); continue; }
+                }
+            }
             if (oneway > list.Count - 2) continue;  // Rampengabelung o. Ä.
 
             var arms = list.Select(e => new Arm(e.R, Away(e.R, e.AtStart))).ToArray();
@@ -565,8 +691,8 @@ public static class Junctions
                 if (r.Closed || !r.Runs.All(x => x.Oneway && x.Lanes is null or 1)) continue;
                 if (r.Start?.OsmNode is not long a || r.End?.OsmNode is not long b) continue;
                 if (!Skip21.ContainsKey(a) || !Skip21.ContainsKey(b)) continue;
-                var pd = UnSlipPlan(roads, r, a, true);
-                var pm = UnSlipPlan(roads, r, b, false);
+                var pd = SlipPlan(roads, r, a, true, false);
+                var pm = SlipPlan(roads, r, b, false, false);
                 if (pd is null || pm is null) { warnings.Add($"Info: Rechtsabbieger {r.Id}: Universal-Gabelung passt nicht (Abzweig {(pd is null ? "nein" : "ja")}, Einfädeln {(pm is null ? "nein" : "ja")})"); continue; }
                 BypassDrops.Remove(r);
                 plans.Add(pd); plans.Add(pm);
@@ -814,7 +940,7 @@ public static class Junctions
 
     /// <summary>Plan für eine Universal-Gabelung am Ende eines einspurigen Rechtsabbiegers: Abzweig
     /// (<paramref name="leaving"/>) aus der zweispurigen Richtung oder Einfädeln in die einspurige.</summary>
-    private static Plan? UnSlipPlan(List<RoadEntry> roads, RoadEntry slip, long node, bool leaving)
+    private static Plan? SlipPlan(List<RoadEntry> roads, RoadEntry slip, long node, bool leaving, bool at)
     {
         var ends = new List<(RoadEntry R, bool AtStart)>();
         foreach (var o in roads)
@@ -833,8 +959,9 @@ public static class Junctions
             int? fIn = feed.AtStart ? fr.LanesBackward : fr.LanesForward, fOut = feed.AtStart ? fr.LanesForward : fr.LanesBackward;
             int? cIn = cont.AtStart ? cr.LanesBackward : cr.LanesForward, cOut = cont.AtStart ? cr.LanesForward : cr.LanesBackward;
             fIn ??= 1; fOut ??= 1; cIn ??= 1; cOut ??= 1;
-            bool ok = leaving ? (fIn >= 2 && cOut >= 2 && fOut == 1 && cIn == 1)
-                              : (fIn == 1 && cOut == 1 && fOut >= 2 && cIn >= 2);
+            bool ok = at ? (fIn == 1 && fOut == 1 && cIn == 1 && cOut == 1 && Class21(fr) == 1 && Class21(cr) == 1)
+                : leaving ? (fIn >= 2 && cOut >= 2 && fOut == 1 && cIn == 1)
+                          : (fIn == 1 && cOut == 1 && fOut >= 2 && cIn >= 2);
             if (!ok) continue;
             var fa = Away(feed.R, feed.AtStart); var ca = Away(cont.R, cont.AtStart);
             if (fa.LengthSquared() < 0.5f || ca.LengthSquared() < 0.5f) continue;
@@ -850,8 +977,8 @@ public static class Junctions
             var anc = MapWriter.ToVector(feed.AtStart ? feed.R.Points[0] : feed.R.Points[^1]);
             var af = new Arm(feed.R, fa); var ac = new Arm(cont.R, ca); var asl = new Arm(slip, sAway);
             return leaving
-                ? new Plan { OsmNode = node, Anchor = anc, Def = UNDIV, Arms = [af, ac, asl], ForceNodes = [0, 1, 2] }
-                : new Plan { OsmNode = node, Anchor = anc, Def = UNMRG, Arms = [af, ac, asl], ForceNodes = [2, 0, 1] };
+                ? new Plan { OsmNode = node, Anchor = anc, Def = at ? ATDIV : UNDIV, Arms = [af, ac, asl], ForceNodes = [0, 1, 2] }
+                : new Plan { OsmNode = node, Anchor = anc, Def = at ? ATMRG : UNMRG, Arms = [af, ac, asl], ForceNodes = [2, 0, 1] };
         }
         return null;
     }
@@ -877,9 +1004,9 @@ public static class Junctions
             var xw = Vector3.Transform(Vector3.UnitX, rot); xw.Y = 0;
             return (pos[0] + pos[1]) / 2 + Vector3.Normalize(xw) * lx;
         }
-        if (p.Def == UNDIV || p.Def == UNMRG)
+        if (p.Def == UNDIV || p.Def == UNMRG || p.Def == ATDIV || p.Def == ATMRG)
         {
-            var near = pos[p.Def == UNDIV ? 1 : 2]; var far = pos[p.Def == UNDIV ? 0 : 0];
+            var near = pos[p.Def == UNDIV || p.Def == ATDIV ? 1 : 2]; var far = pos[0];
             return near + Vector3.Normalize(far - near) * 8f;
         }
         return (pos[p.Def.Through[0]] + pos[p.Def.Through[1]]) / 2;
@@ -997,7 +1124,7 @@ public static class Junctions
                 // Kreuzung/Einmündung mit durchgehender Straße: Prefab nur nach den beiden
                 // durchgehenden Armen drehen – sonst zöge ein schräger Seitenarm die gerade
                 // Hauptstraße in ein S (St 2183 an der Zufahrt zur A 70)
-                if (p.Def.Through.Length == 2 && p.Def.Side.Length >= 1 && p.ForceNodes is null
+                if (p.Def.Through.Length == 2 && p.Def.Side.Length >= 1 && (p.ForceNodes is null || p.Def == TTURN || p.Def == ATDIV || p.Def == ATMRG)
                     && Vector2.Dot(p.Arms[0].Away, p.Arms[1].Away) < -MathF.Cos(StraightThroughDeg * MathF.PI / 180))
                 {
                     float tx = 0, ty = 0;
