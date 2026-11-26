@@ -398,8 +398,9 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   (T `cr_2x1_gntry`, X `cr_2x2_hang`, T with turn lane `cr_t1x1t`, otherwise `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` overrides,
   `OSM2ETS_NO_SIGNALS=1`: off). Prefabs without traffic-light slots in their `.ppd` (e.g. the cross
   with turn lanes on both roads) are reported.
-- Country: with `OSM2ETS_COUNTRY_ID=<country_id>` (from the game's `def/country/<country>.sii`) one
-  node of every connected network becomes a country border with that country on both sides. Without
+- Country: one node of every connected network becomes a country border with the profile's country
+  on both sides (profile `de`: Germany, `country_id` 5 from the game's `def/country/germany.sui`;
+  `OSM2ETS_COUNTRY_ID=<id>` overrides, `0`: no country). Without
   a country, country-specific models are missing, e.g. the traffic-light model `city_str` (only
   exists as `city_str.germany` etc.).
 - Dead-end barriers at the junction where a road leads nowhere: open ends (OSM continues on ways

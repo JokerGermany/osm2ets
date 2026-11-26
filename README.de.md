@@ -403,8 +403,9 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   `cr_2x2_hang`, Einmündung mit Abbiegespur `cr_t1x1t`, sonst `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` überschreibt, `OSM2ETS_NO_SIGNALS=1`: aus).
   Prefabs ohne Ampelplätze in der `.ppd` (z. B. Kreuzung mit Abbiegespuren auf beiden Straßen)
   werden gemeldet.
-- Land: Mit `OSM2ETS_COUNTRY_ID=<country_id>` (aus `def/country/<land>.sii` des Spiels) wird in
-  jedem zusammenhängenden Netz ein Knoten zur Ländergrenze mit diesem Land auf beiden Seiten. Ohne
+- Land: In jedem zusammenhängenden Netz wird ein Knoten zur Ländergrenze mit dem Land des Profils
+  auf beiden Seiten (Profil `de`: Deutschland, `country_id` 5 aus `def/country/germany.sui` des
+  Spiels; `OSM2ETS_COUNTRY_ID=<id>` überschreibt, `0`: kein Land). Ohne
   Land fehlen länderabhängige Modelle, z. B. das Ampelmodell `city_str` (nur als
   `city_str.germany` usw. vorhanden).
 - Sperrbaken („dead end“) an der Kreuzung, an der eine Straße ins Nichts abzweigt: offene Enden

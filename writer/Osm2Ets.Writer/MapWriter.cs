@@ -645,9 +645,9 @@ public static class MapWriter
         var (sigSet, sigMissing) = TrafficSignals.Apply(map, input.Areas.Where(a => a.Kind == "traffic_signals").ToList());
         if (sigSet > 0) warnings.Add($"Info: {sigSet} Kreuzungen mit Ampel");
         foreach (var m in sigMissing) warnings.Add($"Ampel in OSM, aber Prefab ohne Ampelplätze: {m}");
-        int countryNets = Country.Apply(map);
+        int countryNets = Country.Apply(map, input.Profile);
         if (countryNets > 0) warnings.Add($"Info: Land {Country.Id} an {countryNets} Netzen gesetzt (Grenzknoten)");
-        else warnings.Add("Info: kein Land gesetzt (OSM2ETS_COUNTRY_ID) – länderabhängige Modelle wie Ampeln fehlen");
+        else warnings.Add("Info: kein Land gesetzt (Profil ohne Länder-ID oder OSM2ETS_COUNTRY_ID=0) – länderabhängige Modelle wie Ampeln fehlen");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen (davon {DeadEnds.Networks} vor Sackgassen-Netzen)");
         if (AreaCheck.Run(map, input.Areas.Where(a => a.Kind is not ("fuel" or "services" or "rest_area" or "traffic_signals")).ToList()) is { } ac)

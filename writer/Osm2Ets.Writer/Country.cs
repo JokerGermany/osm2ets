@@ -8,14 +8,20 @@ namespace Osm2Ets.Writer;
 /// „Country border“ mit der Länder-ID je Seite). Ohne Land fehlen länderabhängige Modelle – z. B.
 /// das Ampelmodell city_str (nur als city_str.germany usw. vorhanden), die Ampeln blieben aus.
 /// Je zusammenhängendem Netz aus Straßen und Prefabs wird ein Knoten zur Grenze mit dem Land auf
-/// beiden Seiten. Länder-ID aus def/country/&lt;land&gt;.sii (country_id): OSM2ETS_COUNTRY_ID.
+/// beiden Seiten. Länder-ID aus dem Profil des Zwischenformats (de → 5, aus def/country/germany.sui
+/// des Spiels: country_id 5); OSM2ETS_COUNTRY_ID überschreibt (0 = kein Land).
 /// </summary>
 internal static class Country
 {
-    public static byte? Id = byte.TryParse(Environment.GetEnvironmentVariable("OSM2ETS_COUNTRY_ID"), out var v) ? v : null;
+    /// <summary>Profil → country_id (def/country/&lt;land&gt;.sui).</summary>
+    private static readonly Dictionary<string, byte> ByProfile = new(StringComparer.OrdinalIgnoreCase) { ["de"] = 5 };
+    public static byte? Id;
 
-    public static int Apply(Map map)
+    public static int Apply(Map map, string? profile)
     {
+        var env = Environment.GetEnvironmentVariable("OSM2ETS_COUNTRY_ID");
+        Id = env is not null ? (byte.TryParse(env, out var v) && v > 0 ? v : null)
+           : profile is not null && ByProfile.TryGetValue(profile, out var p) ? p : null;
         if (Id is not byte id) return 0;
         var seen = new HashSet<IMapItem>();
         int n = 0;

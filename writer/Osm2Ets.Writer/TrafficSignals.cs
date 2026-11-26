@@ -16,6 +16,8 @@ internal static class TrafficSignals
     public static string Profile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") ?? "cr_1x1";
     /// <summary>Profile je Prefab: ch_14001 bietet im Editor nur cr_t1x1t an; mod_ger_67/63 nennen in ihrer
     /// Definition (def/world/prefab.sii) cr_2x1_gntry bzw. cr_2x2_hang.</summary>
+    /// <summary>Prefabs mit dem Zusatzteil _semaphores (im Editor gesehen).</summary>
+    private static readonly HashSet<string> WithSemaphorePart = ["ch_14001"];
     private static readonly Dictionary<string, string> ByModel = new()
     {
         ["ch_14001"] = "cr_t1x1t", ["mod_ger_67"] = "cr_2x1_gntry", ["mod_ger_63"] = "cr_2x2_hang",
@@ -59,6 +61,10 @@ internal static class TrafficSignals
                 continue;
             }
             p.SemaphoreProfile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") is null && ByModel.TryGetValue(p.Model.ToString(), out var pm) ? pm : Profile;
+            // wie in der Europa-Karte: Zusatzteil _semaphores dazu (nur wo das Modell es nachweislich hat;
+            // die Teilnamen stehen in der .pmg, die hier nicht vorliegt)
+            if (WithSemaphorePart.Contains(p.Model.ToString()) && !p.AdditionalParts.Any(t => t.ToString() == "_semaphores"))
+                p.AdditionalParts.Add("_semaphores");
             set++;
         }
         return (set, missing);
