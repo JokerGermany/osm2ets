@@ -462,6 +462,11 @@ public static class Overlaps
     }
 
     /// <summary>Wie weit (Bogenlänge) das Ende von r gekürzt werden muss, damit es o nicht überdeckt.</summary>
+    /// <summary>So weit (m) muss das Ende von <paramref name="r"/> gekürzt werden, bis es (mit seiner halben Breite)
+    /// die Fahrbahn von <paramref name="o"/> nicht mehr berührt.</summary>
+    public static float TrimNeeded(RoadEntry r, bool atStart, RoadEntry o, Func<RunEntry, float> halfWidth)
+        => r == o ? 0 : NeededTrim(r, atStart, o, halfWidth(atStart ? r.Runs[0] : r.Runs[^1]), halfWidth);
+
     private static float NeededTrim(RoadEntry r, bool atStart, RoadEntry o, float hw, Func<RunEntry, float> halfWidth, bool symmetric = false, float step = 1f)
     {
         var pts = atStart ? r.Points : Enumerable.Reverse(r.Points).ToList();

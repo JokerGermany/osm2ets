@@ -67,6 +67,9 @@ public static class Junctions
     public static List<AreaEntry> Stations = [];
     private static readonly List<(long Node, RoadEntry A0, RoadEntry A1)> PendingGasR = [];
     private static readonly List<(long Node, RoadEntry Access)> PendingGasB = [];
+    /// <summary>Knoten der Einmündungen von Tankstellen-Zufahrten: ihre Lage ist auf die Tankstelle
+    /// abgestimmt, sie werden vor den übrigen Kreuzungen gesetzt (Nachbarn schließen an sie an).</summary>
+    public static readonly HashSet<long> FuelTees = [];
     private static long synthGas = -1_500_000;
     private const float GasHalf = 69.05f, GasTail = 25f, GasStraight = 1.5f, GasAccess = 20f, GasNeedPrefab = 45f, GasNeedChange = 26f, GasNeedFree = 20f;
     public static readonly Def HATCH11 = new(new("mod_ger_99", "/prefab2/fork_temp/ger/ger_fork_road_1_x_1_plus_1_tmpl.ppd", "clean", "ger_1"), [0, 1], []);
@@ -98,6 +101,8 @@ public static class Junctions
     public static readonly Def UNTL = new(new("un_14023", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1_mirrored.ppd", "no_lines", "asp_rough_05"), [0, 2], [1]);
     public static readonly Def UNTR = new(new("un_14022", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1.ppd", "no_lines", "asp_rough_05"), [0, 1], [2]);
     public static bool UseUnT = Environment.GetEnvironmentVariable("OSM2ETS_UN_T") == "1";
+    /// <summary>Abstand des Seitenknotens von der durchgehenden Achse: Universal-Einmündung bzw. T-Prefab (m).</summary>
+    private const float UnSideArm = 22.46f, TrSideArm = 18f;
     /// <summary>Einmündungen, an denen <see cref="PrepareUnT"/> die 2+1-Straße beginnen lässt.</summary>
     public static readonly HashSet<long> UnTNodes = [];
     /// <summary>2+1-Straßen ab einer Universal-Einmündung: LaneCentering versetzt sie nicht (die Einmündung
@@ -146,6 +151,18 @@ public static class Junctions
             }
             JoinAt(roads, node);
             UnTRoads.Add(roads.Contains(a) ? a : b);
+            // Tankstellen-Zufahrt: Seitenknoten der Universal-Einmündung 22,46 m von der Achse (T-Prefab 18 m) –
+            // Zufahrt so viel länger, sonst rückte die Einmündung beim Anschluss an die Tankstelle von der Straße weg
+            foreach (var (_, acc) in PendingGasB)
+                if (acc.Start?.OsmNode == t && acc.Points.Count >= 2)
+                {
+                    var a0 = acc.Points[0]; var a1 = acc.Points[^1];
+                    double dx = a1[0] - a0[0], dz = a1[2] - a0[2], l0 = Math.Sqrt(dx * dx + dz * dz);
+                    if (l0 < 1) continue;
+                    double l1 = l0 + UnSideArm - TrSideArm;
+                    acc.Points = [a0, [a0[0] + dx / l0 * l1 / 2, a0[1], a0[2] + dz / l0 * l1 / 2], [a0[0] + dx / l0 * l1, a1[1], a0[2] + dz / l0 * l1]];
+                    acc.LengthM = l1;
+                }
             ends.Remove(node);
             UnTNodes.Add(t);
             warnings.Add($"Info: Knoten {node}: 2+1-Straße beginnt schon an der Einmündung {t} (Universal-Einmündung ohne Markierung, Test)");
@@ -352,7 +369,7 @@ public static class Junctions
     /// </summary>
     public static int PrepareFuel(List<RoadEntry> roads, List<string> warnings)
     {
-        PendingGasR.Clear(); PendingGasB.Clear();
+        PendingGasR.Clear(); PendingGasB.Clear(); FuelTees.Clear();
         if (!UseFuel) return 0;
         int placed = 0;
         foreach (var st in Stations.Where(a => a.Kind == "fuel"))
@@ -422,6 +439,7 @@ public static class Junctions
             {
                 var (host, sAt, dir, via) = acc.Value;
                 long at = synthGas--;
+                FuelTees.Add(at);
                 var p = PointAlong(host, true, (float)sAt);
                 double y = HeightAt(host, true, (float)sAt);
                 var far = SplitAtArc(host, sAt, at);
@@ -580,15 +598,107 @@ public static class Junctions
         return best;
     }
 
+    /// <summary>Feld-/Fußwege an Kreuzungen lösen (aus: OSM2ETS_KEEP_MINOR_NODES=1 – dann wie bisher kein Prefab).</summary>
+    public static bool UseMinorDetach = Environment.GetEnvironmentVariable("OSM2ETS_KEEP_MINOR_NODES") != "1";
+    /// <summary>Kreuzungsarm bis zu dieser Länge (m) wird über einen Knoten mit nur Feld-/Fußwegen hinweg verbunden.</summary>
+    public const float MinorJoinShort = 30f;
+
+    /// <summary>
+    /// Feld- und Fußwege (<see cref="IsMinorWay"/>) verhinderten an einer Kreuzung jedes Prefab – die übrigen
+    /// Straßen blieben dann unverbunden (Zufahrt westlich des Autohofs an der B 85: Service-Weg nach Norden
+    /// endete vor der Straße). Hier werden solche Wege vom Knoten gelöst und am Fahrbahnrand gekürzt, wie
+    /// sonst bei Abzweigen ohne Prefab; danach setzt <see cref="Find"/> das Prefab für die übrigen Straßen.
+    /// Endet ein kurzer Kreuzungsarm (unter <see cref="MinorJoinShort"/> m) an einem Knoten, an dem außer
+    /// seiner Fortsetzung nur Feld-/Fußwege hängen, werden beide verbunden – sonst wäre der Arm zu kurz.
+    /// Nur an Kreuzungen mit mindestens drei Straßen, die keine Sichtstücke sind, nicht an Autobahnen und
+    /// Rampen. Nach PrepareFuel, vor LaneCentering aufrufen.
+    /// </summary>
+    public static int DetachMinorWays(List<RoadEntry> roads, Func<RunEntry, float> halfWidth, List<string> warnings)
+    {
+        if (!UseMinorDetach) return 0;
+        Dictionary<long, List<(RoadEntry R, bool AtStart)>> Ends()
+        {
+            var d = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
+            foreach (var r in roads)
+                foreach (var st in new[] { true, false })
+                    if ((st ? r.Start : r.End) is { Kind: "node", OsmNode: long id })
+                        (d.TryGetValue(id, out var l) ? l : d[id] = []).Add((r, st));
+            return d;
+        }
+        static RunEntry RunAt((RoadEntry R, bool AtStart) e) => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1];
+        static bool Minor((RoadEntry R, bool AtStart) e) => IsMinorWay(RunAt(e));
+        static bool Fast((RoadEntry R, bool AtStart) e) => RunAt(e).Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link";
+        // nur echte (befahrbare) Kreuzungen: mindestens drei Straßen, die keine Sichtstücke sind – an Kreuzungen
+        // aus Sichtstücken bleibt alles wie bisher (dort braucht es kein Prefab; ein T passte oft schlecht)
+        static bool Real(List<(RoadEntry R, bool AtStart)> major) => major.Count(e => e.R.Role != "visible") >= 3;
+        int detached = 0, joined = 0;
+        bool Detach((RoadEntry R, bool AtStart) m, List<RoadEntry> others, long node)
+        {
+            float need = others.Max(o => Overlaps.TrimNeeded(m.R, m.AtStart, o, halfWidth));
+            double len = Interchanges.ArcLengthOf(m.R);
+            if (need > Overlaps.MaxTrim || len < need + 10)
+            {
+                warnings.Add($"Info: Knoten {node}: Weg {m.R.Id} lässt sich nicht vom Knoten lösen ({len:0} m, nötig {need + 10:0} m) – dort kein Kreuzungs-Prefab");
+                return false;
+            }
+            if (need > Overlaps.Tolerance) Overlaps.CutEnd(m.R, m.AtStart, need);
+            var cut = new EndInfo { Kind = "trimmed", OsmNode = node };
+            if (m.AtStart) m.R.Start = cut; else m.R.End = cut;
+            detached++;
+            return true;
+        }
+        // 1. kurzer Kreuzungsarm über einen Knoten mit nur Feld-/Fußwegen hinweg
+        bool again = true;
+        while (again)
+        {
+            again = false;
+            var ends = Ends();
+            foreach (var (node, list) in ends)
+            {
+                var major = list.Where(e => !Minor(e)).ToList(); var minor = list.Where(Minor).ToList();
+                if (minor.Count == 0 || major.Count != 2 || major[0].R == major[1].R) continue;
+                if (major.Any(e => e.R.Closed || e.R.Runs.Any(x => x.Oneway) || Fast(e))) continue;
+                bool toJunction = major.Any(e => Interchanges.ArcLengthOf(e.R) < MinorJoinShort
+                    && (e.AtStart ? e.R.End : e.R.Start) is { Kind: "node", OsmNode: long f } && f != node
+                    && ends.TryGetValue(f, out var fl) && fl.Where(x => !Minor(x)).ToList() is { Count: 3 or 4 } fm && Real(fm) && !fl.Any(Fast));
+                if (!toJunction) continue;
+                var majorRoads = major.Select(e => e.R).ToList();
+                if (!minor.All(m => Detach(m, majorRoads, node))) continue;
+                JoinPair(roads, major[0], major[1]);
+                warnings.Add($"Info: Knoten {node}: nur Feld-/Fußwege zweigen ab – kurzer Kreuzungsarm mit seiner Fortsetzung verbunden");
+                joined++;
+                again = true;
+                break;
+            }
+        }
+        // 2. Kreuzung mit drei oder vier Straßen und Feld-/Fußwegen: Wege lösen
+        foreach (var (node, list) in Ends())
+        {
+            var major = list.Where(e => !Minor(e)).ToList(); var minor = list.Where(Minor).ToList();
+            if (minor.Count == 0 || major.Count is not (3 or 4) || list.Any(Fast) || !Real(major)) continue;
+            var majorRoads = major.Select(e => e.R).Distinct().ToList();
+            foreach (var m in minor) Detach(m, majorRoads, node);
+        }
+        if (detached + joined > 0)
+            warnings.Add($"Info: {detached} Feld-/Fußwege an Kreuzungen vom Knoten gelöst (am Fahrbahnrand gekürzt), {joined} kurze Kreuzungsarme über solche Knoten verbunden");
+        return detached;
+    }
+
     /// <summary>Verbindet die beiden Zweirichtungsstraßen an einem Knoten zu einer.</summary>
     private static void JoinAt(List<RoadEntry> roads, long node)
     {
         var l = new List<(RoadEntry R, bool AtStart)>();
         foreach (var r in roads)
             foreach (var st in new[] { true, false })
-                if ((st ? r.Start : r.End)?.OsmNode == node) l.Add((r, st));
+                if ((st ? r.Start : r.End) is { Kind: "node" } e && e.OsmNode == node) l.Add((r, st));
         if (l.Count != 2 || l[0].R == l[1].R || l.Any(e => e.R.Closed || e.R.Runs.Any(x => x.Oneway))) return;
-        var (r1, s1) = l[0]; var (r2, s2) = l[1];
+        JoinPair(roads, l[0], l[1]);
+    }
+
+    /// <summary>Zwei Zweirichtungsstraßen, die an einem Knoten enden, zu einer verbinden (die erste bleibt).</summary>
+    private static void JoinPair(List<RoadEntry> roads, (RoadEntry R, bool AtStart) a, (RoadEntry R, bool AtStart) b)
+    {
+        var (r1, s1) = a; var (r2, s2) = b;
         if (s1) Connector.Reverse(r1);           // r1 endet jetzt am Knoten
         if (!s2) Connector.Reverse(r2);          // r2 beginnt jetzt am Knoten
         int off = r1.Points.Count - 1;

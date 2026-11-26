@@ -381,6 +381,11 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   Brücke über eine Straße stieg das Gelände darunter bis an die Fahrbahn. Ein Bauwerk unter dem
   inneren Prefab (Teilung/Einmündung) bleibt weiterhin überdeckt.
 - Kreuzungen: T/X (`ger_r1_x_r1_*_narrow_tmpl`), vierstreifige Varianten, Gabelungen.
+  Feld- und Fußwege an einer Kreuzung aus mindestens drei befahrbaren Straßen (keine Sichtstücke)
+  werden vom Knoten gelöst und am Fahrbahnrand gekürzt, damit das Prefab gesetzt werden kann; ein
+  kurzer Arm (unter 30 m) zu einem Knoten, an dem nur solche Wege abzweigen, wird mit seiner
+  Fortsetzung verbunden (`OSM2ETS_KEEP_MINOR_NODES=1`: wie bisher kein Prefab). Einmündungen von
+  Tankstellen-Zufahrten werden zuerst gesetzt; eine Kreuzung daneben schließt direkt an sie an.
   Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
   verbunden; Einbahn-Arme über `ChangeOrigin`.
 - Einmündung mit Linksabbiegespur (OSM `lanes:forward`/`lanes:backward` 2/1 an einem Arm,

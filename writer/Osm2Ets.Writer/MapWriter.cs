@@ -62,7 +62,7 @@ public static class MapWriter
         Junctions.Stations = input.Areas.Where(a => a.Kind is "fuel" or "services" or "rest_area").ToList();
         var plain21 = new HashSet<long>();
         Junctions.Plain21.Clear();
-        if (prefabs is not null) { Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFuel(valid, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); Junctions.PrepareUnT(valid, warnings); plain21 = Junctions.PlainLaneChanges(valid, warnings); }
+        if (prefabs is not null) { Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFuel(valid, warnings); Junctions.DetachMinorWays(valid, run => mapping.Resolve(run).Width / 2, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); Junctions.PrepareUnT(valid, warnings); plain21 = Junctions.PlainLaneChanges(valid, warnings); }
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve, plain21);
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
         if (plain21.Count > 0) warnings.Add($"Info: {plain21.Count} Wechsel 2+1 ↔ Landstraße ohne Übergangs-Prefab (kein Platz, Knick oder Brückenende); an {LaneCentering.Kept} davon mit kurzer Landstraße läuft die Linie gerade durch, die zusätzliche Spur kommt außen hinzu");
@@ -126,7 +126,9 @@ public static class MapWriter
             string TypeAt(RoadEntry r, bool atStart) => mapping.Resolve(atStart ? r.Runs[0] : r.Runs[^1]).RoadType;
             // mehrere Durchgänge: eine Kreuzung, deren Arm zu kurz ist, kann im nächsten
             // Durchgang direkt an das inzwischen gesetzte Nachbar-Prefab angeschlossen werden
-            var pending = Junctions.Find(valid, TypeAt, warnings);
+            // Tankstellen-Einmündungen zuerst: ihre Lage ist auf die Tankstelle abgestimmt, eine Kreuzung
+            // daneben schließt direkt an sie an (stabile Sortierung, sonst Reihenfolge wie gefunden)
+            var pending = Junctions.Find(valid, TypeAt, warnings).OrderBy(p => Junctions.FuelTees.Contains(p.OsmNode) ? 0 : 1).ToList();
             valid.RemoveAll(Junctions.BypassDrops.Contains);
             var lastReason = new Dictionary<Junctions.Plan, string>();
             foreach (var jp in pending) Junctions.PendingNodes.Add(jp.OsmNode);

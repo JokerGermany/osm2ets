@@ -44,6 +44,7 @@ var tests = new List<(string Name, Action Body)>
     ("Tankstelle an gerader Landstraße: Durchfahrts-Prefab, Geländewege entfallen", FuelInline),
     ("Tankstelle ohne lange Straße: Prefab mit Zufahrt und Einmündung mit Platz für das Kreuzungs-Prefab", FuelSingleAccess),
     ("Wechsel 1+1 → 2+1 ohne Platz für den Übergang: Linie läuft gerade durch, kein S-Bogen", PlainLaneChangeKeepsLine),
+    ("Kreuzung mit Fußweg und Feldweg daneben: Wege gelöst, kurzer Arm verbunden, Prefab geplant", MinorWaysDoNotBlockJunction),
 };
 
 int failed = 0;
@@ -1161,4 +1162,38 @@ static void PlainLaneChangeKeepsLine()
     LaneCentering.Apply(old, cfg.Resolve);
     var a0 = old.Single(r => r.Id == "a");
     Check(Math.Abs(a0.Points[^1][2] + 2.375) < 0.05, $"Prüfaufbau: ohne die Regel sollte der Wechselknoten versetzt sein (z {a0.Points[^1][2]:0.00})");
+}
+
+static void MinorWaysDoNotBlockJunction()
+{
+    // Kreuzung K (x 0): Straße nach Westen und Osten, Service-Weg nach Norden, Fußweg nach Süden.
+    // 4 m östlich Knoten F, an dem nur ein Feldweg nach Süden abzweigt; die Straße läuft weiter bis x 300.
+    RoadEntry R(string id, double[][] pts, string hw, long a, long b)
+    {
+        var r = MakeRoad(id, pts, new RunEntry { From = 0, To = pts.Length - 1, Highway = hw, Role = "connector" });
+        r.Start = TNode(a); r.End = TNode(b); return r;
+    }
+    var w = R("w", [[-300, 0, 0], [0, 0, 0]], "residential", 5, 1);
+    var k = R("k", [[0, 0, 0], [4, 0, 0]], "residential", 1, 2);
+    var e = R("e", [[4, 0, 0], [300, 0, 0]], "residential", 2, 6);
+    var n = R("n", [[0, 0, 0], [0, 0, -200]], "service", 1, 7);
+    var fw = R("fw", [[0, 0, 0], [0, 0, 7], [-60, 0, 8]], "footway", 1, 8);
+    var tr = R("tr", [[4, 0, 0], [4, 0, 100]], "track", 2, 9);
+    var roads = new List<RoadEntry> { w, k, e, n, fw, tr };
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var warn = new List<string>();
+    Junctions.DetachMinorWays(roads, run => cfg.Resolve(run).Width / 2, warn);
+    Check(fw.Start?.Kind == "trimmed" && tr.Start?.Kind == "trimmed", $"Wege nicht gelöst ({fw.Start?.Kind}, {tr.Start?.Kind}; {string.Join(" | ", warn)})");
+    Check(fw.Points[0][2] > 4 && tr.Points[0][2] > 4, $"Wege nicht bis an den Fahrbahnrand gekürzt (z {fw.Points[0][2]:0.0}, {tr.Points[0][2]:0.0})");
+    Check(!roads.Contains(e) || !roads.Contains(k), "kurzer Arm nicht mit seiner Fortsetzung verbunden");
+    var arm = roads.Contains(k) ? k : e;
+    Check(Interchanges.ArcLengthOf(arm) > 290, $"verbundener Arm {Interchanges.ArcLengthOf(arm):0} m");
+    Junctions.Reset();
+    var plans = Junctions.Find(roads, (_, _) => "ger1", []);
+    Check(plans.Any(p => p.OsmNode == 1 && p.Def == Junctions.TR1), $"kein T-Prefab an der Kreuzung ({plans.Count} Pläne)");
+    // Gegenprobe: ohne Lösen verhinderte der Fußweg das Prefab
+    var w2 = R("w", [[-300, 0, 0], [0, 0, 0]], "residential", 5, 1); var e2 = R("e", [[0, 0, 0], [300, 0, 0]], "residential", 1, 6);
+    var n2 = R("n", [[0, 0, 0], [0, 0, -200]], "service", 1, 7); var f2 = R("fw", [[0, 0, 0], [0, 0, 7], [-60, 0, 8]], "footway", 1, 8);
+    Junctions.Reset();
+    Check(!Junctions.Find([w2, e2, n2, f2], (_, _) => "ger1", []).Any(p => p.OsmNode == 1), "Prüfaufbau: mit Fußweg am Knoten sollte es kein Prefab geben");
 }

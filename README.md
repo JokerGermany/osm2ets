@@ -376,7 +376,12 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   under the inner prefab (split/join) is still covered by it.
   Ramp points closer to the main road than the prefab's ramp node are dropped (otherwise
   the ramp swings back across the main road). Road terrain is cleared only on the gore side.
-- Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits. Arms
+- Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits. Tracks and
+  footways at a junction of at least three drivable roads (not visible-only stubs) are detached from
+  the node and cut back at the road edge so the prefab can be placed; a short arm (under 30 m) to a
+  node where only such ways branch off is joined with its continuation (`OSM2ETS_KEEP_MINOR_NODES=1`:
+  no prefab, as before). T junctions of fuel station accesses are placed first; a junction next to one
+  attaches to it directly. Arms
   meeting at a sharp angle are bent onto an arc; junctions closer than their prefab radii
   are connected prefab-to-prefab; one-way arms via `ChangeOrigin`.
 - T junction with a left-turn lane (OSM `lanes:forward`/`lanes:backward` 2/1 on one arm, side road
