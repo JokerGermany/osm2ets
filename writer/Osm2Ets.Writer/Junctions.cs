@@ -643,7 +643,11 @@ public static class Junctions
             if (d.LengthSquared() < 1e-6f || segs.Count == 0) continue;
             d = Vector2.Normalize(d);
             float reach = PrefabRoadHalf + halfWidth(atStart ? r.Runs[0] : r.Runs[^1]) - Overlaps.Tolerance;
-            if (segs.Min(sg => Dist(end, sg.A, sg.B)) > reach + 25) continue;   // kein Prefab in der Nähe
+            float D(Vector2 q) => segs.Min(sg => Dist(q, sg.A, sg.B));
+            if (D(end) > reach + 25) continue;   // kein Prefab in der Nähe
+            // nur Wege, die auf das Prefab zulaufen (mindestens 30° zum Rand): ein am Rand entlang laufender
+            // Weg würde sonst verlängert und kreuzte andere Wege (Fußweg über den Feldweg westlich des Autohofs)
+            if (D(end) - D(end + d * 2) < 1f) continue;
             for (float t = 0; t <= 25; t += 0.25f)
             {
                 var q = end + d * t;
