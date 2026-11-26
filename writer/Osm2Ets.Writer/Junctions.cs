@@ -95,8 +95,8 @@ public static class Junctions
     // Universal-Einmündung, an deren einem durchgehenden Arm die zweite Spur einer 2+1-Straße beginnt
     // (un_14023 „un cross 1-1 / 2-1 t 1-1 mirrored“: Nebenstraße links; un_14022 rechts). Variante
     // no_lines (ohne Markierung, die universelle passt nicht zu deutschen Straßen). Test: OSM2ETS_UN_T=1.
-    public static readonly Def UNTL = new(new("un_14023", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1_mirrored.ppd", "no_lines", "asph_new_01"), [0, 2], [1]);
-    public static readonly Def UNTR = new(new("un_14022", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1.ppd", "no_lines", "asph_new_01"), [0, 1], [2]);
+    public static readonly Def UNTL = new(new("un_14023", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1_mirrored.ppd", "no_lines", "asp_rough_05"), [0, 2], [1]);
+    public static readonly Def UNTR = new(new("un_14022", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1.ppd", "no_lines", "asp_rough_05"), [0, 1], [2]);
     public static bool UseUnT = Environment.GetEnvironmentVariable("OSM2ETS_UN_T") == "1";
     /// <summary>Einmündungen, an denen <see cref="PrepareUnT"/> die 2+1-Straße beginnen lässt.</summary>
     public static readonly HashSet<long> UnTNodes = [];
