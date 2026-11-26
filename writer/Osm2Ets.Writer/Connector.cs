@@ -142,8 +142,11 @@ public static class Connector
     {
         int segments = r.Points.Count - 1;
         r.Points.Reverse();
-        r.Runs = r.Runs.Select(x => { var (f, t) = (segments - x.To, segments - x.From); x.From = f; x.To = t; (x.LanesForward, x.LanesBackward) = (x.LanesBackward, x.LanesForward); return x; })
+        r.Runs = r.Runs.Select(x => { var (f, t) = (segments - x.To, segments - x.From); x.From = f; x.To = t; (x.LanesForward, x.LanesBackward) = (x.LanesBackward, x.LanesForward); x.Sidewalk = SwapSide(x.Sidewalk); x.Shoulder = SwapSide(x.Shoulder); return x; })
                        .OrderBy(x => x.From).ToList();
         (r.Start, r.End) = (r.End, r.Start);
     }
+
+    /// <summary>Seitenangabe (left/right) beim Umdrehen der Straßenlinie tauschen.</summary>
+    private static string? SwapSide(string? v) => v switch { "left" => "right", "right" => "left", _ => v };
 }

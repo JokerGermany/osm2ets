@@ -139,6 +139,10 @@ static void MappingResolve()
     Check(cfg.Resolve(shR).Right?.RightEdge == "ger_sh_as_15" && cfg.Resolve(shR).Right?.LeftEdge != "ger_sh_as_15", "shoulder=right: nur rechts");
     var shM = MakeRun(0, 1, "motorway", oneway: true); shM.Shoulder = "no";
     Check(cfg.Resolve(shM) == mw, "Autobahn: shoulder ändert nichts");
+    var swL = MakeRun(0, 1, "residential", role: "connector"); swL.Sidewalk = "left";
+    Check(cfg.Resolve(swL).Right?.LeftEdge == "ger_sw_3m_a" && cfg.Resolve(swL).Right?.RightEdge != "ger_sw_3m_a", "sidewalk=left: Gehweg nur links");
+    var swB = MakeRun(0, 1, "residential", role: "connector"); swB.Sidewalk = "both"; swB.Shoulder = "yes";
+    Check(cfg.Resolve(swB).Right?.LeftEdge == "ger_sw_3m_a" && cfg.Resolve(swB).Right?.RightEdge == "ger_sw_3m_a", "sidewalk=both hat Vorrang vor shoulder");
     // Sperrfläche (setzt der Writer): Straßentyp ger26, sonst wie die Regel des Stücks
     var hc = MakeRun(0, 1, "primary", role: "connector"); hc.Hatched = true;
     var hcs = cfg.Resolve(hc);

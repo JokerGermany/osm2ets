@@ -399,6 +399,9 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   Test `OSM2ETS_UN_T=1`: if the change lies just behind a T junction, the 2+1 road starts there; the T
   is then the universal "un cross 1-1 / 2-1 t 1-1" without markings, look asp_rough_05 (no template
   change on the road).
+- Sidewalks from OSM `sidewalk=left/right/both` (also `sidewalk:left/right/both=yes`): German 3 m
+  sidewalk `ger_sw_3m_a` as road edge on that side (not on motorways/trunks; `separate`/`no`: none).
+  Takes precedence over `shoulder`.
 - Fuel stations (`amenity=fuel`): the station's own service ways are replaced by a station prefab
   (fuelling only works at prefab refuel points). `gas_small_road_01_ger` where a straight two-lane
   road (≥ 188 m without junction) runs past; otherwise `gas_universal_03_balt` (category dlc_balt)

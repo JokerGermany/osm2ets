@@ -109,6 +109,8 @@ public sealed class RunEntry
     public string? Access { get; set; }
     /// <summary>OSM shoulder=* (yes, both, left, right, no), sonst null.</summary>
     public string? Shoulder { get; set; }
+    /// <summary>Gehweg nach OSM sidewalk=* (left, right, both – in Richtung der Straßenlinie), sonst null.</summary>
+    public string? Sidewalk { get; set; }
     /// <summary>OSM width=* in Metern, sonst null.</summary>
     public double? Width { get; set; }
     /// <summary>OSM lanes:forward (in Richtung der Straßenlinie).</summary>

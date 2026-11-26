@@ -43,6 +43,30 @@ class Projector:
 # --------------------------------------------------------------------------- Läufe
 
 
+def parse_sidewalk(tags, reverse: bool = False):
+    """Gehweg an der Straße nach sidewalk=* bzw. sidewalk:left/right/both=*: "left", "right", "both" oder
+    None – Seiten in Richtung der Straßenlinie (bei umgedrehtem Stück getauscht). "separate" (eigener
+    Weg in OSM) und "no" zählen nicht."""
+    yes = {"yes"}
+    v = tags.get("sidewalk")
+    left = right = False
+    if v in ("both", "yes"):
+        left = right = True
+    elif v == "left":
+        left = True
+    elif v == "right":
+        right = True
+    if tags.get("sidewalk:both") in yes:
+        left = right = True
+    if tags.get("sidewalk:left") in yes:
+        left = True
+    if tags.get("sidewalk:right") in yes:
+        right = True
+    if reverse:
+        left, right = right, left
+    return "both" if left and right else "left" if left else "right" if right else None
+
+
 def run_key(part, role: str) -> tuple:
     """Attribute, nach denen ein Straßenstück im Writer unterschieden wird."""
     tags = part.edge.way.tags
@@ -73,11 +97,12 @@ def run_key(part, role: str) -> tuple:
         parse_width(tags),
         fw,
         bw,
+        parse_sidewalk(tags, part.reverse),
     )
 
 
 RUN_FIELDS = ("highway", "role", "oneway", "lanes", "bridge", "tunnel", "layer", "ref", "maxspeed", "service",
-              "access", "shoulder", "width", "lanes_forward", "lanes_backward")
+              "access", "shoulder", "width", "lanes_forward", "lanes_backward", "sidewalk")
 
 
 def _lane_count(raw):

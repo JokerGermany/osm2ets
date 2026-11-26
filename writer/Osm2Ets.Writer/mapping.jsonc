@@ -119,6 +119,13 @@
     "right": { "right": { "right_edge": "ger_sh_as_15" } },
     "left": { "right": { "left_edge": "ger_sh_as_15" } }
   },
+  // Gehweg nach OSM sidewalk=* (bzw. sidewalk:left/right/both=yes): deutscher 3-m-Gehweg ger_sw_3m_a als
+  // Rand (Seiten wie bei shoulder; Annahme wie dort). sidewalk=separate/no: kein Gehweg am Rand.
+  "sidewalk": {
+    "both": { "right": { "left_edge": "ger_sw_3m_a", "right_edge": "ger_sw_3m_a" } },
+    "right": { "right": { "right_edge": "ger_sw_3m_a" } },
+    "left": { "right": { "left_edge": "ger_sw_3m_a" } }
+  },
   "shoulder_skip": ["motorway", "motorway_link", "trunk", "trunk_link"],
   // Ein Brückenkörper für beide Richtungsfahrbahnen eines Paars paralleler Autobahnbrücken, wie in
   // der SCS-Karte: Railing dlc_it_8 = /model2/railing/bridge/it_hw3_lanes_2m_offset_deep_it.pmd aus

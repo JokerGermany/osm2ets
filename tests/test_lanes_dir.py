@@ -32,3 +32,16 @@ def test_lanes_tag_wins_over_sum():
 def test_oneway_uses_forward_when_lanes_missing():
     r = _run(_part({"lanes:forward": "2"}, oneway=1))
     assert r["lanes"] == 2
+
+
+def test_parse_sidewalk():
+    from osm2ets.geometry import parse_sidewalk
+    assert parse_sidewalk({"sidewalk": "both"}) == "both"
+    assert parse_sidewalk({"sidewalk": "yes"}) == "both"
+    assert parse_sidewalk({"sidewalk": "left"}) == "left"
+    assert parse_sidewalk({"sidewalk": "left"}, reverse=True) == "right"
+    assert parse_sidewalk({"sidewalk:right": "yes"}) == "right"
+    assert parse_sidewalk({"sidewalk:left": "yes", "sidewalk:right": "yes"}) == "both"
+    assert parse_sidewalk({"sidewalk": "separate"}) is None
+    assert parse_sidewalk({"sidewalk": "no"}) is None
+    assert parse_sidewalk({}) is None

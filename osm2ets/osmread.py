@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 KEPT_TAGS = (
     "highway", "ref", "name", "oneway", "junction", "lanes", "lanes:forward",
     "lanes:backward", "maxspeed", "bridge", "tunnel", "layer", "service", "shoulder", "width",
+    "sidewalk", "sidewalk:both", "sidewalk:left", "sidewalk:right",
 )
 
 _ALLOWED_VEHICLE_VALUES = frozenset({"yes", "designated", "permissive", "destination"})

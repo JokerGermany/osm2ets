@@ -23,6 +23,9 @@ public sealed class MappingConfig
     /// <summary>Seitenstreifen nach OSM shoulder=* (Schlüssel: Tag-Wert), außer für die Klassen in ShoulderSkip.</summary>
     public Dictionary<string, StyleSpec>? Shoulder { get; set; }
     public List<string>? ShoulderSkip { get; set; }
+    /// <summary>Gehweg nach OSM sidewalk=* (Schlüssel: left, right, both), außer für die Klassen in ShoulderSkip;
+    /// nach dem Seitenstreifen angewandt (Gehweg hat Vorrang).</summary>
+    public Dictionary<string, StyleSpec>? Sidewalk { get; set; }
     /// <summary>Überschreibt Werte auf Sichtstücken (Rolle "visible": Straßen höherer Stufen, die man von der
     /// Strecke aus sieht – nur ein Stück davon, mit offenem Ende), zusätzlich zur Regel.</summary>
     public StyleSpec? Visible { get; set; }
@@ -73,6 +76,7 @@ public sealed class MappingConfig
         Tunnel?.Validate("tunnel", errors);
         Restricted?.Validate("restricted", errors);
         if (Shoulder is not null) foreach (var (k, v) in Shoulder) v.Validate($"shoulder.{k}", errors);
+        if (Sidewalk is not null) foreach (var (k, v) in Sidewalk) v.Validate($"sidewalk.{k}", errors);
         Visible?.Validate("visible", errors);
         Hatched?.Validate("hatched", errors);
         BridgeBody?.Validate("bridge_body", errors);
@@ -117,6 +121,9 @@ public sealed class MappingConfig
         if (run.Shoulder is { } sh && Shoulder is not null && Shoulder.TryGetValue(sh, out var shs)
             && !(ShoulderSkip?.Contains(run.Highway) ?? false))
             style = shs.ToResolved(style);
+        if (run.Sidewalk is { } sw && Sidewalk is not null && Sidewalk.TryGetValue(sw, out var sws)
+            && !(ShoulderSkip?.Contains(run.Highway) ?? false))
+            style = sws.ToResolved(style);
         if (run.Role == VisibleRole && Visible is not null)
             style = Visible.ToResolved(style);
         return style;
