@@ -29,6 +29,12 @@ internal static class DeadEnds
         var placed = new List<Placed>();
         var done = new HashSet<INode>();
         Networks = 0;
+        var entryOf = new Dictionary<IMapItem, (RoadEntry E, bool AtStart)>();
+        foreach (var r in roads)
+        {
+            if (first.TryGetValue(r, out var f1)) entryOf[f1] = (r, true);
+            if (last.TryGetValue(r, out var l1)) entryOf.TryAdd(l1, (r, false));
+        }
         var atPrefab = new List<(Prefab P, MapItem Item)>();
         if (!Enabled) return placed;
         // nur Kreuzungen, die der Spieler von der Autobahn aus erreicht: Netz ab allen Autobahn- und
@@ -166,9 +172,13 @@ internal static class DeadEnds
                 var q = (cur as Road)!.Node == junction ? (cur as Road)!.ForwardNode.Position : (cur as Road)!.Node.Position;
                 var d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));   // von der Kreuzung in die Sackgasse
                 if (float.IsNaN(d.X)) continue;
-                var at = new Vector2(p.X, p.Z) + d * Inset;
                 var n = new Vector2(-d.Y, d.X);
-                float half = st.Width / 2 + Extra;
+                // Breite und Modellmitte der Straße an der Kreuzung (nicht am fernen offenen Ende:
+                // 2+1-Arm vor einer schmalen Sackgasse, Sperre war zu kurz und mittig)
+                var cr = (Road)cur;
+                var sj = entryOf.TryGetValue(cr, out var ej) ? styles[ej.E][ej.AtStart ? 0 : ^1] : st;
+                float half = sj.Width / 2 + Extra;
+                var at = new Vector2(p.X, p.Z) + d * Inset + n * (ReferenceEquals(cr.Node, junction) ? sj.ModelCenter : -sj.ModelCenter);
                 var a = at + n * half; var b = at - n * half;
                 var item = Buildings.Add(map, new Vector3(a.X, p.Y, a.Y), new Vector3(b.X, p.Y, b.Y), Scheme);
                 item.Stretch = 1f;
@@ -182,12 +192,6 @@ internal static class DeadEnds
         // enden im Nichts), gehört die Sperre vor sie an den Arm davor; ihre eigenen Sperren entfallen.
         if (UseNetworks)
         {
-            var entryOf = new Dictionary<IMapItem, (RoadEntry E, bool AtStart)>();
-            foreach (var r in roads)
-            {
-                if (first.TryGetValue(r, out var f1)) entryOf[f1] = (r, true);
-                if (last.TryGetValue(r, out var l1)) entryOf.TryAdd(l1, (r, false));
-            }
             var byNode = new Dictionary<long, List<RoadEntry>>();
             foreach (var r in roads)
                 foreach (var e in new[] { r.Start, r.End })
@@ -271,13 +275,15 @@ internal static class DeadEnds
                 if (!done.Add(nd)) continue;   // Sperre für ein offenes Ende steht dort schon
                 var p = nd.Position;
                 Vector2 d;
-                float half;
+                float half, mc = 0;
                 if (e0 is not null)
                 {
                     var rd0 = (Road)(ReferenceEquals(nd.ForwardItem, pf) ? nd.BackwardItem : nd.ForwardItem)!;
                     var q = ReferenceEquals(rd0.Node, nd) ? rd0.ForwardNode.Position : rd0.Node.Position;
                     d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));
-                    half = styles[e0][s0 ? 0 : ^1].Width / 2 + Extra;
+                    var sj = styles[e0][s0 ? 0 : ^1];
+                    half = sj.Width / 2 + Extra;
+                    mc = ReferenceEquals(rd0.Node, nd) ? sj.ModelCenter : -sj.ModelCenter;
                 }
                 else
                 {
@@ -289,8 +295,8 @@ internal static class DeadEnds
                     half = SnapHalf;
                 }
                 if (float.IsNaN(d.X)) continue;
-                var at = new Vector2(p.X, p.Z) + d * Inset;
                 var n = new Vector2(-d.Y, d.X);
+                var at = new Vector2(p.X, p.Z) + d * Inset + n * mc;
                 var item = Buildings.Add(map, new Vector3(at.X + n.X * half, p.Y, at.Y + n.Y * half), new Vector3(at.X - n.X * half, p.Y, at.Y - n.Y * half), Scheme);
                 item.Stretch = 1f;
                 placed.Add(new Placed(item.Uid, e0?.Id ?? "", e0 is null ? "prefab" : s0 ? "start" : "end", near, e0 is null ? [] : (s0 ? e0.Runs[0] : e0.Runs[^1]).OsmWays, p.X, p.Y, p.Z));
