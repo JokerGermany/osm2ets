@@ -393,6 +393,11 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   attaches to it directly. Arms
   meeting at a sharp angle are bent onto an arc; junctions closer than their prefab radii
   are connected prefab-to-prefab; one-way arms via `ChangeOrigin`.
+- Traffic lights: where OSM has `highway=traffic_signals` at the junction node or at the stop line
+  in front of it (up to 12 m outside the prefab), the junction prefab gets a semaphore profile
+  (`cr_1x1`, T junction with turn lane `cr_1tx1`; `OSM2ETS_SIGNAL_PROFILE` overrides,
+  `OSM2ETS_NO_SIGNALS=1`: off). Prefabs without traffic-light slots in their `.ppd` (e.g. the cross
+  with turn lanes on both roads) are reported.
 - Dead-end barriers at the junction where a road leads nowhere: open ends (OSM continues on ways
   outside the level) and networks that, also via visible-only stubs and further junctions, reach
   neither a motorway nor a fuel station. When a whole junction lies in such a network, the barrier

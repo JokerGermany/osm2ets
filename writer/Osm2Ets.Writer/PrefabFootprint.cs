@@ -18,6 +18,7 @@ public static class PrefabFootprint
 
     public static void Register(Prefab pf, PrefabDescriptor ppd) => Ppd[pf] = ppd;
     public static void Reset() { Ppd.Clear(); Unfitted = 0; }
+    public static PrefabDescriptor? Descriptor(Prefab pf) => Ppd.TryGetValue(pf, out var d) ? d : null;
 
     /// <summary>
     /// Wie <see cref="All"/>, mit Höhe: Ebene durch die Prefab-Knoten (das Prefab ist starr

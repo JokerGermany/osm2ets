@@ -398,6 +398,11 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   Tankstellen-Zufahrten werden zuerst gesetzt; eine Kreuzung daneben schließt direkt an sie an.
   Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
   verbunden; Einbahn-Arme über `ChangeOrigin`.
+- Ampeln: Hat OSM am Kreuzungsknoten oder an der Haltlinie davor (bis 12 m außerhalb des Prefabs)
+  `highway=traffic_signals`, bekommt das Kreuzungs-Prefab ein Ampelprofil (`cr_1x1`, Einmündung
+  mit Abbiegespur `cr_1tx1`; `OSM2ETS_SIGNAL_PROFILE` überschreibt, `OSM2ETS_NO_SIGNALS=1`: aus).
+  Prefabs ohne Ampelplätze in der `.ppd` (z. B. Kreuzung mit Abbiegespuren auf beiden Straßen)
+  werden gemeldet.
 - Sperrbaken („dead end“) an der Kreuzung, an der eine Straße ins Nichts abzweigt: offene Enden
   (in OSM geht es auf Wegen außerhalb der Stufe weiter) und Netze, die – auch über Sichtstücke und
   weitere Kreuzungen – weder eine Autobahn noch eine Tankstelle erreichen. Liegt eine Kreuzung ganz

@@ -115,13 +115,16 @@ STATION_KINDS = ("fuel", "services", "rest_area")
 
 
 def read_stations(path: str) -> list[tuple[str, str, list[int]]]:
-    """Tankstellen (amenity=fuel) und Rastanlagen (highway=services|rest_area):
+    """Tankstellen (amenity=fuel), Rastanlagen (highway=services|rest_area) und Ampeln
+    (Knoten highway=traffic_signals):
     [(ID "w…"/"n…", Art, Knoten-IDs)] – geschlossene Wege als Umriss, Knoten als Punkt."""
     out = []
     fp = osmium.FileProcessor(path, osmium.osm.NODE | osmium.osm.WAY)
     for o in fp:
         t = o.tags
         kind = "fuel" if t.get("amenity") == "fuel" else t.get("highway") if t.get("highway") in ("services", "rest_area") else None
+        if kind is None and o.is_node() and t.get("highway") == "traffic_signals":
+            kind = "traffic_signals"
         if kind is None:
             continue
         if o.is_node():
@@ -130,7 +133,7 @@ def read_stations(path: str) -> list[tuple[str, str, list[int]]]:
             refs = [n.ref for n in o.nodes]
             if len(refs) >= 4 and refs[0] == refs[-1]:
                 out.append((f"w{o.id}", kind, refs))
-    log.info("%d Tankstellen/Rastanlagen gelesen", len(out))
+    log.info("%d Tankstellen/Rastanlagen/Ampeln gelesen", len(out))
     return out
 
 

@@ -440,7 +440,8 @@ def _areas(input_path: str, projector, scale_h: float, bbox) -> list[dict]:
 
 def _stations(input_path: str, projector, scale_h: float, bbox) -> list[dict]:
     """Tankstellen und Rastanlagen als Umriss [x, z] (Art fuel/services/rest_area); ein Knoten wird
-    zum Quadrat von 10 m. Der Writer setzt dort Tankstellen-Prefabs."""
+    zum Quadrat von 10 m. Der Writer setzt dort Tankstellen-Prefabs. Ampeln (traffic_signals) als
+    ein Punkt: Der Writer regelt Kreuzungen daneben mit Ampeln."""
     raw = read_stations(input_path)
     if not raw:
         return []
@@ -454,7 +455,7 @@ def _stations(input_path: str, projector, scale_h: float, bbox) -> list[dict]:
             continue
         xy = projector.forward(np.array([p[0] for p in ll]), np.array([p[1] for p in ll])) / scale_h
         pts = [[round(float(x), 2), round(float(-y), 2)] for x, y in xy]
-        if len(pts) == 1:
+        if len(pts) == 1 and kind != "traffic_signals":   # Ampel bleibt ein Punkt
             (x, z), = pts
             pts = [[x - 5, z - 5], [x + 5, z - 5], [x + 5, z + 5], [x - 5, z + 5], [x - 5, z - 5]]
         out.append({"osm_way": int(sid[1:]) if sid[0] == "w" else -int(sid[1:]), "kind": kind, "points": pts})
