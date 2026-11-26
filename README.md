@@ -394,12 +394,12 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   meeting at a sharp angle are bent onto an arc; junctions closer than their prefab radii
   are connected prefab-to-prefab; one-way arms via `ChangeOrigin`.
 - Traffic lights: where OSM has `highway=traffic_signals` at the junction node or at the stop line
-  in front of it (up to 12 m outside the prefab), the junction prefab gets a semaphore profile
-  (T `cr_2x1_gntry`, X `cr_2x2_hang`, T with turn lane `cr_t1x1t`, otherwise `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` overrides,
+  in front of it (up to 12 m outside the prefab), the junction prefab gets the semaphore profile
+  its traffic-light slots in the `.ppd` name (e.g. T with turn lane `cr_t1x1t`; otherwise `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` overrides,
   `OSM2ETS_NO_SIGNALS=1`: off). Prefabs without traffic-light slots in their `.ppd` (e.g. the cross
   with turn lanes on both roads) are reported.
-- Country: one node of every connected network becomes a country border with the profile's country
-  on both sides (profile `de`: Germany, `country_id` 5 from the game's `def/country/germany.sui`;
+- Country: all nodes carry the profile's country (forward and backward side), and one node of every
+  connected network is marked as country border (`OSM2ETS_COUNTRY_BORDERS_ONLY=1`: border nodes only) (profile `de`: Germany, `country_id` 5 from the game's `def/country/germany.sui`;
   `OSM2ETS_COUNTRY_ID=<id>` overrides, `0`: no country). Without
   a country, country-specific models are missing, e.g. the traffic-light model `city_str` (only
   exists as `city_str.germany` etc.).

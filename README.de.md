@@ -399,12 +399,13 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
   verbunden; Einbahn-Arme über `ChangeOrigin`.
 - Ampeln: Hat OSM am Kreuzungsknoten oder an der Haltlinie davor (bis 12 m außerhalb des Prefabs)
-  `highway=traffic_signals`, bekommt das Kreuzungs-Prefab ein Ampelprofil (T `cr_2x1_gntry`, X
-  `cr_2x2_hang`, Einmündung mit Abbiegespur `cr_t1x1t`, sonst `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` überschreibt, `OSM2ETS_NO_SIGNALS=1`: aus).
+  `highway=traffic_signals`, bekommt das Kreuzungs-Prefab das Ampelprofil, das seine Ampelplätze in der
+  `.ppd` nennen (z. B. Einmündung mit Abbiegespur `cr_t1x1t`; sonst `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` überschreibt, `OSM2ETS_NO_SIGNALS=1`: aus).
   Prefabs ohne Ampelplätze in der `.ppd` (z. B. Kreuzung mit Abbiegespuren auf beiden Straßen)
   werden gemeldet.
-- Land: In jedem zusammenhängenden Netz wird ein Knoten zur Ländergrenze mit dem Land des Profils
-  auf beiden Seiten (Profil `de`: Deutschland, `country_id` 5 aus `def/country/germany.sui` des
+- Land: Alle Knoten tragen das Land des Profils (Vorder- und Rückseite), in jedem
+  zusammenhängenden Netz ist einer davon als Ländergrenze markiert (`OSM2ETS_COUNTRY_BORDERS_ONLY=1`:
+  nur die Grenzknoten) (Profil `de`: Deutschland, `country_id` 5 aus `def/country/germany.sui` des
   Spiels; `OSM2ETS_COUNTRY_ID=<id>` überschreibt, `0`: kein Land). Ohne
   Land fehlen länderabhängige Modelle, z. B. das Ampelmodell `city_str` (nur als
   `city_str.germany` usw. vorhanden).

@@ -16,6 +16,8 @@ internal static class Country
     /// <summary>Profil → country_id (def/country/&lt;land&gt;.sui).</summary>
     private static readonly Dictionary<string, byte> ByProfile = new(StringComparer.OrdinalIgnoreCase) { ["de"] = 5 };
     public static byte? Id;
+    /// <summary>Länder-Bytes in allen Knoten setzen (aus: OSM2ETS_COUNTRY_BORDERS_ONLY=1).</summary>
+    public static bool AllNodes = Environment.GetEnvironmentVariable("OSM2ETS_COUNTRY_BORDERS_ONLY") != "1";
 
     public static int Apply(Map map, string? profile)
     {
@@ -23,6 +25,10 @@ internal static class Country
         Id = env is not null ? (byte.TryParse(env, out var v) && v > 0 ? v : null)
            : profile is not null && ByProfile.TryGetValue(profile, out var p) ? p : null;
         if (Id is not byte id) return 0;
+        // Land auch in allen übrigen Knoten (Vorder-/Rückseite): Ob das Spiel es von den Grenzknoten über das
+        // Netz verteilt oder je Knoten liest, ist nicht bekannt – mit nur den Grenzknoten blieb die Ampel aus.
+        if (AllNodes)
+            foreach (var nd in map.Nodes.Values) { nd.ForwardCountry = id; nd.BackwardCountry = id; }
         var seen = new HashSet<IMapItem>();
         int n = 0;
         foreach (var start in map.MapItems.Values.Where(i => i is Road or Prefab))

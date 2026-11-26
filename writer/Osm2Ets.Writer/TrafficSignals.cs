@@ -8,20 +8,23 @@ namespace Osm2Ets.Writer;
 /// Ampeln: Kreuzungs-Prefabs, an denen OSM eine Ampel hat (Knoten highway=traffic_signals am
 /// Kreuzungsknoten oder an der Haltlinie davor), bekommen ein Ampelprofil. Nur Prefabs, deren .ppd
 /// Ampelpositionen hat (z. B. ger_r1_x_r1_(t_)narrow_tmpl); für andere eine Meldung.
-/// Aus: OSM2ETS_NO_SIGNALS=1, Profil: OSM2ETS_SIGNAL_PROFILE (Standard cr_1x1).
+/// Profil aus den Ampelplätzen der .ppd. Aus: OSM2ETS_NO_SIGNALS=1, Profil erzwingen: OSM2ETS_SIGNAL_PROFILE.
 /// </summary>
 internal static class TrafficSignals
 {
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_SIGNALS") != "1";
+    /// <summary>Ersatzprofil, wenn die Ampelplätze der .ppd keins nennen.</summary>
     public static string Profile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") ?? "cr_1x1";
-    /// <summary>Profile je Prefab: ch_14001 bietet im Editor nur cr_t1x1t an; mod_ger_67/63 nennen in ihrer
-    /// Definition (def/world/prefab.sii) cr_2x1_gntry bzw. cr_2x2_hang.</summary>
-    /// <summary>Prefabs mit dem Zusatzteil _semaphores (im Editor gesehen).</summary>
+    /// <summary>Prefabs mit dem Zusatzteil _semaphores (im Editor gesehen; die Teilnamen stehen in der .pmg).</summary>
     private static readonly HashSet<string> WithSemaphorePart = ["ch_14001"];
-    private static readonly Dictionary<string, string> ByModel = new()
-    {
-        ["ch_14001"] = "cr_t1x1t", ["mod_ger_67"] = "cr_2x1_gntry", ["mod_ger_63"] = "cr_2x2_hang",
-    };
+
+    /// <summary>
+    /// Profil aus den Ampelplätzen der .ppd (jeder Platz nennt das Profil, für das er gebaut ist;
+    /// ger_r1_turn_x_r1_t_tmpl: cr_t1x1t – das einzige, das der Editor dort anbietet). Das häufigste gilt.
+    /// </summary>
+    public static string? FromPpd(TruckLib.Models.Ppd.PrefabDescriptor ppd) => ppd.Semaphores
+        .Select(s => s.Profile.ToString()).Where(t => !string.IsNullOrEmpty(t))
+        .GroupBy(t => t).OrderByDescending(g => g.Count()).Select(g => g.Key).FirstOrDefault();
     /// <summary>So weit (m) außerhalb der Knoten eines Prefabs zählt eine Ampel noch zu ihm (Haltlinie).</summary>
     public const float Reach = 12f;
 
@@ -60,7 +63,7 @@ internal static class TrafficSignals
                 missing.Add($"{p.Model} bei x {c.X:0} z {c.Z:0}");
                 continue;
             }
-            p.SemaphoreProfile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") is null && ByModel.TryGetValue(p.Model.ToString(), out var pm) ? pm : Profile;
+            p.SemaphoreProfile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") is null && FromPpd(ppd) is { } pm ? pm : Profile;
             // wie in der Europa-Karte: Zusatzteil _semaphores dazu (nur wo das Modell es nachweislich hat;
             // die Teilnamen stehen in der .pmg, die hier nicht vorliegt)
             if (WithSemaphorePart.Contains(p.Model.ToString()) && !p.AdditionalParts.Any(t => t.ToString() == "_semaphores"))
