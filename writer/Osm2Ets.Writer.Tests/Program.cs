@@ -418,7 +418,8 @@ static void RestrictedWaysHidden()
     var normal = cfg.Resolve(MakeRun(0, 1, "residential"));
     Check(p.RoadType == normal.RoadType, $"Typ {p.RoadType}, erwartet {normal.RoadType}");
     Check(!p.ShowInUiMap && p.GpsAvoid && !p.AiVehicles, $"Privatstraße: ui_map {p.ShowInUiMap}, gps_avoid {p.GpsAvoid}, ai {p.AiVehicles}");
-    Check(t.Secret && !t.ShowInUiMap && t.GpsAvoid, $"gesperrter Feldweg: secret {t.Secret}, ui_map {t.ShowInUiMap}");
+    // Geheimstraße ohne „GPS meiden“ (sonst Fehler im Spiel: Secret road item with 'GPS avoid' flag set)
+    Check(t.Secret && !t.ShowInUiMap && !t.GpsAvoid, $"gesperrter Feldweg: secret {t.Secret}, ui_map {t.ShowInUiMap}, gps_avoid {t.GpsAvoid}");
 }
 
 

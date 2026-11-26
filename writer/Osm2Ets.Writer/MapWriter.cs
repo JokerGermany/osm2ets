@@ -642,6 +642,13 @@ public static class MapWriter
         }
         if (Reachability.Apply(map, valid.Where(e => e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link") && firstItem.ContainsKey(e)).Select(e => (IMapItem)firstItem[e]).Concat(Overlaps.Through.Where(firstItem.ContainsKey).Select(e => (IMapItem)firstItem[e]))) is int unreach and > 0)
             warnings.Add($"Info: {unreach} nicht erreichbare Straßenstücke/Prefabs (auch geheime) nicht auf der Karte");
+        // Das Spiel lehnt „GPS meiden“ an Geheimstraßen ab („Secret road item with 'GPS avoid' flag set!
+        // Please remove 'GPS avoid' from road item“); das Navi nutzt Geheimstraßen ohnehin nicht.
+        // Erst hier: die Erreichbarkeit nimmt unerreichbaren Wegen das Geheim-Flag wieder
+        int secretGps = 0;
+        foreach (var rd in map.MapItems.Values.OfType<Road>())
+            if (rd.Secret && rd.GpsAvoid) { rd.GpsAvoid = false; secretGps++; }
+        if (secretGps > 0) warnings.Add($"Info: {secretGps} Geheimstraßen-Stücke ohne „GPS meiden“");
         var (sigSet, sigMissing) = TrafficSignals.Apply(map, input.Areas.Where(a => a.Kind == "traffic_signals").ToList());
         if (sigSet > 0) warnings.Add($"Info: {sigSet} Kreuzungen mit Ampel");
         foreach (var m in sigMissing) warnings.Add($"Ampel in OSM, aber Prefab ohne Ampelplätze: {m}");
