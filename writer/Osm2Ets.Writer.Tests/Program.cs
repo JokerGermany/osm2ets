@@ -45,6 +45,7 @@ var tests = new List<(string Name, Action Body)>
     ("Tankstelle ohne lange Straße: Prefab mit Zufahrt und Einmündung mit Platz für das Kreuzungs-Prefab", FuelSingleAccess),
     ("Wechsel 1+1 → 2+1 ohne Platz für den Übergang: Linie läuft gerade durch, kein S-Bogen", PlainLaneChangeKeepsLine),
     ("Kreuzung mit Fußweg und Feldweg daneben: Wege gelöst, kurzer Arm verbunden, Prefab geplant", MinorWaysDoNotBlockJunction),
+    ("Gelände am Prefab-Anschluss: Spurpunkt am Knoten sperrt nur jenseits der Knotenlinie", PrefabLaneBoundAtNode),
 };
 
 int failed = 0;
@@ -589,6 +590,34 @@ static void PrefabLeadKeepsRunAttributes()
         for (int sg = 0; sg < n; sg++) if (e.Runs.Count(x => x.From <= sg && sg < x.To) != 1) return false;
         return e.Runs[0].From == 0 && e.Runs[^1].To == n;
     }
+}
+
+static void PrefabLaneBoundAtNode()
+{
+    // Straße r (halbe Breite 4) endet bei x = 0 an einem Prefab, das bei x > 0 liegt. Dessen äußere Spur
+    // setzt die Straße fort; ihr Spurpunkt (1, 2) liegt 2 m innerhalb des Straßenrands (z = 4).
+    var st = new ResolvedStyle("ger1", 20, 20, RoadResolution.HighPoly, null, null, Width: 8);
+    var r = MakeRoad("r", new[] { new[] { -50.0, 0, 0 }, new[] { 0.0, 0, 0 } }, MakeRun(0, 1, "primary"));
+    var styles = new Dictionary<RoadEntry, ResolvedStyle[]> { [r] = [st] };
+    var old = (RoadCap.PrefabCentres, RoadCap.UseNodeBounds, RoadCap.PrefabLanes);
+    try
+    {
+        RoadCap.PrefabLanes = null;
+        RoadCap.PrefabCentres = [(new Vector3(1, 0, 2), Vector2.Zero, Vector2.UnitX)];
+        var cap = RoadCap.Build([r], styles, null);
+        // letzte Spalte: Strahl vom Rand quer nach außen, längs der Knotenlinie – frei
+        float g0 = cap.RayFree(new Vector2(0, 4), Vector2.UnitY, 20, r, new Vector2(-50, 0), Vector2.Zero);
+        Check(g0 >= 20 - 1e-3f, $"Strahl längs der Knotenlinie gesperrt ({g0:0.00})");
+        // Strahl ins Prefab hinein: gesperrt erst ab der Knotenlinie (x = 0), nicht schon am Anfang
+        float g1 = cap.RayFree(new Vector2(-2, 2), Vector2.UnitX, 20, r, new Vector2(-50, -10), new Vector2(0, -10));
+        Check(MathF.Abs(g1 - 2) < 1e-3f, $"Strahl ins Prefab: {g1:0.00} statt 2");
+        // ohne Knotengrenze wie bisher: Scheibe (3 m) reicht über den Rand, Spalte ohne Gelände
+        RoadCap.UseNodeBounds = false;
+        var cap0 = RoadCap.Build([r], styles, null);
+        float g2 = cap0.RayFree(new Vector2(0, 4), Vector2.UnitY, 20, r, new Vector2(-50, 0), Vector2.Zero);
+        Check(g2 < 1e-3f, $"Prüfaufbau: ohne Knotengrenze sollte die Spalte gesperrt sein ({g2:0.00})");
+    }
+    finally { (RoadCap.PrefabCentres, RoadCap.UseNodeBounds, RoadCap.PrefabLanes) = old; }
 }
 
 static void BridgeAboveIsNoNeighbour()

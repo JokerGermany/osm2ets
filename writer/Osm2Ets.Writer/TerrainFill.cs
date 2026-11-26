@@ -49,6 +49,15 @@ public static class TerrainFill
     /// <summary>Gekürzte Spalten: Nachbarn höchstens so viel länger je m Abstand (0 = aus, OSM2ETS_CLAMP_TAPER).</summary>
     public static float ClampTaper = EnvF("OSM2ETS_CLAMP_TAPER", 1f);
     public static int ColumnsClamped;
+    /// <summary>
+    /// Innenseite enger Krümmungen: jede Spalte endet kurz (<see cref="FoldMargin"/>) vor dem Schnittpunkt
+    /// ihres Strahls mit dem der Nachbarspalte, statt dass <see cref="FoldFreeSize"/> die ganze Seite
+    /// kürzt – an einer kurzen Krümmung direkt vor einem Prefab fiel sonst das Gelände einer Seite bis auf
+    /// 1 m weg. Aus: OSM2ETS_NO_LOCALFOLD=1.
+    /// </summary>
+    public static bool LocalFold = Environment.GetEnvironmentVariable("OSM2ETS_NO_LOCALFOLD") is null;
+    public const float FoldMargin = 0.9f;
+    public static int FoldLimited;
     private static float EnvF(string n, float d) =>
         float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
     /// <summary>Füllstücke verketten (alt, OSM2ETS_FILL_CHAIN=1) – siehe Emit.</summary>
@@ -715,6 +724,30 @@ public static class TerrainFill
             var dir = nrm * zSign;
             float g = rayFree(c + dir * edge, dir, size);
             if (g < size) { free[i] = MathF.Max(0, g - TerrainClearance.EdgeClear); ColumnsClamped++; }
+        }
+        if (LocalFold && world && rayFree is not null && cols > 0)
+        {
+            var ep = new Vector2[cols + 1]; var en = new Vector2[cols + 1];
+            for (int i = 0; i <= cols; i++)
+            {
+                float u = (float)i / cols;
+                Vector2 c, nrm;
+                if (curve3) { var c3 = C3(u); c = new Vector2(c3.X, c3.Z); var tg = D3(u); nrm = new Vector2(-tg.Y, tg.X); }
+                else { c = C(u); var tg = Dn(u); nrm = new Vector2(-tg.Y, tg.X); }
+                en[i] = nrm * zSign; ep[i] = c + en[i] * edge;
+            }
+            static float Cross(Vector2 u, Vector2 v) => u.X * v.Y - u.Y * v.X;
+            for (int i = 0; i < cols; i++)
+            {
+                var r = ep[i + 1] - ep[i];
+                float den = Cross(en[i], en[i + 1]);
+                if (MathF.Abs(den) < 1e-6f) continue;
+                float ai = Cross(r, en[i + 1]) / den, bi = Cross(r, en[i]) / den;
+                if (ai <= 0 || bi <= 0 || (ai >= size && bi >= size)) continue;
+                free[i] = MathF.Min(free[i], FoldMargin * ai);
+                free[i + 1] = MathF.Min(free[i + 1], FoldMargin * bi);
+                FoldLimited++;
+            }
         }
         // Nachbarspalten nicht viel länger als eine gekürzte: sonst wechseln kurze und volle
         // Spalten ab, und der Rand des Straßengeländes wird am Hang eine Zackenlinie (Dreieck A 70/A 9).

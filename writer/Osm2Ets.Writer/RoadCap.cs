@@ -33,12 +33,19 @@ public sealed class RoadCap
     /// Einmündung bis fast 10 m neben ihre Achse, und das Straßengelände eines Wegs, der seitlich an das
     /// Prefab stößt, fehlte auf den letzten Metern ganz – dort sah man unter den Wegrand (schwarze Keile
     /// westlich des Autohofs). Aus: OSM2ETS_MINOR_FULL_PREFAB=1.</summary>
-    public static List<Vector3>? PrefabCentres;
+    public static List<(Vector3 P, Vector2 N, Vector2 A)>? PrefabCentres;
+    /// <summary>Sperrscheiben nahe einem Prefab-Knoten nur auf der Prefab-Seite seiner Linie
+    /// (<see cref="PrefabFootprint.Centres3Bounded"/>). Aus: OSM2ETS_PREFAB_NOBOUND=1.</summary>
+    public static bool UseNodeBounds = Environment.GetEnvironmentVariable("OSM2ETS_PREFAB_NOBOUND") is null;
     /// <summary>Auch normale Straßen: Spurmitten statt Randpunkte (sonst Keil ohne Gelände an ihrem
     /// Prefab-Anschluss, z. B. an den Ecken der Kreuzungen am Autohof). Aus: OSM2ETS_MAJOR_FULL_PREFAB=1.</summary>
     public static bool AllCentres = Environment.GetEnvironmentVariable("OSM2ETS_MAJOR_FULL_PREFAB") is null;
     public static bool UseMinorCentres = Environment.GetEnvironmentVariable("OSM2ETS_MINOR_FULL_PREFAB") is null;
+    /// <summary>Spiel an der Knotenlinie (m): Die Tangente der Straße am Knoten weicht etwas von der
+    /// Prefab-Achse ab, der Anfang des Strahls der letzten Spalte lag dadurch einige Zentimeter jenseits.</summary>
+    private const float BoundTol = 0.3f, BoundParallel = 0.1f;
     private readonly List<Vector3> centres = [];
+    private readonly List<(Vector2 N, Vector2 A)> centreBounds = [];
     private readonly Dictionary<(int, int), List<int>> centreIndex = [];
 
     private static float Env(string n, float d) =>
@@ -77,9 +84,9 @@ public sealed class RoadCap
             }
         }
         if (UseMinorCentres && PrefabCentres is { } cs)
-            foreach (var p in cs)
+            foreach (var (p, bn, ba) in cs)
             {
-                int k = c.centres.Count; c.centres.Add(p);
+                int k = c.centres.Count; c.centres.Add(p); c.centreBounds.Add(UseNodeBounds ? (bn, ba) : default);
                 const float pad = LaneHalf + Cell / 2;   // Strahl wird alle Cell/2 m abgefragt
                 for (int x = (int)MathF.Floor((p.X - pad) / Cell); x <= (int)MathF.Floor((p.X + pad) / Cell); x++)
                     for (int z = (int)MathF.Floor((p.Z - pad) / Cell); z <= (int)MathF.Floor((p.Z + pad) / Cell); z++)
@@ -298,7 +305,20 @@ public sealed class RoadCap
                     if (d2 > LaneHalf * LaneHalf) continue;
                     float th = MathF.Sqrt(LaneHalf * LaneHalf - d2);
                     if (tc + th < 0) continue;
-                    best = MathF.Min(best, MathF.Max(0, tc - th));
+                    float lo = MathF.Max(0, tc - th), hi = tc + th;
+                    var (bn, ba) = centreBounds[k];
+                    if (ba != Vector2.Zero)
+                    {
+                        // nur auf der Prefab-Seite der Knotenlinie. Spiel BoundTol nur für Strahlen fast längs
+                        // der Linie, deren Spurpunkt hinter ihrem Anfang liegt (letzte Spalte der angeschlossenen
+                        // Straße) – nicht für eine vorbeiführende Straße, deren Strahl auf die Spur zuläuft
+                        float s0 = Vector2.Dot(o - bn, ba), ds = Vector2.Dot(dir, ba);
+                        if (MathF.Abs(ds) < BoundParallel) { if (s0 < (tc < 0 ? BoundTol : 0f)) continue; }
+                        else if (ds > 0) lo = MathF.Max(lo, -s0 / ds);
+                        else hi = MathF.Min(hi, -s0 / ds);
+                        if (lo > hi) continue;
+                    }
+                    best = MathF.Min(best, lo);
                 }
             if (index.TryGetValue(((int)MathF.Floor(p.X / Cell), (int)MathF.Floor(p.Y / Cell)), out var l))
                 foreach (var i in l)

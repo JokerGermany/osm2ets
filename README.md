@@ -52,7 +52,12 @@ strip. The fill mask uses the real lanes of placed prefabs (nav curves from the 
 How fill and road terrain fit together:
 - Road terrain (up to 60 m per side) is the visible surface next to a road: flat for the first
   3 m, then blending into the grid. Narrow sides use a compressed profile so that their outer
-  edge reaches the grid height (at most 45° from the flat strip).
+  edge reaches the grid height (at most 45° from the flat strip). On the inside of tight bends
+  each column ends just before it would cross the neighbouring one, instead of the whole side
+  getting narrower (`OSM2ETS_NO_LOCALFOLD=1`: as before). Prefab lanes limit road terrain to 3 m
+  around their centre; lane points up to 3 m behind a prefab node only count beyond the node line,
+  otherwise the terrain was missing on the last metres before every prefab
+  (`OSM2ETS_PREFAB_NOBOUND=1`: as before).
 - The fill runs underneath. Under asphalt it stays at least 0.3 m, under road terrain 0.1 m
   below the surface actually written (both quad diagonals checked). Beyond the edge of road
   terrain it continues the edge with at most 0.7 slope up or down, so the edge meets the fill.

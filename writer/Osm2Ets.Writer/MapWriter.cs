@@ -530,8 +530,8 @@ public static class MapWriter
                 int shaped = 0, bad = 0, folded = 0;
                 // Zwickel an Gabelungen: nahe anderer Straßen/Prefabs kürzerer Übergang ins Raster
                 RoadCap.PrefabLanes = PrefabFootprint.All3(map);
-                RoadCap.PrefabCentres = PrefabFootprint.Centres3(map);
-                RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0; TerrainFill.SlopeLimited = 0;
+                RoadCap.PrefabCentres = PrefabFootprint.Centres3Bounded(map);
+                RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0; TerrainFill.SlopeLimited = 0; TerrainFill.FoldLimited = 0;
                 TerrainFill.PrefabRamped = 0;
                 var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null
                     ? RoadCap.Build(valid, styles, null) : null;
@@ -602,7 +602,7 @@ public static class MapWriter
                         if (rd == lastItem[entry]) break;
                     }
                 }
-                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, als Rampe ans Prefab: {TerrainFill.PrefabRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}, Neigung begrenzt: {TerrainFill.SlopeLimited} Punkte");
+                warnings.Insert(0, $"Info: Straßengelände an Höhenraster angepasst: {shaped} Stücke, Raster unpassend: {bad}, wegen Faltung verschmälert: {folded}, im Zwickel schneller ins Raster: {RoadCap.RoadTerrainLowered} Punkte, als Rampe zur Nachbarfahrbahn: {TerrainFill.GapRamped} Punkte, als Rampe ans Prefab: {TerrainFill.PrefabRamped} Punkte, Spalten vor fremder Fahrbahn gekürzt: {TerrainFill.ColumnsClamped}, Spaltenpaare vor dem Umklappen begrenzt: {TerrainFill.FoldLimited}, Neigung begrenzt: {TerrainFill.SlopeLimited} Punkte");
                 if (underpasses is { Count: > 0 })
                 {
                     int paved = underpasses.Pave(valid, firstItem, lastItem);

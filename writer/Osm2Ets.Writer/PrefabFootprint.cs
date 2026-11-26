@@ -33,6 +33,69 @@ public static class PrefabFootprint
     /// <summary>Nur die Spurmitten (ohne die Punkte daneben), Höhe wie bei <see cref="All3"/>.</summary>
     public static List<Vector3> Centres3(Map map) => Lanes3(map, false);
 
+    /// <summary>Punkte bis so weit (m) hinter einer Knotenlinie bekommen diese als Grenze (= Radius der Sperrscheibe).</summary>
+    public const float BoundReach = 3f;
+    /// <summary>Seitlich so weit (m) neben dem Knoten gilt seine Linie (breiteste Arme etwa ±10 m).</summary>
+    public const float BoundLateral = 12f;
+
+    /// <summary>
+    /// Spurmitten wie <see cref="Centres3"/>, dazu je Punkt die Knotenlinie, hinter der er bis
+    /// <see cref="BoundReach"/> m liegt (N: Knoten, A: Richtung ins Prefab; sonst A = 0). Die Sperrscheibe
+    /// eines solchen Punkts reichte über die Linie hinaus neben die angeschlossene Straße: Deren
+    /// Straßengelände fehlte auf den letzten Metern vor dem Prefab (schwarze Keile am Rand, z. B.
+    /// zwischen Autohof-T und Kreuzung), bei schmalen Straßen an breiteren Prefab-Armen auf beiden Seiten.
+    /// Ein Prefab liegt ganz innerhalb seiner Knotenlinien.
+    /// </summary>
+    public static List<(Vector3 P, Vector2 N, Vector2 A)> Centres3Bounded(Map map)
+    {
+        var res = new List<(Vector3, Vector2, Vector2)>();
+        foreach (var (pf, ppd) in Ppd.ToList())
+        {
+            if (!map.MapItems.ContainsKey(pf.Uid)) continue;
+            float drop = Interchanges.ShoulderOf(pf.Model) <= 0 ? JunctionDrop : 0f;
+            if (!Fit(pf, ppd, out var rot, out var tr)) continue;
+            var pts = LanesOf(pf, ppd, 0f);
+            if (pts is null) continue;
+            var (h0, g, o) = Plane(pf);
+            float ny = UseNodeRelative ? ppd.Nodes.Average(k => k.Position.Y) : 0f;
+            var lines = new List<(Vector2 N, Vector2 A, Vector2 Q)>();
+            foreach (var nd in ppd.Nodes)
+            {
+                var dl = new Vector2(nd.Direction.X, nd.Direction.Z);
+                if (dl.LengthSquared() < 1e-8f) continue;
+                dl = Vector2.Normalize(dl);
+                // Richtung ins Prefab: aus den Kurven an diesem Knoten (Tangente am Knotenende, vom Knoten weg)
+                float sum = 0;
+                foreach (int ci in nd.InputLines.Concat(nd.OutputLines))
+                {
+                    if (ci < 0 || ci >= ppd.NavCurves.Count) continue;
+                    var c = ppd.NavCurves[ci];
+                    var chord = c.EndPosition - c.StartPosition;
+                    bool atStart = Vector3.DistanceSquared(c.StartPosition, nd.Position) <= Vector3.DistanceSquared(c.EndPosition, nd.Position);
+                    var t3 = atStart ? Dir(c.StartRotation, chord) : -Dir(c.EndRotation, chord);
+                    sum += Vector2.Dot(new Vector2(t3.X, t3.Z), dl);
+                }
+                if (sum == 0) continue;
+                if (sum < 0) dl = -dl;
+                var nw = Rot(rot, new Vector2(nd.Position.X, nd.Position.Z)) + tr;
+                var aw = Vector2.Normalize(Rot(rot, dl));
+                lines.Add((nw, aw, new Vector2(-aw.Y, aw.X)));
+            }
+            foreach (var (p, ly) in pts)
+            {
+                Vector2 bn = default, ba = default; float bs = float.MaxValue;
+                foreach (var (nw, aw, q) in lines)
+                {
+                    var r = p - nw; float sd = Vector2.Dot(r, aw);
+                    if (sd < -0.5f || sd >= BoundReach || sd >= bs || MathF.Abs(Vector2.Dot(r, q)) > BoundLateral) continue;
+                    bs = sd; bn = nw; ba = aw;
+                }
+                res.Add((new Vector3(p.X, h0 + Vector2.Dot(g, p - o) + ly - ny - drop, p.Y), bn, ba));
+            }
+        }
+        return res;
+    }
+
     private static List<Vector3> Lanes3(Map map, bool sides)
     {
         var res = new List<Vector3>();

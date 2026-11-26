@@ -52,7 +52,12 @@ Freifläche berücksichtigt die echten Fahrspuren gesetzter Prefabs (Navigations
 Wie Füll- und Straßengelände zusammenpassen:
 - Das Straßengelände (bis 60 m je Seite) ist neben der Straße die sichtbare Fläche: 3 m flach,
   dann weich ins Raster. Schmale Seiten bekommen einen gestauchten Verlauf, damit ihr Außenrand
-  die Rasterhöhe erreicht (höchstens 45° ab dem flachen Streifen).
+  die Rasterhöhe erreicht (höchstens 45° ab dem flachen Streifen). Auf der Innenseite enger
+  Krümmungen endet jede Spalte kurz vor dem Schnittpunkt mit der Nachbarspalte, statt dass die
+  ganze Seite schmaler wird (`OSM2ETS_NO_LOCALFOLD=1`: wie bisher). Prefab-Spuren begrenzen das
+  Straßengelände mit 3 m um ihre Mitte; Spurpunkte bis 3 m hinter einem Prefab-Knoten gelten nur
+  jenseits der Knotenlinie, sonst fehlte das Gelände auf den letzten Metern vor jedem Prefab
+  (`OSM2ETS_PREFAB_NOBOUND=1`: wie bisher).
 - Das Füllgelände liegt darunter: unter Asphalt mindestens 0,3 m, unter Straßengelände 0,1 m
   unter der tatsächlich geschriebenen Oberfläche (beide Quad-Diagonalen geprüft). Hinter dem
   Rand des Straßengeländes setzt es diesen mit höchstens 0,7 Steigung nach oben oder unten fort,
