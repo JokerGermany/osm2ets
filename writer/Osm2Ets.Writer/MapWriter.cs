@@ -654,7 +654,7 @@ public static class MapWriter
         foreach (var m in sigMissing) warnings.Add($"Ampel in OSM, aber Prefab ohne Ampelplätze: {m}");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen (davon {DeadEnds.Networks} vor Sackgassen-Netzen)");
-        // zuletzt: alle Knoten (auch die der Sperrbaken) bekommen das Land
+        // zuletzt: Land in den Knoten von Straßen und Prefabs, ein Grenzknoten je Netz
         int countryNets = Country.Apply(map, input.Profile);
         if (countryNets > 0) warnings.Add($"Info: Land {Country.Id} an {countryNets} Netzen gesetzt (Grenzknoten)");
         else warnings.Add("Info: kein Land gesetzt (Profil ohne Länder-ID oder OSM2ETS_COUNTRY_ID=0) – länderabhängige Modelle wie Ampeln fehlen");

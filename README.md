@@ -399,9 +399,13 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 - Traffic lights: where OSM has `highway=traffic_signals` at the junction node or at the stop line
   in front of it (up to 12 m outside the prefab), the junction prefab gets the semaphore profile
   its traffic-light slots in the `.ppd` name (e.g. T with turn lane `cr_t1x1t`; otherwise `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` overrides,
-  `OSM2ETS_NO_SIGNALS=1`: off). Prefabs without traffic-light slots in their `.ppd` (e.g. the cross
+  `OSM2ETS_NO_SIGNALS=1`: off) and the prefab flag "semaphores" (kDOP bit 19). Without this flag the game
+  places no traffic lights despite the profile; the editor sets it when a profile is chosen there (TruckLib
+  0.5.1 does not know it, from 0.5.3 on it is `Prefab.Semaphores`; `OSM2ETS_SIGNAL_NO_FLAG=1`: no flag, for
+  comparison only). Prefabs without traffic-light slots in their `.ppd` (e.g. the cross
   with turn lanes on both roads) are reported.
-- Country: all nodes carry the profile's country (forward and backward side), and one node of every
+- Country: all nodes of roads and prefabs carry the profile's country (forward and backward side), nodes
+  of terrain, buildings and service items do not (the editor saves it the same way); one node of every
   connected network is marked as country border (`OSM2ETS_COUNTRY_BORDERS_ONLY=1`: border nodes only) (profile `de`: Germany, `country_id` 5 from the game's `def/country/germany.sui`;
   `OSM2ETS_COUNTRY_ID=<id>` overrides, `0`: no country). Without
   a country, country-specific models are missing, e.g. the traffic-light model `city_str` (only

@@ -8,11 +8,15 @@ namespace Osm2Ets.Writer;
 /// Ampeln: Kreuzungs-Prefabs, an denen OSM eine Ampel hat (Knoten highway=traffic_signals am
 /// Kreuzungsknoten oder an der Haltlinie davor), bekommen ein Ampelprofil. Nur Prefabs, deren .ppd
 /// Ampelpositionen hat (z. B. ger_r1_x_r1_(t_)narrow_tmpl); für andere eine Meldung.
-/// Profil aus den Ampelplätzen der .ppd. Aus: OSM2ETS_NO_SIGNALS=1, Profil erzwingen: OSM2ETS_SIGNAL_PROFILE.
+/// Profil aus den Ampelplätzen der .ppd, dazu das Prefab-Flag „Ampeln“ (<see cref="ItemFlags.PrefabSemaphores"/>,
+/// ohne das das Spiel trotz Profil keine Ampeln aufstellt). Aus: OSM2ETS_NO_SIGNALS=1, Profil erzwingen:
+/// OSM2ETS_SIGNAL_PROFILE (leer: kein Profil, wie es der Editor speichert), ohne Flag: OSM2ETS_SIGNAL_NO_FLAG=1.
 /// </summary>
 internal static class TrafficSignals
 {
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_SIGNALS") != "1";
+    /// <summary>Prefab-Flag „Ampeln“ setzen (aus: OSM2ETS_SIGNAL_NO_FLAG=1, nur zum Vergleich).</summary>
+    public static bool SetFlag = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_NO_FLAG") != "1";
     /// <summary>Ersatzprofil, wenn die Ampelplätze der .ppd keins nennen.</summary>
     public static string Profile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") ?? "cr_1x1";
     /// <summary>Prefabs mit dem Zusatzteil _semaphores (im Editor gesehen; die Teilnamen stehen in der .pmg).</summary>
@@ -64,6 +68,10 @@ internal static class TrafficSignals
                 continue;
             }
             p.SemaphoreProfile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") is null && FromPpd(ppd) is { } pm ? pm : Profile;
+            // Ohne dieses Flag stellt das Spiel trotz Profil keine Ampeln auf. Der Editor setzt es, wenn man dort
+            // ein Profil wählt (gefunden im Vergleich mit einer im Editor gespeicherten Karte; TruckLib ab
+            // 0.5.3 beschreibt es als Prefab.Semaphores).
+            if (SetFlag) ItemFlags.Set(p, ItemFlags.PrefabSemaphores, true);
             // wie in der Europa-Karte: Zusatzteil _semaphores dazu (nur wo das Modell es nachweislich hat;
             // die Teilnamen stehen in der .pmg, die hier nicht vorliegt)
             if (WithSemaphorePart.Contains(p.Model.ToString()) && !p.AdditionalParts.Any(t => t.ToString() == "_semaphores"))

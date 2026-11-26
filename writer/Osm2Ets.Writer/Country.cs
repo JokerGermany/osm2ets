@@ -6,7 +6,8 @@ namespace Osm2Ets.Writer;
 /// <summary>
 /// Land der Karte: Das Spiel bestimmt das Land eines Ortes über Grenzknoten (Knoten-Flag
 /// „Country border“ mit der Länder-ID je Seite). Ohne Land fehlen länderabhängige Modelle – z. B.
-/// das Ampelmodell city_str (nur als city_str.germany usw. vorhanden), die Ampeln blieben aus.
+/// das Ampelmodell city_str (nur als city_str.germany usw. vorhanden; ohne Land meldet das Spiel
+/// „Unable to find semaphore/gate model 'city_str' for country ''“).
 /// Je zusammenhängendem Netz aus Straßen und Prefabs wird ein Knoten zur Grenze mit dem Land auf
 /// beiden Seiten. Länder-ID aus dem Profil des Zwischenformats (de → 5, aus def/country/germany.sui
 /// des Spiels: country_id 5); OSM2ETS_COUNTRY_ID überschreibt (0 = kein Land).
@@ -16,7 +17,10 @@ internal static class Country
     /// <summary>Profil → country_id (def/country/&lt;land&gt;.sui).</summary>
     private static readonly Dictionary<string, byte> ByProfile = new(StringComparer.OrdinalIgnoreCase) { ["de"] = 5 };
     public static byte? Id;
-    /// <summary>Länder-Bytes in allen Knoten setzen (aus: OSM2ETS_COUNTRY_BORDERS_ONLY=1).</summary>
+    /// <summary>
+    /// Länder-Bytes in allen Knoten des Straßennetzes setzen (aus: OSM2ETS_COUNTRY_BORDERS_ONLY=1). Knoten
+    /// von Gelände, Gebäuden und Service-Items bleiben ohne Land – so speichert es auch der Editor.
+    /// </summary>
     public static bool AllNodes = Environment.GetEnvironmentVariable("OSM2ETS_COUNTRY_BORDERS_ONLY") != "1";
 
     public static int Apply(Map map, string? profile)
@@ -25,10 +29,13 @@ internal static class Country
         Id = env is not null ? (byte.TryParse(env, out var v) && v > 0 ? v : null)
            : profile is not null && ByProfile.TryGetValue(profile, out var p) ? p : null;
         if (Id is not byte id) return 0;
-        // Land auch in allen übrigen Knoten (Vorder-/Rückseite): Ob das Spiel es von den Grenzknoten über das
-        // Netz verteilt oder je Knoten liest, ist nicht bekannt – mit nur den Grenzknoten blieb die Ampel aus.
+        // Land auch in den übrigen Netzknoten (Vorder-/Rückseite): Ob das Spiel es von den Grenzknoten über das
+        // Netz verteilt oder je Knoten liest, ist nicht bekannt. Eine im Editor gespeicherte Karte behält es
+        // in allen Knoten von Straßen und Prefabs und setzt es in allen anderen auf 0.
         if (AllNodes)
-            foreach (var nd in map.Nodes.Values) { nd.ForwardCountry = id; nd.BackwardCountry = id; }
+            foreach (var nd in map.Nodes.Values)
+                if (nd.ForwardItem is Road or Prefab || nd.BackwardItem is Road or Prefab)
+                { nd.ForwardCountry = id; nd.BackwardCountry = id; }
         var seen = new HashSet<IMapItem>();
         int n = 0;
         foreach (var start in map.MapItems.Values.Where(i => i is Road or Prefab))

@@ -46,6 +46,8 @@ var tests = new List<(string Name, Action Body)>
     ("Wechsel 1+1 → 2+1 ohne Platz für den Übergang: Linie läuft gerade durch, kein S-Bogen", PlainLaneChangeKeepsLine),
     ("Kreuzung mit Fußweg und Feldweg daneben: Wege gelöst, kurzer Arm verbunden, Prefab geplant", MinorWaysDoNotBlockJunction),
     ("Gelände am Prefab-Anschluss: Spurpunkt am Knoten sperrt nur jenseits der Knotenlinie", PrefabLaneBoundAtNode),
+    ("Ampel: Profil aus der .ppd und Prefab-Flag „Ampeln“, bleibt nach Speichern erhalten", TrafficSignalSwitchesSemaphoresOn),
+    ("Land: Knoten von Straßen und Prefabs ja, Gelände und Gebäude nein", CountryOnNetworkNodesOnly),
 };
 
 int failed = 0;
@@ -103,6 +105,75 @@ static IntermediateFile Sample()
 }
 
 // ---------------------------------------------------------------- Tests
+
+static TruckLib.Models.Ppd.PrefabDescriptor ThreeArmPpd(params string[] semaphoreProfiles)
+{
+    // Einmündung: drei Knoten 10 m um den Mittelpunkt, Richtung jeweils nach außen
+    var ppd = new TruckLib.Models.Ppd.PrefabDescriptor();
+    foreach (var (p, d) in new[] { (new Vector3(0, 0, 10), Vector3.UnitZ), (new Vector3(10, 0, 0), Vector3.UnitX),
+                                   (new Vector3(-10, 0, 0), -Vector3.UnitX) })
+        ppd.Nodes.Add(new TruckLib.Models.Ppd.ControlNode { Position = p, Direction = d });
+    foreach (var sp in semaphoreProfiles)
+        ppd.Semaphores.Add(new TruckLib.Models.Ppd.Semaphore { Profile = sp });
+    return ppd;
+}
+
+static void TrafficSignalSwitchesSemaphoresOn()
+{
+    // Einmündung mit Ampelplätzen und OSM-Ampel am Knoten: Profil der Plätze, Zusatzteil _semaphores und das
+    // Prefab-Flag „Ampeln“ (kDOP-Bit 19) – ohne das Flag stellt das Spiel trotz Profil keine Ampeln auf.
+    // Zweite Einmündung ohne Ampelplätze: kein Profil, kein Flag, Meldung.
+    var map = new Map();
+    var ppd = ThreeArmPpd("cr_t1x1t", "cr_t1x1t", "cr_1x1");
+    var pf = Prefab.Add(map, new Vector3(100, 0, 100), "ch_14001", ppd);
+    var bare = Prefab.Add(map, new Vector3(400, 0, 100), "ch_42010", ThreeArmPpd());
+    PrefabFootprint.Reset();
+    PrefabFootprint.Register(pf, ppd);
+    PrefabFootprint.Register(bare, ThreeArmPpd());
+    try
+    {
+        var at = (Vector3 c) => new AreaEntry { Kind = "traffic_signals", Points = [[c.X, c.Z + 3]] };
+        var (set, missing) = TrafficSignals.Apply(map, [at(pf.Nodes[0].Position), at(bare.Nodes[0].Position)]);
+        Check(set == 1 && missing.Count == 1, $"gesetzt {set}, gemeldet {missing.Count} (erwartet 1/1)");
+        Check(pf.SemaphoreProfile.ToString() == "cr_t1x1t", $"Profil {pf.SemaphoreProfile}");
+        Check(pf.AdditionalParts.Any(t => t.ToString() == "_semaphores"), "Zusatzteil _semaphores fehlt");
+        Check(ItemFlags.Get(pf, ItemFlags.PrefabSemaphores), $"Flag „Ampeln“ fehlt (Flags {ItemFlags.Bits(pf):X8})");
+        Check(ItemFlags.Bits(pf) == 1u << ItemFlags.PrefabSemaphores, $"weitere Flags gesetzt: {ItemFlags.Bits(pf):X8}");
+        Check(!ItemFlags.Get(bare, ItemFlags.PrefabSemaphores) && string.IsNullOrEmpty(bare.SemaphoreProfile.ToString()),
+              "Prefab ohne Ampelplätze hat Profil oder Flag");
+        // Speichern und neu laden: Flag und Profil stehen in der Datei
+        var dir = Path.Combine(Path.GetTempPath(), "osm2ets-signals-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            map.Save(dir, "signals", true);
+            var again = Map.Open(Path.Combine(dir, "signals.mbd"));
+            var pf2 = (Prefab)again.MapItems[pf.Uid];
+            Check(ItemFlags.Get(pf2, ItemFlags.PrefabSemaphores), "Flag „Ampeln“ nach dem Laden weg");
+            Check(pf2.SemaphoreProfile.ToString() == "cr_t1x1t", $"Profil nach dem Laden {pf2.SemaphoreProfile}");
+        }
+        finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
+    }
+    finally { PrefabFootprint.Reset(); }
+}
+
+static void CountryOnNetworkNodesOnly()
+{
+    // Wie der Editor speichert: Land in allen Knoten von Straßen und Prefabs (je Netz einer als Grenze),
+    // Gelände und Gebäude (z. B. Sperrbaken) ohne Land.
+    var map = new Map();
+    var r1 = Road.Add(map, new Vector3(0, 0, 0), new Vector3(50, 0, 0), "ger1");
+    var r2 = r1.Append(new Vector3(100, 0, 0));
+    var pf = Prefab.Add(map, new Vector3(300, 0, 0), "ch_14001", ThreeArmPpd());
+    var t = Terrain.Add(map, new Vector3(0, 0, 100), new Vector3(50, 0, 100), "0", 10, 10);
+    var b = Buildings.Add(map, new Vector3(0, 0, 200), new Vector3(10, 0, 200), "dead_end");
+    int nets = Country.Apply(map, "de");
+    Check(nets == 2, $"{nets} Netze statt 2");
+    foreach (var nd in new[] { r1.Node, r1.ForwardNode, r2.ForwardNode }.Concat(pf.Nodes))
+        Check(nd.ForwardCountry == 5 && nd.BackwardCountry == 5, $"Netzknoten bei {nd.Position} ohne Land");
+    foreach (var nd in new[] { t.Node, t.ForwardNode, b.Node, b.ForwardNode })
+        Check(nd.ForwardCountry == 0 && nd.BackwardCountry == 0 && !nd.IsCountryBorder, $"Knoten bei {nd.Position} hat ein Land");
+    Check(map.Nodes.Values.Count(n => n.IsCountryBorder) == 2, "je Netz ein Grenzknoten erwartet");
+}
 
 static void MappingShippedIsValid()
 {

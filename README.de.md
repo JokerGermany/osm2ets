@@ -403,10 +403,14 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   verbunden; Einbahn-Arme über `ChangeOrigin`.
 - Ampeln: Hat OSM am Kreuzungsknoten oder an der Haltlinie davor (bis 12 m außerhalb des Prefabs)
   `highway=traffic_signals`, bekommt das Kreuzungs-Prefab das Ampelprofil, das seine Ampelplätze in der
-  `.ppd` nennen (z. B. Einmündung mit Abbiegespur `cr_t1x1t`; sonst `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` überschreibt, `OSM2ETS_NO_SIGNALS=1`: aus).
+  `.ppd` nennen (z. B. Einmündung mit Abbiegespur `cr_t1x1t`; sonst `cr_1x1`; `OSM2ETS_SIGNAL_PROFILE` überschreibt, `OSM2ETS_NO_SIGNALS=1`: aus),
+  und das Prefab-Flag „Ampeln“ (kDOP-Bit 19). Ohne dieses Flag stellt das Spiel trotz Profil keine Ampeln
+  auf; der Editor setzt es, wenn man dort ein Profil wählt (TruckLib 0.5.1 kennt es nicht, ab 0.5.3 heißt
+  es `Prefab.Semaphores`; `OSM2ETS_SIGNAL_NO_FLAG=1`: ohne Flag, nur zum Vergleich).
   Prefabs ohne Ampelplätze in der `.ppd` (z. B. Kreuzung mit Abbiegespuren auf beiden Straßen)
   werden gemeldet.
-- Land: Alle Knoten tragen das Land des Profils (Vorder- und Rückseite), in jedem
+- Land: Alle Knoten von Straßen und Prefabs tragen das Land des Profils (Vorder- und Rückseite), Knoten
+  von Gelände, Gebäuden und Service-Items nicht (so speichert es auch der Editor); in jedem
   zusammenhängenden Netz ist einer davon als Ländergrenze markiert (`OSM2ETS_COUNTRY_BORDERS_ONLY=1`:
   nur die Grenzknoten) (Profil `de`: Deutschland, `country_id` 5 aus `def/country/germany.sui` des
   Spiels; `OSM2ETS_COUNTRY_ID=<id>` überschreibt, `0`: kein Land). Ohne
