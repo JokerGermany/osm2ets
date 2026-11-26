@@ -34,6 +34,9 @@ public sealed class RoadCap
     /// Prefab stößt, fehlte auf den letzten Metern ganz – dort sah man unter den Wegrand (schwarze Keile
     /// westlich des Autohofs). Aus: OSM2ETS_MINOR_FULL_PREFAB=1.</summary>
     public static List<Vector3>? PrefabCentres;
+    /// <summary>Auch normale Straßen: Spurmitten statt Randpunkte (sonst Keil ohne Gelände an ihrem
+    /// Prefab-Anschluss, z. B. an den Ecken der Kreuzungen am Autohof). Aus: OSM2ETS_MAJOR_FULL_PREFAB=1.</summary>
+    public static bool AllCentres = Environment.GetEnvironmentVariable("OSM2ETS_MAJOR_FULL_PREFAB") is null;
     public static bool UseMinorCentres = Environment.GetEnvironmentVariable("OSM2ETS_MINOR_FULL_PREFAB") is null;
     private readonly List<Vector3> centres = [];
     private readonly Dictionary<(int, int), List<int>> centreIndex = [];
@@ -279,7 +282,7 @@ public sealed class RoadCap
     {
         float best = maxD;
         var seen = new HashSet<int>();
-        bool minor = centres.Count > 0 && owner is RoadEntry re && re.Runs.All(Junctions.IsMinorWay);
+        bool minor = centres.Count > 0 && owner is RoadEntry re && (AllCentres || re.Runs.All(Junctions.IsMinorWay));
         var seenC = new HashSet<int>();
         var sdir = segB - segA;
         var sd = sdir.LengthSquared() > 1e-8f ? Vector2.Normalize(sdir) : Vector2.UnitX;
