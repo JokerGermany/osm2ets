@@ -30,9 +30,19 @@ public static class LaneCentering
 
     private static Vector2 P(double[] p) => new((float)p[0], (float)p[2]);
 
-    public static void Apply(List<RoadEntry> roads, Func<RunEntry, ResolvedStyle> resolve)
+    /// <summary>Wechsel 1+1 ↔ 2+1 ohne Übergang, an denen die Linie gerade durchläuft (für das Protokoll).</summary>
+    public static int Kept;
+
+    /// <param name="plainChanges">Knoten, an denen 1+1 und 2+1 ohne Übergangs-Prefab wechseln
+    /// (<see cref="Junctions.PlainLaneChanges"/>). Ist die Landstraße dort kürzer als <see cref="Ramp"/>, bleibt
+    /// sie ganz in ihrer Lage (Knotenversatz wie an ihrem anderen Ende): Die Spur der Gegenrichtung läuft
+    /// gerade weiter, die zusätzliche Spur kommt außen hinzu. Die Verschiebung zur Mitte der 2+1-Straße
+    /// übernimmt dann die 2+1-Straße; ist sie kürzer als 2 × <see cref="Ramp"/>, wird sie nicht auf ihre
+    /// eigene Mitte gesetzt, sondern läuft gleichmäßig zwischen den Lagen an ihren Enden. Sonst schlug das
+    /// kurze Stück einen S-Bogen auf wenigen Metern (Zufahrt Autohof an der B 85: 4,7 m auf 8 m).</param>
+    public static void Apply(List<RoadEntry> roads, Func<RunEntry, ResolvedStyle> resolve, IReadOnlySet<long>? plainChanges = null)
     {
-        Shifted = 0;
+        Shifted = 0; Kept = 0;
         Original.Clear();
         OsmLine.Clear();
         foreach (var r in roads) OsmLine[r] = r.Points.Select(p => new System.Numerics.Vector2((float)p[0], (float)p[2])).ToList();
@@ -70,6 +80,23 @@ public static class LaneCentering
 
         foreach (var id in node.Keys.ToList())
             node[id] = (node[id].Sum / mainCount[id], node[id].N);
+        // Wechsel 1+1 ↔ 2+1 ohne Übergang mit kurzer Landstraße: Linie der Landstraße beibehalten
+        var noCenter = new HashSet<RoadEntry>();
+        foreach (var id in plainChanges ?? new HashSet<long>())
+        {
+            if (!node.ContainsKey(id)) continue;
+            var at = roads.Where(r => r.Points.Count >= 2 && (r.Start is { Kind: "node" } && r.Start.OsmNode == id || r.End is { Kind: "node" } && r.End.OsmNode == id)).ToList();
+            if (at.Count != 2 || at[0] == at[1]) continue;
+            int K(RoadEntry r) => r.Start?.OsmNode == id ? 0 : r.Points.Count - 2;
+            var (a, b) = St(at[0], K(at[0])).Width < St(at[1], K(at[1])).Width ? (at[0], at[1]) : (at[1], at[0]);
+            if (Interchanges.ArcLengthOf(a) >= Ramp) continue;          // genug Platz für die Rampe auf der Landstraße
+            var far = a.Start?.OsmNode == id ? a.End : a.Start;
+            float ta = EndTarget(far, node, out var tf) ? tf : Seg(a, a.Start?.OsmNode == id ? a.Points.Count - 2 : 0);
+            node[id] = (ta, node[id].N);
+            Kept++;
+            if (MathF.Abs(ta - Seg(b, K(b))) > 0.01f && Interchanges.ArcLengthOf(b) < 2 * Ramp) noCenter.Add(b);
+        }
+
         // Knoten mit Rampe (Anschlussstelle): früher Lage der OSM-Linie behalten. Abgeschaltet
         // (OSM2ETS_LC_PULL=1 schaltet es ein): die Prefabs sitzen auf der Modelllinie, das Zurückziehen
         // auf 50 m machte die gerade Autobahn vor jeder Anschlussstelle „rund“; der Rest wird an den
@@ -99,6 +126,14 @@ public static class LaneCentering
                 return seg[k];
             }
             var off = new float[n];
+            double len = s[^1];
+            if (noCenter.Contains(r))
+            {
+                // kurzes 2+1-Stück an einem Wechsel ohne Übergang: gleichmäßig zwischen den Lagen an den Enden
+                float t0 = EndTarget(r.Start, node, out var q0) ? q0 : 0f, t1 = EndTarget(r.End, node, out var q1) ? q1 : 0f;
+                for (int i = 0; i < n; i++) off[i] = t0 + (t1 - t0) * (float)(len > 0 ? s[i] / len : 0);
+            }
+            else
             for (int i = 0; i < n; i++)
             {
                 double a = Math.Max(0, s[i] - Ramp / 2), b = Math.Min(s[^1], s[i] + Ramp / 2);
@@ -107,7 +142,6 @@ public static class LaneCentering
                 off[i] = acc / m;
             }
             // Enden auf den Knotenwert ziehen
-            double len = s[^1];
             foreach (var atStart in new[] { true, false })
             {
                 if (!EndTarget(atStart ? r.Start : r.End, node, out float t)) continue;

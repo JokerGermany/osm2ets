@@ -387,6 +387,13 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 - 2+1 ↔ 1+1 transitions (`ger fork road 1 x 2 plus 1 tmpl`, `ger fork road 1 x 1 plus 2 tmpl`)
   and the hatched transition are straight 60 m prefabs; they are tilted to the road's grade
   between their ends (up to 10 %; `OSM2ETS_NO_TRANSPITCH=1` places them level).
+- 2+1 ↔ 1+1 change without a transition (no straight run, bridge end close by, or less than 63 m in
+  total to the prefabs at the neighbouring nodes): only the road template changes. Where the two-lane
+  road there is shorter than 50 m, its line runs straight through – the opposite lane stays in line,
+  the extra lane is added on the outside. A 2+1 piece shorter than 100 m then runs evenly between the
+  positions at its ends instead of being shifted to its own centre (that made an S-bend within a few
+  metres). The searched ETS2 1.61 game files contain no German 1+1 ↔ 2+1 transition shorter than
+  60 m. `OSM2ETS_NO_PLAIN21=1` disables this.
 - Fuel stations (`amenity=fuel`): the station's own service ways are replaced by a station prefab
   (fuelling only works at prefab refuel points). `gas_small_road_01_ger` where a straight two-lane
   road (≥ 188 m without junction) runs past; otherwise `gas_universal_03_balt` (category dlc_balt)

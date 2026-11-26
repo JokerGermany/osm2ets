@@ -43,6 +43,7 @@ var tests = new List<(string Name, Action Body)>
     ("Füllgelände am Hang: grobes Quad stößt nicht durch die Prefab-Fahrbahn", SettleKeepsFillBelowPrefab),
     ("Tankstelle an gerader Landstraße: Durchfahrts-Prefab, Geländewege entfallen", FuelInline),
     ("Tankstelle ohne lange Straße: Prefab mit Zufahrt und Einmündung mit Platz für das Kreuzungs-Prefab", FuelSingleAccess),
+    ("Wechsel 1+1 → 2+1 ohne Platz für den Übergang: Linie läuft gerade durch, kein S-Bogen", PlainLaneChangeKeepsLine),
 };
 
 int failed = 0;
@@ -1116,4 +1117,44 @@ static void FuelSingleAccess()
     Check(t!.Anchor.X >= -100 + 20 - 0.5f && t.Anchor.X <= 50 - 20 + 0.5f, $"Einmündung bei x {t.Anchor.X:0} zu nah am Straßenende");
     Check(gas!.Anchor.Z > 15, $"Tankstelle nicht auf der Seite des Geländes (z {gas.Anchor.Z:0})");
     Junctions.Stations = [];
+}
+
+static void PlainLaneChangeKeepsLine()
+{
+    // Einmündung bei x 0, 26 m Landstraße nach Osten, ab Knoten 10 Abbiegespur (2+1) 40 m bis zur
+    // Kreuzung bei x 66 – für den 60-m-Übergang ist kein Platz
+    List<RoadEntry> Roads()
+    {
+        RoadEntry R(string id, double[][] pts, RunEntry run, long a, long b) { var r = MakeRoad(id, pts, run); r.Start = TNode(a); r.End = TNode(b); return r; }
+        return [
+            R("w", [[-300, 0, 0], [0, 0, 0]], TRun(0, 1), 5, 1),
+            R("s", [[0, 0, 0], [0, 0, -300]], TRun(0, 1), 1, 6),
+            R("a", [[0, 0, 0], [13, 0, 0], [26, 0, 0]], TRun(0, 2), 1, 10),
+            R("b", [[26, 0, 0], [36, 0, 0], [46, 0, 0], [56, 0, 0], [66, 0, 0]], TRun(0, 4, 2, 1), 10, 2),
+            R("n2", [[66, 0, 0], [66, 0, -300]], TRun(0, 1), 2, 7),
+            R("s2", [[66, 0, 0], [66, 0, 300]], TRun(0, 1), 2, 8),
+            R("e2", [[66, 0, 0], [366, 0, 0]], TRun(0, 1), 2, 9),
+        ];
+    }
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var roads = Roads();
+    var plain = Junctions.PlainLaneChanges(roads);
+    Check(plain.SetEquals([10L]), $"Wechsel ohne Platz nicht erkannt ({string.Join(",", plain)})");
+    LaneCentering.Apply(roads, cfg.Resolve, plain);
+    var a = roads.Single(r => r.Id == "a"); var b = roads.Single(r => r.Id == "b");
+    Check(a.Points.All(p => Math.Abs(p[2]) < 1e-3), $"Landstraße versetzt: z {string.Join(" ", a.Points.Select(p => p[2].ToString("0.00")))}");
+    var zs = b.Points.Select(p => p[2]).ToList();
+    bool mono = zs.Zip(zs.Skip(1), (x, y) => y - x).All(d => d <= 1e-3) || zs.Zip(zs.Skip(1), (x, y) => y - x).All(d => d >= -1e-3);
+    Check(Math.Abs(zs[0]) < 1e-3 && mono, $"2+1-Stück: Anfang nicht in der Linie oder S-Bogen (z {string.Join(" ", zs.Select(z => z.ToString("0.00")))})");
+    Check(Math.Abs(zs[^1] + 2.375) < 0.05, $"2+1-Stück: Ende an der Kreuzung nicht mittig versetzt (z {zs[^1]:0.00})");
+    // dort setzt Find keinen Übergang
+    Junctions.Reset();
+    var plans = Junctions.Find(roads, (r, st) => cfg.Resolve(st ? r.Runs[0] : r.Runs[^1]).RoadType, []);
+    Check(!plans.Any(p => p.OsmNode == 10), "Übergang am Wechsel ohne Platz geplant");
+    // Gegenprobe: bisher sprang die Linie am Wechsel um 2,375 m (S-Bogen auf dem kurzen Stück)
+    var old = Roads();
+    Junctions.Plain21.Clear();
+    LaneCentering.Apply(old, cfg.Resolve);
+    var a0 = old.Single(r => r.Id == "a");
+    Check(Math.Abs(a0.Points[^1][2] + 2.375) < 0.05, $"Prüfaufbau: ohne die Regel sollte der Wechselknoten versetzt sein (z {a0.Points[^1][2]:0.00})");
 }

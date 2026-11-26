@@ -578,6 +578,62 @@ public static class Junctions
     }
     private static long synth21 = -2_000_000;
 
+    /// <summary>Wechsel 1+1 ↔ 2+1 ohne Übergang (aus: OSM2ETS_NO_PLAIN21=1 – dann wie bisher).</summary>
+    public static bool UsePlain21 = Environment.GetEnvironmentVariable("OSM2ETS_NO_PLAIN21") != "1";
+    /// <summary>So viel (m) nimmt ein Kreuzungs-Prefab am anderen Ende eines Stücks mindestens weg
+    /// (Knoten–Mitte der kleinsten T-/X-Prefabs, eher zu knapp geschätzt).</summary>
+    private const float PlainJunctionReach = 18f;
+    /// <summary>Ergebnis von <see cref="PlainLaneChanges"/>: dort setzt <see cref="Find"/> keinen Übergang
+    /// (LaneCentering hat die Lage schon darauf eingestellt).</summary>
+    public static readonly HashSet<long> Plain21 = [];
+
+    /// <summary>
+    /// Knoten mit genau zwei Straßen, an denen 1+1 und 2+1 wechseln und der gerade 60-m-Übergang
+    /// (<see cref="FORK21"/>/<see cref="DROP21"/>) sicher nicht gesetzt wird: kein gerader Durchgang, Brückenende
+    /// dicht dahinter oder zu wenig Platz bis zu den Prefabs an den anderen Enden (zusammen weniger als
+    /// das Prefab mit je einem kurzen Rest). Dort wechselt nur die Straßenvorlage;
+    /// <see cref="LaneCentering"/> verschiebt die Linie dort nicht (sonst S-Bogen auf wenigen Metern).
+    /// Vor LaneCentering aufrufen; eher zu wenige Knoten melden als einen möglichen Übergang verhindern.
+    /// </summary>
+    public static HashSet<long> PlainLaneChanges(List<RoadEntry> roads, List<string>? warnings = null)
+    {
+        var plain = Plain21;
+        plain.Clear();
+        if (!UsePlain21 || !UseLaneChange21) return plain;
+        var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
+        foreach (var r in roads)
+            foreach (var st in new[] { true, false })
+                if ((st ? r.Start : r.End) is { Kind: "node", OsmNode: long id })
+                    (ends.TryGetValue(id, out var l) ? l : ends[id] = []).Add((r, st));
+        const float half = 30f;   // halbe Länge der Übergänge (60 m)
+        foreach (var (node, list) in ends)
+        {
+            if (list.Count != 2 || list.Any(e => e.R.Closed) || list[0].R == list[1].R || PendingFork21.Any(f => f.Node == node)) continue;
+            var rr = list.Select(e => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1]).ToList();
+            int c0 = Class21(rr[0]), c1 = Class21(rr[1]);
+            if (c0 == 0 || c1 == 0 || c0 == c1) continue;
+            var a0 = Away(list[0].R, list[0].AtStart); var a1 = Away(list[1].R, list[1].AtStart);
+            bool straight = a0.LengthSquared() > 0.5f && a1.LengthSquared() > 0.5f
+                            && Vector2.Dot(Vector2.Normalize(a0), Vector2.Normalize(a1)) < -0.85f;
+            bool bridge = list.Any(e => DistToBridge(e.R, e.AtStart) is >= 0 and <= 40);
+            float Free((RoadEntry R, bool AtStart) e)
+            {
+                float len = (float)Interchanges.ArcLengthOf(e.R);
+                var far = e.AtStart ? e.R.End : e.R.Start;
+                if (far is { Kind: "node", OsmNode: long f } && ends.TryGetValue(f, out var fl) && fl.Count >= 3) len -= PlainJunctionReach;
+                return len;
+            }
+            float f0 = Free(list[0]), f1 = Free(list[1]);
+            bool room = f0 + f1 >= 2 * (half + MinShortTail);
+            if (straight && !bridge && room) continue;
+            plain.Add(node);
+            string why = !straight ? "kein gerader Durchgang" : bridge ? "Brückenende dicht dahinter"
+                : $"Platz bis zu den Nachbar-Prefabs {Math.Max(f0, 0):0} + {Math.Max(f1, 0):0} m, nötig zusammen {2 * (half + MinShortTail):0} m";
+            warnings?.Add($"Info: Knoten {node}: Wechsel 2+1 ↔ Landstraße ohne Übergangs-Prefab ({why})");
+        }
+        return plain;
+    }
+
     /// <summary>Der 60-m-Übergang ist gerade: Wechselstelle bis 40 m verschieben, wo die Straße 30 m
     /// zu beiden Seiten am geradesten läuft (Richtung dahinter weicht am wenigsten von der Sehne ab).</summary>
     private static double StraightestSpot(RoadEntry r, double d0, double lo, double hi)
@@ -1064,7 +1120,7 @@ public static class Junctions
                         (ends2.TryGetValue(id, out var l2) ? l2 : ends2[id] = []).Add((r, st));
             foreach (var (node, list) in ends2)
             {
-                if (list.Count == 2 && list.All(e => !e.R.Closed) && !PendingFork21.Any(f => f.Node == node))
+                if (list.Count == 2 && list.All(e => !e.R.Closed) && !PendingFork21.Any(f => f.Node == node) && !Plain21.Contains(node))
                 {
                     var rr = list.Select(e => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1]).ToList();
                     int c0 = Class21(rr[0]), c1 = Class21(rr[1]);

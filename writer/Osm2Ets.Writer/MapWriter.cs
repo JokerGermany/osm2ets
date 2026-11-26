@@ -60,9 +60,12 @@ public static class MapWriter
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
         // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
         Junctions.Stations = input.Areas.Where(a => a.Kind is "fuel" or "services" or "rest_area").ToList();
-        if (prefabs is not null) { Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFuel(valid, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); }
-        if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);
+        var plain21 = new HashSet<long>();
+        Junctions.Plain21.Clear();
+        if (prefabs is not null) { Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFuel(valid, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); plain21 = Junctions.PlainLaneChanges(valid, warnings); }
+        if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve, plain21);
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
+        if (plain21.Count > 0) warnings.Add($"Info: {plain21.Count} Wechsel 2+1 ↔ Landstraße ohne Übergangs-Prefab (kein Platz, Knick oder Brückenende); an {LaneCentering.Kept} davon mit kurzer Landstraße läuft die Linie gerade durch, die zusätzliche Spur kommt außen hinzu");
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)
             TwinSeparation.Apply(valid, run => mapping.Resolve(run).EdgeLeft, warnings);
         int laneDrops = prefabs is not null ? Interchanges.PrepareLaneDrops(valid) : 0;
