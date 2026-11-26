@@ -385,7 +385,10 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   plus Zusatzspur) über das Bauwerk – wie in der SCS-Karte. Ein Prefab ist massiver Boden: auf einer
   Brücke über eine Straße stieg das Gelände darunter bis an die Fahrbahn. Ein Bauwerk unter dem
   inneren Prefab (Teilung/Einmündung) bleibt weiterhin überdeckt.
-- Kreuzungen: T/X (`ger_r1_x_r1_*_narrow_tmpl`), vierstreifige Varianten, Gabelungen.
+- Kreuzungen: T/X (`ger_r1_x_r1_*_narrow_tmpl`), vierstreifige Varianten, Gabelungen
+  (einspurige Einbahnstraßen: `ger_road_1_one_way_joint_short(_mirrored)`, passend zu
+  „ger road 1 one way“; `OSM2ETS_FORK_2LANE=1`: die zweispurigen `ger_1lane_road_joint_short_*`
+  von bis v246, an denen der KI-Verkehr scheitert).
   Feld- und Fußwege an einer Kreuzung aus mindestens drei befahrbaren Straßen (keine Sichtstücke)
   werden vom Knoten gelöst und am Fahrbahnrand gekürzt, damit das Prefab gesetzt werden kann; liegt
   das Prefab danach woanders, werden auf das Prefab zulaufende Wege bis an dessen Fahrbahnrand

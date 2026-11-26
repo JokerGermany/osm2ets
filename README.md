@@ -381,7 +381,10 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   under the inner prefab (split/join) is still covered by it.
   Ramp points closer to the main road than the prefab's ramp node are dropped (otherwise
   the ramp swings back across the main road). Road terrain is cleared only on the gore side.
-- Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits. Tracks and
+- Junctions: T/X (`ger_r1_x_r1_*_narrow_tmpl`), four-lane variants, forks/splits (single-lane
+  one-way roads: `ger_road_1_one_way_joint_short(_mirrored)`, matching "ger road 1 one way";
+  `OSM2ETS_FORK_2LANE=1`: the two-lane `ger_1lane_road_joint_short_*` used up to v246, where AI
+  traffic fails). Tracks and
   footways at a junction of at least three drivable roads (not visible-only stubs) are detached from
   the node and cut back at the road edge so the prefab can be placed; when the prefab ends up
   elsewhere, ways running towards it are extended to its road edge, others end 2 m before another

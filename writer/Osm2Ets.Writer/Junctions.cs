@@ -23,10 +23,18 @@ public static class Junctions
     public static readonly Def TR2 = new(new("2i03c", "/prefab2/cross_temp/ger/ger_r2_no_offset_x_r1_narrow_t_tmpl.ppd", "default", "ger_1"), [1, 2], [0]);
     public static readonly Def XR2 = new(new("ger_2i03f", "/prefab2/cross_temp/ger/ger_r2_no_offset_x_r1_narrow_tmpl.ppd", "default", "ger_1"), [1, 3], [0, 2]);
 
-    // Gabelungen einspuriger Einbahnstraßen (Rampen): Knoten 0 = Stamm, 1/2 = Äste (±30°).
-    // Variante/Look ungeprüft (keine .pmd vorhanden) – "default"/"ger_1" wie bei den Anschlussstellen.
-    public static readonly Def FSPLIT = new(new("ch_4202n", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
-    public static readonly Def FJOIN = new(new("ch_4202o", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_mirrored_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
+    // Gabelungen einspuriger Einbahnstraßen (Rampen, „ger road 1 one way“): Teilung Knoten 0 = Stamm,
+    // 1/2 = Äste; Zusammenführung Knoten 0/1 = Äste, 2 = Stamm (±30°). Bis v246 standen hier
+    // ger_1lane_road_joint_short(_mirrored)_tmpl_v02 (ch_4202n/o): Deren Stamm und ein Ast haben zwei
+    // Spuren – im Spiel „Unable to determine output road lane 2 … Failed to register Prefab item“, kein
+    // KI-Verkehr über die Gabelung. OSM2ETS_FORK_2LANE=1: die alten Prefabs.
+    public static bool UseOneLaneForks = Environment.GetEnvironmentVariable("OSM2ETS_FORK_2LANE") != "1";
+    public static readonly Def FSPLIT = UseOneLaneForks
+        ? new(new("ch_4201v", "/prefab2/fork_temp/ger/ger_road_1_one_way_joint_short.ppd", "default", "ger_1"), [1, 2], [0])
+        : new(new("ch_4202n", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
+    public static readonly Def FJOIN = UseOneLaneForks
+        ? new(new("ch_4201u", "/prefab2/fork_temp/ger/ger_road_1_one_way_joint_short_mirrored.ppd", "default", "ger_1"), [0, 1], [2])
+        : new(new("ch_4202o", "/prefab2/fork_temp/ger/ger_1lane_road_joint_short_mirrored_tmpl_v02.ppd", "default", "ger_1"), [1, 2], [0]);
 
     // Zweirichtungsstraße teilt sich in zwei Einbahnstraßen (z. B. Rampe, die zur
     // getrennten Fahrbahn wird): Knoten 0 = beide Richtungen, 1 = Einbahn hinein, 2 = Einbahn heraus (±15°).
