@@ -530,6 +530,7 @@ public static class MapWriter
                 int shaped = 0, bad = 0, folded = 0;
                 // Zwickel an Gabelungen: nahe anderer Straßen/Prefabs kürzerer Übergang ins Raster
                 RoadCap.PrefabLanes = PrefabFootprint.All3(map);
+                RoadCap.PrefabCentres = PrefabFootprint.Centres3(map);
                 RoadCap.RoadTerrainLowered = 0; TerrainFill.GapRamped = 0; TerrainFill.ColumnsClamped = 0; TerrainFill.SlopeLimited = 0;
                 TerrainFill.PrefabRamped = 0;
                 var others = Environment.GetEnvironmentVariable("OSM2ETS_NO_ROADTERRAIN_CAP") is null

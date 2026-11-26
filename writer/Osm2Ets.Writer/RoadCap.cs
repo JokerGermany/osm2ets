@@ -28,6 +28,15 @@ public sealed class RoadCap
     public const float DeckDrop = 0.3f, BridgeMargin = 0.5f, BridgeSlope = 0.5f, Cell = 25f, Reach = 12f, LaneHalf = 3f;
     /// <summary>Spurpunkte der Prefabs mit Höhe (vor dem Füllgelände gesetzt).</summary>
     public static List<Vector3>? PrefabLanes;
+    /// <summary>Nur die Spurmitten der Prefabs (ohne die Randpunkte ±JunctionSide). <see cref="RayFree"/> nimmt
+    /// für Feld-/Fußwege diese statt <see cref="PrefabLanes"/>: Mit den Randpunkten reichte die Sperrzone einer
+    /// Einmündung bis fast 10 m neben ihre Achse, und das Straßengelände eines Wegs, der seitlich an das
+    /// Prefab stößt, fehlte auf den letzten Metern ganz – dort sah man unter den Wegrand (schwarze Keile
+    /// westlich des Autohofs). Aus: OSM2ETS_MINOR_FULL_PREFAB=1.</summary>
+    public static List<Vector3>? PrefabCentres;
+    public static bool UseMinorCentres = Environment.GetEnvironmentVariable("OSM2ETS_MINOR_FULL_PREFAB") is null;
+    private readonly List<Vector3> centres = [];
+    private readonly Dictionary<(int, int), List<int>> centreIndex = [];
 
     private static float Env(string n, float d) =>
         float.TryParse(Environment.GetEnvironmentVariable(n), System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : d;
@@ -64,6 +73,15 @@ public sealed class RoadCap
                 c.addingEnds = (true, true);
             }
         }
+        if (UseMinorCentres && PrefabCentres is { } cs)
+            foreach (var p in cs)
+            {
+                int k = c.centres.Count; c.centres.Add(p);
+                const float pad = LaneHalf + Cell / 2;   // Strahl wird alle Cell/2 m abgefragt
+                for (int x = (int)MathF.Floor((p.X - pad) / Cell); x <= (int)MathF.Floor((p.X + pad) / Cell); x++)
+                    for (int z = (int)MathF.Floor((p.Z - pad) / Cell); z <= (int)MathF.Floor((p.Z + pad) / Cell); z++)
+                        (c.centreIndex.TryGetValue((x, z), out var cl) ? cl : c.centreIndex[(x, z)] = []).Add(k);
+            }
         // Prefabs: Spurpunkte (alle ~2 m) mit halber Spurbreite + Rand
         if (PrefabLanes is { } lanes)
             foreach (var p in lanes) c.Add(p, p + new Vector3(0.01f, 0, 0), LaneHalf, 0f, 0f, false);
@@ -261,11 +279,24 @@ public sealed class RoadCap
     {
         float best = maxD;
         var seen = new HashSet<int>();
+        bool minor = centres.Count > 0 && owner is RoadEntry re && re.Runs.All(Junctions.IsMinorWay);
+        var seenC = new HashSet<int>();
         var sdir = segB - segA;
         var sd = sdir.LengthSquared() > 1e-8f ? Vector2.Normalize(sdir) : Vector2.UnitX;
         for (float s = 0; ; s += Cell / 2)
         {
             var p = o + dir * MathF.Min(s, maxD);
+            if (minor && centreIndex.TryGetValue(((int)MathF.Floor(p.X / Cell), (int)MathF.Floor(p.Y / Cell)), out var cl))
+                foreach (var k in cl)
+                {
+                    if (!seenC.Add(k)) continue;
+                    var c = new Vector2(centres[k].X, centres[k].Z) - o;
+                    float tc = Vector2.Dot(c, dir), d2 = c.LengthSquared() - tc * tc;
+                    if (d2 > LaneHalf * LaneHalf) continue;
+                    float th = MathF.Sqrt(LaneHalf * LaneHalf - d2);
+                    if (tc + th < 0) continue;
+                    best = MathF.Min(best, MathF.Max(0, tc - th));
+                }
             if (index.TryGetValue(((int)MathF.Floor(p.X / Cell), (int)MathF.Floor(p.Y / Cell)), out var l))
                 foreach (var i in l)
                 {
@@ -274,6 +305,7 @@ public sealed class RoadCap
                     if (bridge) continue;
                     if (owners[i] is null)
                     {
+                        if (minor) continue;   // Feld-/Fußweg: nur die Spurmitten (oben)
                         // Prefab-Spurpunkt: Kreis mit Radius hw (halbe Spur + Rand)
                         var c = new Vector2(a.X, a.Z) - o;
                         float tc = Vector2.Dot(c, dir);

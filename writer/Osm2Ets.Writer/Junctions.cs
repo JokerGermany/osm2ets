@@ -617,6 +617,8 @@ public static class Junctions
     public static readonly List<(RoadEntry R, bool AtStart)> Detached = [];
     /// <summary>Halbe Breite der Prefab-Fahrbahn der schmalen T-/X-Prefabs bis zum Rand (m).</summary>
     private const float PrefabRoadHalf = 4.5f;
+    /// <summary>Platz (m) für Straßengelände zwischen dem Ende eines gelösten Wegs und einem anderen gelösten Weg.</summary>
+    private const float MinorGap = 2f;
 
     /// <summary>
     /// Gelöste Feld-/Fußwege wurden an der OSM-Lage der Straßen gekürzt; das Prefab liegt danach oft
@@ -635,6 +637,7 @@ public static class Junctions
         }
         static float Dist(Vector2 q, Vector2 a, Vector2 b) { var ab = b - a; float l2 = ab.LengthSquared(); float t = l2 < 1e-6f ? 0 : Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1); return Vector2.Distance(q, a + ab * t); }
         int n0 = 0;
+        var reached = new HashSet<RoadEntry>();
         foreach (var (r, atStart) in Detached)
         {
             if (r.Points.Count < 2) continue;
@@ -653,9 +656,22 @@ public static class Junctions
                 var q = end + d * t;
                 if (segs.Min(sg => Dist(q, sg.A, sg.B)) > reach) continue;
                 if (t > 0.5f) { e[0] = q.X; e[2] = q.Y; r.LengthM = Interchanges.ArcLengthOf(r); n0++; }
+                reached.Add(r);
                 break;
             }
         }
+        // Ende eines gelösten Wegs dicht an einem anderen gelösten Weg (Fußweg am Feldweg westlich des
+        // Autohofs): kürzen, bis Platz für das Straßengelände dazwischen ist – sonst fehlte dem anderen Weg
+        // dort das Gelände (Strahl trifft sofort), und man sah unter seinen Rand. Der Weg zum Prefab bleibt.
+        foreach (var (r, atStart) in Detached)
+            foreach (var (o, _) in Detached)
+            {
+                if (o == r || reached.Contains(r)) continue;
+                float need = Overlaps.TrimNeeded(r, atStart, o, run => halfWidth(run) + MinorGap);
+                if (need <= Overlaps.Tolerance || need > 20 || Interchanges.ArcLengthOf(r) < need + 10) continue;
+                Overlaps.CutEnd(r, atStart, need);
+                r.LengthM = Interchanges.ArcLengthOf(r);
+            }
         return n0;
     }
 

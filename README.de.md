@@ -382,7 +382,11 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   inneren Prefab (Teilung/Einmündung) bleibt weiterhin überdeckt.
 - Kreuzungen: T/X (`ger_r1_x_r1_*_narrow_tmpl`), vierstreifige Varianten, Gabelungen.
   Feld- und Fußwege an einer Kreuzung aus mindestens drei befahrbaren Straßen (keine Sichtstücke)
-  werden vom Knoten gelöst und am Fahrbahnrand gekürzt, damit das Prefab gesetzt werden kann; ein
+  werden vom Knoten gelöst und am Fahrbahnrand gekürzt, damit das Prefab gesetzt werden kann; liegt
+  das Prefab danach woanders, werden auf das Prefab zulaufende Wege bis an dessen Fahrbahnrand
+  verlängert, andere enden 2 m vor einem anderen gelösten Weg (Platz für dessen Straßengelände).
+  Das Straßengelände solcher Wege meidet am Prefab nur die Spurmitten (±3 m), nicht den ganzen
+  Prefab-Rand (`OSM2ETS_MINOR_FULL_PREFAB=1`: wie bisher); ein
   kurzer Arm (unter 30 m) zu einem Knoten, an dem nur solche Wege abzweigen, wird mit seiner
   Fortsetzung verbunden (`OSM2ETS_KEEP_MINOR_NODES=1`: wie bisher kein Prefab). Einmündungen von
   Tankstellen-Zufahrten werden zuerst gesetzt; eine Kreuzung daneben schließt direkt an sie an.
