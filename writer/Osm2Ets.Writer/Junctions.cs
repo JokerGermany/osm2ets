@@ -613,6 +613,48 @@ public static class Junctions
     /// Nur an Kreuzungen mit mindestens drei Straßen, die keine Sichtstücke sind, nicht an Autobahnen und
     /// Rampen. Nach PrepareFuel, vor LaneCentering aufrufen.
     /// </summary>
+    /// <summary>Von Kreuzungen gelöste Feld-/Fußwege (Ende am Knoten), für <see cref="ReachPrefabs"/>.</summary>
+    public static readonly List<(RoadEntry R, bool AtStart)> Detached = [];
+    /// <summary>Halbe Breite der Prefab-Fahrbahn der schmalen T-/X-Prefabs bis zum Rand (m).</summary>
+    private const float PrefabRoadHalf = 4.5f;
+
+    /// <summary>
+    /// Gelöste Feld-/Fußwege wurden an der OSM-Lage der Straßen gekürzt; das Prefab liegt danach oft
+    /// anders (an ein Nachbar-Prefab gerückt), dann endete der Weg meterweit davor. Hier wird das Ende
+    /// in seiner Richtung bis an den Rand der Prefab-Fahrbahn verlängert (höchstens 25 m).
+    /// Nach dem Setzen der Kreuzungs-Prefabs aufrufen.
+    /// </summary>
+    public static int ReachPrefabs(List<Plan> plans, Func<RunEntry, float> halfWidth)
+    {
+        var segs = new List<(Vector2 A, Vector2 B)>();
+        foreach (var p in plans)
+        {
+            if (p.NodePos is not { Length: > 0 } np) continue;
+            var c = np.Aggregate(Vector3.Zero, (a, b) => a + b) / np.Length;
+            foreach (var n in np) segs.Add((new(c.X, c.Z), new(n.X, n.Z)));
+        }
+        static float Dist(Vector2 q, Vector2 a, Vector2 b) { var ab = b - a; float l2 = ab.LengthSquared(); float t = l2 < 1e-6f ? 0 : Math.Clamp(Vector2.Dot(q - a, ab) / l2, 0, 1); return Vector2.Distance(q, a + ab * t); }
+        int n0 = 0;
+        foreach (var (r, atStart) in Detached)
+        {
+            if (r.Points.Count < 2) continue;
+            var e = atStart ? r.Points[0] : r.Points[^1]; var f = atStart ? r.Points[1] : r.Points[^2];
+            var end = new Vector2((float)e[0], (float)e[2]); var d = end - new Vector2((float)f[0], (float)f[2]);
+            if (d.LengthSquared() < 1e-6f || segs.Count == 0) continue;
+            d = Vector2.Normalize(d);
+            float reach = PrefabRoadHalf + halfWidth(atStart ? r.Runs[0] : r.Runs[^1]) - Overlaps.Tolerance;
+            if (segs.Min(sg => Dist(end, sg.A, sg.B)) > reach + 25) continue;   // kein Prefab in der Nähe
+            for (float t = 0; t <= 25; t += 0.25f)
+            {
+                var q = end + d * t;
+                if (segs.Min(sg => Dist(q, sg.A, sg.B)) > reach) continue;
+                if (t > 0.5f) { e[0] = q.X; e[2] = q.Y; r.LengthM = Interchanges.ArcLengthOf(r); n0++; }
+                break;
+            }
+        }
+        return n0;
+    }
+
     public static int DetachMinorWays(List<RoadEntry> roads, Func<RunEntry, float> halfWidth, List<string> warnings)
     {
         if (!UseMinorDetach) return 0;
@@ -632,6 +674,7 @@ public static class Junctions
         // aus Sichtstücken bleibt alles wie bisher (dort braucht es kein Prefab; ein T passte oft schlecht)
         static bool Real(List<(RoadEntry R, bool AtStart)> major) => major.Count(e => e.R.Role != "visible") >= 3;
         int detached = 0, joined = 0;
+        Detached.Clear();
         bool Detach((RoadEntry R, bool AtStart) m, List<RoadEntry> others, long node)
         {
             float need = others.Max(o => Overlaps.TrimNeeded(m.R, m.AtStart, o, halfWidth));
@@ -644,6 +687,7 @@ public static class Junctions
             if (need > Overlaps.Tolerance) Overlaps.CutEnd(m.R, m.AtStart, need);
             var cut = new EndInfo { Kind = "trimmed", OsmNode = node };
             if (m.AtStart) m.R.Start = cut; else m.R.End = cut;
+            Detached.Add((m.R, m.AtStart));
             detached++;
             return true;
         }
