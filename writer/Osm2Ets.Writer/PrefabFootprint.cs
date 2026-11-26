@@ -258,6 +258,8 @@ public static class PrefabFootprint
     private static Vector2 Rot(float ang, Vector2 v) =>
         new(v.X * MathF.Cos(ang) - v.Y * MathF.Sin(ang), v.X * MathF.Sin(ang) + v.Y * MathF.Cos(ang));
 
+    /// <summary>Knotenzuordnung zuerst nach Prefab.Origin (aus: OSM2ETS_FIT_NO_ORIGIN=1).</summary>
+    public static bool UseOriginShift = Environment.GetEnvironmentVariable("OSM2ETS_FIT_NO_ORIGIN") is null;
     private static bool Fit(Prefab pf, PrefabDescriptor ppd, out float rot, out Vector2 tr)
     {
         rot = 0; tr = Vector2.Zero;
@@ -288,7 +290,10 @@ public static class PrefabFootprint
             // Knotenreihenfolge der .ppd bevorzugen: bei Prefabs, deren Knoten auf einer Linie liegen
             // (z. B. mod_ger_38, beide Knoten bei x = 0), passt die um 180° gedrehte Zuordnung
             // ebenso gut – dann lägen die Spuren gespiegelt
-            if (err < bestErr - (shift == 0 ? 0f : 0.1f)) { bestErr = err; rot = ang; tr = t; }
+            // Bevorzugt wird die Zuordnung aus dem Origin des Prefabs (ChangeOrigin dreht die Knotenliste);
+            // sonst lagen z. B. die Spuren der Tankstelle (2 Knoten) um 180° gedreht auf der Hauptstraße.
+            int pref = UseOriginShift ? pf.Origin % n : 0;
+            if (err < bestErr - (shift == pref ? 0f : 0.1f) || (shift == pref && err < bestErr + 0.1f)) { bestErr = err; rot = ang; tr = t; }
         }
         return bestErr < 1.5f;
     }
