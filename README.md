@@ -393,7 +393,9 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   the extra lane is added on the outside. A 2+1 piece shorter than 100 m then runs evenly between the
   positions at its ends instead of being shifted to its own centre (that made an S-bend within a few
   metres). The searched ETS2 1.61 game files contain no German 1+1 ↔ 2+1 transition shorter than
-  60 m. `OSM2ETS_NO_PLAIN21=1` disables this.
+  60 m. `OSM2ETS_NO_PLAIN21=1` disables this. If such a change lies between two prefabs at most 70 m
+  apart, the connection is laid as one smooth curve between the prefab nodes (no kink at the prefab;
+  `OSM2ETS_NO_PLAINSMOOTH=1` disables it).
 - Fuel stations (`amenity=fuel`): the station's own service ways are replaced by a station prefab
   (fuelling only works at prefab refuel points). `gas_small_road_01_ger` where a straight two-lane
   road (≥ 188 m without junction) runs past; otherwise `gas_universal_03_balt` (category dlc_balt)

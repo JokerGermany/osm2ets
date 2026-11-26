@@ -148,6 +148,8 @@ public static class MapWriter
                 warnings.Add($"Knoten {jp.OsmNode} (Kreuzung): kein Prefab – {reason}");
             int dropped = valid.RemoveAll(Junctions.Dropped.Contains);
             if (dropped > 0) warnings.Add($"Info: {dropped} kurze Verbindungsstraßen durch direkt verbundene Kreuzungs-Prefabs ersetzt");
+            int smooth = Junctions.SmoothPlainChains(valid);
+            if (smooth > 0) warnings.Add($"Info: {smooth} kurze Verbindungen zwischen zwei Prefabs über einen Wechsel 2+1 ↔ Landstraße als ein glatter Bogen gelegt");
         }
 
         var (pairs, reversed) = Connector.Plan(valid, Junctions.Fixed);

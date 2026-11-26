@@ -634,6 +634,98 @@ public static class Junctions
         return plain;
     }
 
+    /// <summary>Glatter Bogen über kurze Ketten (aus: OSM2ETS_NO_PLAINSMOOTH=1).</summary>
+    public static bool UsePlainSmooth = Environment.GetEnvironmentVariable("OSM2ETS_NO_PLAINSMOOTH") != "1";
+    /// <summary>Höchstlänge (m) einer Kette Prefab – Wechsel ohne Übergang – Prefab, die neu gelegt wird.</summary>
+    public const float PlainSmoothMax = 70f;
+
+    /// <summary>
+    /// Kurze Verbindung zweier Prefabs über einen Wechsel 2+1 ↔ 1+1 ohne Übergang (<see cref="Plain21"/>):
+    /// Beide Stücke enden sonst mit kurzem Einlauf am Prefab und biegen dazwischen auf wenigen Metern
+    /// zur OSM-Linie und zurück (S mit Knick am Prefab, Zufahrt Autohof an der B 85). Hier wird die ganze
+    /// Kette als ein glatter kubischer Bogen zwischen den beiden Prefab-Knoten in deren Richtungen gelegt
+    /// (Griffe so gewählt, dass die stärkste Krümmung am kleinsten ist); der Wechselknoten bleibt an
+    /// seinem Anteil der Länge. Nach dem Anschließen der Prefabs aufrufen.
+    /// </summary>
+    public static int SmoothPlainChains(List<RoadEntry> roads)
+    {
+        if (!UsePlainSmooth) return 0;
+        int n = 0;
+        static Vector2 Q(double[] p) => new((float)p[0], (float)p[2]);
+        foreach (var node in Plain21)
+        {
+            var at = roads.Where(r => r.Start?.OsmNode == node && r.Start.Kind == "node" || r.End?.OsmNode == node && r.End.Kind == "node").ToList();
+            if (at.Count != 2 || at[0] == at[1]) continue;
+            // Punktfolgen vom Prefab zum Knoten (a) und vom Knoten zum Prefab (b)
+            List<double[]>? Side(RoadEntry r, bool toNode)
+            {
+                bool startsAtNode = r.Start?.OsmNode == node;
+                var far = startsAtNode ? r.End : r.Start;
+                if (far?.Kind != "prefab" || r.Points.Count < 2) return null;
+                var pts = r.Points.ToList();
+                if (startsAtNode == toNode) pts.Reverse();
+                return pts;
+            }
+            var pa = Side(at[0], true); var pb = Side(at[1], false);
+            if (pa is null || pb is null) continue;
+            double La = Interchanges.ArcLengthOf(at[0]), Lb = Interchanges.ArcLengthOf(at[1]);
+            if (La + Lb > PlainSmoothMax || La < 1 || Lb < 1) continue;
+            var p0 = Q(pa[0]); var p3 = Q(pb[^1]);
+            var d0 = Q(pa[1]) - p0; var d3 = p3 - Q(pb[^2]);
+            if (d0.LengthSquared() < 1e-4f || d3.LengthSquared() < 1e-4f) continue;
+            d0 = Vector2.Normalize(d0); d3 = Vector2.Normalize(d3);
+            float L = Vector2.Distance(p0, p3);
+            Vector2 B(float t, float k0, float k1)
+            {
+                var c1 = p0 + d0 * k0; var c2 = p3 - d3 * k1; float u = 1 - t;
+                return u * u * u * p0 + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * p3;
+            }
+            float MaxCurv(float k0, float k1)
+            {
+                float worst = 0; var prev = B(0, k0, k1); var prevDir = d0;
+                for (int i = 1; i <= 60; i++)
+                {
+                    var q = B(i / 60f, k0, k1); var seg = q - prev; float sl = seg.Length();
+                    if (sl < 1e-4f) continue;
+                    var dir = seg / sl;
+                    float ang = MathF.Abs(MathF.Atan2(prevDir.X * dir.Y - prevDir.Y * dir.X, Vector2.Dot(prevDir, dir)));
+                    worst = MathF.Max(worst, ang / sl); prev = q; prevDir = dir;
+                }
+                return worst;
+            }
+            float bk0 = L / 3, bk1 = L / 3, best = float.MaxValue;
+            for (float f0 = 0.15f; f0 <= 0.8f; f0 += 0.05f)
+                for (float f1 = 0.15f; f1 <= 0.8f; f1 += 0.05f)
+                {
+                    float c = MaxCurv(f0 * L, f1 * L);
+                    if (c < best) { best = c; bk0 = f0 * L; bk1 = f1 * L; }
+                }
+            // dicht abtasten, nach Bogenlänge auf die beiden Stücke verteilen
+            var dense = Enumerable.Range(0, 401).Select(i => B(i / 400f, bk0, bk1)).ToList();
+            var s = new float[dense.Count];
+            for (int i = 1; i < dense.Count; i++) s[i] = s[i - 1] + Vector2.Distance(dense[i - 1], dense[i]);
+            float total = s[^1], split = total * (float)(La / (La + Lb));
+            Vector2 At(float x) { int i = 1; while (i < s.Length - 1 && s[i] < x) i++; float f = (x - s[i - 1]) / MathF.Max(s[i] - s[i - 1], 1e-6f); return dense[i - 1] + (dense[i] - dense[i - 1]) * Math.Clamp(f, 0, 1); }
+            double y0 = pa[0][1], yN = pa[^1][1], y3 = pb[^1][1];
+            List<double[]> Lay(float from, float to, double ya, double yb)
+            {
+                int m = Math.Max(2, (int)MathF.Ceiling((to - from) / 4f));
+                return Enumerable.Range(0, m + 1).Select(i => { float x = from + (to - from) * i / m; var q = At(x); return new[] { q.X, ya + (yb - ya) * i / m, (double)q.Y }; }).ToList();
+            }
+            var na = Lay(0, split, y0, yN); var nb = Lay(split, total, yN, y3);
+            void Put(RoadEntry r, List<double[]> pts, bool toNode)
+            {
+                bool startsAtNode = r.Start?.OsmNode == node;
+                if (startsAtNode == toNode) pts.Reverse();
+                var run = r.Runs[r.Runs.Count / 2].Span(0, pts.Count - 1);
+                r.Points = pts; r.Runs = [run]; r.LengthM = Interchanges.ArcLengthOf(r);
+            }
+            Put(at[0], na, true); Put(at[1], nb, false);
+            n++;
+        }
+        return n;
+    }
+
     /// <summary>Der 60-m-Übergang ist gerade: Wechselstelle bis 40 m verschieben, wo die Straße 30 m
     /// zu beiden Seiten am geradesten läuft (Richtung dahinter weicht am wenigsten von der Sehne ab).</summary>
     private static double StraightestSpot(RoadEntry r, double d0, double lo, double hi)

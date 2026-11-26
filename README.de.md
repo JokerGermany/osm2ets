@@ -398,7 +398,9 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   der Flucht, die zusätzliche Spur kommt außen hinzu. Ein 2+1-Stück unter 100 m läuft dann gleichmäßig
   zwischen den Lagen an seinen Enden, statt auf seine eigene Mitte versetzt zu werden (das ergab einen
   S-Bogen auf wenigen Metern). In den durchsuchten Spieldateien (ETS2 1.61) gibt es keinen deutschen
-  Übergang 1+1 ↔ 2+1 unter 60 m. `OSM2ETS_NO_PLAIN21=1` schaltet das ab.
+  Übergang 1+1 ↔ 2+1 unter 60 m. `OSM2ETS_NO_PLAIN21=1` schaltet das ab. Liegt ein solcher Wechsel
+  zwischen zwei Prefabs, die zusammen höchstens 70 m auseinander sind, wird die Verbindung als ein glatter
+  Bogen zwischen den Prefab-Knoten gelegt (kein Knick am Prefab; `OSM2ETS_NO_PLAINSMOOTH=1` schaltet das ab).
 - Tankstellen (`amenity=fuel`): Die Wege auf dem Gelände werden durch ein Tankstellen-Prefab ersetzt
   (getankt wird nur an Tankpunkten in Prefabs). `gas_small_road_01_ger`, wo eine gerade Landstraße 1+1
   (mindestens 188 m ohne Abzweig) vorbeiführt; sonst `gas_universal_03_balt` (Kategorie dlc_balt) mit
