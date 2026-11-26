@@ -14,8 +14,12 @@ internal static class TrafficSignals
 {
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_SIGNALS") != "1";
     public static string Profile = Environment.GetEnvironmentVariable("OSM2ETS_SIGNAL_PROFILE") ?? "cr_1x1";
-    /// <summary>Abweichende Profile je Prefab: Abbiegespur × T (ger_r1_turn_x_r1_t_tmpl) → „crossroad 1 turn x1 t“.</summary>
-    private static readonly Dictionary<string, string> ByModel = new() { ["ch_14001"] = "cr_1tx1" };
+    /// <summary>Profile je Prefab: ch_14001 bietet im Editor nur cr_t1x1t an; mod_ger_67/63 nennen in ihrer
+    /// Definition (def/world/prefab.sii) cr_2x1_gntry bzw. cr_2x2_hang.</summary>
+    private static readonly Dictionary<string, string> ByModel = new()
+    {
+        ["ch_14001"] = "cr_t1x1t", ["mod_ger_67"] = "cr_2x1_gntry", ["mod_ger_63"] = "cr_2x2_hang",
+    };
     /// <summary>So weit (m) außerhalb der Knoten eines Prefabs zählt eine Ampel noch zu ihm (Haltlinie).</summary>
     public const float Reach = 12f;
 
