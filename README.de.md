@@ -401,6 +401,9 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   Übergang 1+1 ↔ 2+1 unter 60 m. `OSM2ETS_NO_PLAIN21=1` schaltet das ab. Liegt ein solcher Wechsel
   zwischen zwei Prefabs, die zusammen höchstens 70 m auseinander sind, wird die Verbindung als ein glatter
   Bogen zwischen den Prefab-Knoten gelegt (kein Knick am Prefab; `OSM2ETS_NO_PLAINSMOOTH=1` schaltet das ab).
+  Test `OSM2ETS_UN_T=1`: Liegt der Wechsel kurz hinter einer Einmündung, beginnt die 2+1-Straße schon
+  dort; die Einmündung ist dann die Universal-Einmündung „un cross 1-1 / 2-1 t 1-1“ in der Variante
+  ohne Markierung (kein Vorlagenwechsel auf der Straße).
 - Tankstellen (`amenity=fuel`): Die Wege auf dem Gelände werden durch ein Tankstellen-Prefab ersetzt
   (getankt wird nur an Tankpunkten in Prefabs). `gas_small_road_01_ger`, wo eine gerade Landstraße 1+1
   (mindestens 188 m ohne Abzweig) vorbeiführt; sonst `gas_universal_03_balt` (Kategorie dlc_balt) mit

@@ -92,6 +92,68 @@ public static class Junctions
     public static readonly Def ATMRG = new(new("at_2i02j", "/prefab2/fork_temp/at/at_r1_r1_joint.ppd", "lines_de", "ger_1"), [2, 0], [1]);
     public static bool UseSlipJoints = Environment.GetEnvironmentVariable("OSM2ETS_NO_SLIPJOINT") != "1";
     public static bool UseSlipDrop = Environment.GetEnvironmentVariable("OSM2ETS_NO_SLIPDROP") != "1";
+    // Universal-Einmündung, an deren einem durchgehenden Arm die zweite Spur einer 2+1-Straße beginnt
+    // (un_14023 „un cross 1-1 / 2-1 t 1-1 mirrored“: Nebenstraße links; un_14022 rechts). Variante
+    // no_lines (ohne Markierung, die universelle passt nicht zu deutschen Straßen). Test: OSM2ETS_UN_T=1.
+    public static readonly Def UNTL = new(new("un_14023", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1_mirrored.ppd", "no_lines", "asph_new_01"), [0, 2], [1]);
+    public static readonly Def UNTR = new(new("un_14022", "/prefab2/cross_temp/un/un_cross_1-1_2-1_t_1-1.ppd", "no_lines", "asph_new_01"), [0, 1], [2]);
+    public static bool UseUnT = Environment.GetEnvironmentVariable("OSM2ETS_UN_T") == "1";
+    /// <summary>Einmündungen, an denen <see cref="PrepareUnT"/> die 2+1-Straße beginnen lässt.</summary>
+    public static readonly HashSet<long> UnTNodes = [];
+    /// <summary>2+1-Straßen ab einer Universal-Einmündung: LaneCentering versetzt sie nicht (die Einmündung
+    /// bleibt auf der Linie der Landstraße).</summary>
+    public static readonly HashSet<RoadEntry> UnTRoads = [];
+
+    /// <summary>
+    /// Wechsel 1+1 → 2+1 kurz hinter einer Einmündung (Landstraßenstück unter 50 m, kein Platz für den
+    /// Übergang): Die 2+1-Straße beginnt schon an der Einmündung, dort sitzt die Universal-Einmündung
+    /// <see cref="UNTL"/>/<see cref="UNTR"/>. Kein Vorlagenwechsel mehr auf der Straße. Vor
+    /// <see cref="PlainLaneChanges"/> aufrufen.
+    /// </summary>
+    public static int PrepareUnT(List<RoadEntry> roads, List<string> warnings)
+    {
+        UnTNodes.Clear(); UnTRoads.Clear();
+        if (!UseUnT) return 0;
+        var ends = new Dictionary<long, List<(RoadEntry R, bool AtStart)>>();
+        foreach (var r in roads)
+            foreach (var st in new[] { true, false })
+                if ((st ? r.Start : r.End) is { Kind: "node", OsmNode: long id })
+                    (ends.TryGetValue(id, out var l) ? l : ends[id] = []).Add((r, st));
+        int n = 0;
+        foreach (var (node, list) in ends.ToList())
+        {
+            if (list.Count != 2 || list[0].R == list[1].R || list.Any(e => e.R.Closed)) continue;
+            var rr = list.Select(e => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1]).ToList();
+            int c0 = Class21(rr[0]), c1 = Class21(rr[1]);
+            if (c0 == 0 || c1 == 0 || c0 == c1) continue;
+            var (a, aStart) = c0 == 1 ? list[0] : list[1];
+            var (b, bStart) = c0 == 1 ? list[1] : list[0];
+            if (a.Runs.Any(x => Class21(x) != 1) || Interchanges.ArcLengthOf(a) >= LaneCentering.Ramp) continue;
+            // 2+1 mit zwei Spuren vom Wechsel weg (von der Einmündung aus gesehen weiterführend)
+            var xb = bStart ? b.Runs[0] : b.Runs[^1];
+            int? away = bStart ? xb.LanesForward : xb.LanesBackward;
+            if (away is not >= 2) continue;
+            var far = aStart ? a.End : a.Start;
+            if (far is not { Kind: "node", OsmNode: long t } || !ends.TryGetValue(t, out var tl) || tl.Count != 3) continue;
+            if (tl.Any(e => e.R.Closed || e.R.Runs.Any(x => x.Oneway || Class21(x) != 1))) continue;
+            // Landstraßenstück bekommt die Spuren der 2+1-Straße (in seiner Richtung), dann verbinden
+            bool same = aStart != bStart;   // a endet am Knoten, b beginnt dort (oder umgekehrt): gleiche Richtung
+            foreach (var x in a.Runs)
+            {
+                x.Lanes = xb.Lanes;
+                (x.LanesForward, x.LanesBackward) = same ? (xb.LanesForward, xb.LanesBackward) : (xb.LanesBackward, xb.LanesForward);
+                x.OsmLanes = x.Lanes;
+            }
+            JoinAt(roads, node);
+            UnTRoads.Add(roads.Contains(a) ? a : b);
+            ends.Remove(node);
+            UnTNodes.Add(t);
+            warnings.Add($"Info: Knoten {node}: 2+1-Straße beginnt schon an der Einmündung {t} (Universal-Einmündung ohne Markierung, Test)");
+            n++;
+        }
+        return n;
+    }
+
     public static bool UseUnSlip = Environment.GetEnvironmentVariable("OSM2ETS_UN_SLIP") == "1";
     private const float UnForkLen = 40, UnForkShort = 10;
     private static bool PlainArm(RunEntry x) => !x.Oneway && (x.Lanes is null or <= 2)
@@ -723,6 +785,36 @@ public static class Junctions
             Put(at[0], na, true); Put(at[1], nb, false);
             n++;
         }
+        // 2+1-Straße ab der Universal-Einmündung bis zum nächsten Prefab: ebenso als ein Bogen
+        foreach (var r in UnTRoads)
+        {
+            if (!roads.Contains(r) || r.Start?.Kind != "prefab" || r.End?.Kind != "prefab" || r.Points.Count < 2) continue;
+            if (Interchanges.ArcLengthOf(r) > PlainSmoothMax) continue;
+            var p0 = Q(r.Points[0]); var p3 = Q(r.Points[^1]);
+            var d0 = Q(r.Points[1]) - p0; var d3 = p3 - Q(r.Points[^2]);
+            if (d0.LengthSquared() < 1e-4f || d3.LengthSquared() < 1e-4f) continue;
+            d0 = Vector2.Normalize(d0); d3 = Vector2.Normalize(d3);
+            float L = Vector2.Distance(p0, p3);
+            Vector2 B(float t, float k0, float k1) { var c1 = p0 + d0 * k0; var c2 = p3 - d3 * k1; float u = 1 - t; return u * u * u * p0 + 3 * u * u * t * c1 + 3 * u * t * t * c2 + t * t * t * p3; }
+            float best = float.MaxValue, bk0 = L / 3, bk1 = L / 3;
+            for (float f0 = 0.15f; f0 <= 0.8f; f0 += 0.05f)
+                for (float f1 = 0.15f; f1 <= 0.8f; f1 += 0.05f)
+                {
+                    float worst = 0; var prev = B(0, f0 * L, f1 * L); var pd = d0;
+                    for (int i = 1; i <= 60; i++)
+                    {
+                        var q = B(i / 60f, f0 * L, f1 * L); var sg = q - prev; float sl = sg.Length(); if (sl < 1e-4f) continue;
+                        var dir = sg / sl; worst = MathF.Max(worst, MathF.Abs(MathF.Atan2(pd.X * dir.Y - pd.Y * dir.X, Vector2.Dot(pd, dir))) / sl); prev = q; pd = dir;
+                    }
+                    if (worst < best) { best = worst; bk0 = f0 * L; bk1 = f1 * L; }
+                }
+            int m = Math.Max(2, (int)MathF.Ceiling(L / 4f));
+            double ya = r.Points[0][1], yb = r.Points[^1][1];
+            var pts = Enumerable.Range(0, m + 1).Select(i => { var q = B(i / (float)m, bk0, bk1); return new[] { q.X, ya + (yb - ya) * i / m, (double)q.Y }; }).ToList();
+            var run = r.Runs[r.Runs.Count / 2].Span(0, pts.Count - 1);
+            r.Points = pts; r.Runs = [run]; r.LengthM = Interchanges.ArcLengthOf(r);
+            n++;
+        }
         return n;
     }
 
@@ -1104,6 +1196,21 @@ public static class Junctions
             bool r2 = roadTypeAt(list[best.A].R, list[best.A].AtStart) == "ger29"
                    && roadTypeAt(list[best.B].R, list[best.B].AtStart) == "ger29";
             var def = list.Count == 3 ? (r2 ? TR2 : TR1) : (r2 ? XR2 : XR1);
+            if (UnTNodes.Contains(node) && list.Count == 3)
+            {
+                int wide = Enumerable.Range(0, 3).FirstOrDefault(i => Class21(runs[i]) == 2, -1);
+                int plain = wide == best.A ? best.B : wide == best.B ? best.A : -1;
+                if (wide >= 0 && plain >= 0)
+                {
+                    int side = 3 - wide - plain;
+                    var h = -arms[plain].Away;                        // Fahrt vom Landstraßenarm durch die Einmündung
+                    bool left = Vector2.Dot(arms[side].Away, new Vector2(h.Y, -h.X)) > 0;
+                    var anc = MapWriter.ToVector(list[0].AtStart ? list[0].R.Points[0] : list[0].R.Points[^1]);
+                    plans.Add(new Plan { OsmNode = node, Anchor = anc, Def = left ? UNTL : UNTR,
+                                         Arms = [arms[plain], arms[wide], arms[side]], ForceNodes = left ? [0, 2, 1] : [0, 1, 2] });
+                    continue;
+                }
+            }
             if (UseTurnCross && list.Count == 4 && Enumerable.Range(0, 4).All(i => TurnArm(runs[i], list[i].AtStart)))
                 def = XTURN4;
             if (UseTurnT && list.Count == 3)
@@ -1645,7 +1752,7 @@ public static class Junctions
                 // Kreuzung/Einmündung mit durchgehender Straße: Prefab nur nach den beiden
                 // durchgehenden Armen drehen – sonst zöge ein schräger Seitenarm die gerade
                 // Hauptstraße in ein S (St 2183 an der Zufahrt zur A 70)
-                if (p.Def.Through.Length == 2 && p.Def.Side.Length >= 1 && (p.ForceNodes is null || p.Def == TTURN || p.Def == ATDIV || p.Def == ATMRG)
+                if (p.Def.Through.Length == 2 && p.Def.Side.Length >= 1 && (p.ForceNodes is null || p.Def == TTURN || p.Def == ATDIV || p.Def == ATMRG || p.Def == UNTL || p.Def == UNTR)
                     && Vector2.Dot(p.Arms[0].Away, p.Arms[1].Away) < -MathF.Cos(StraightThroughDeg * MathF.PI / 180))
                 {
                     float tx = 0, ty = 0;

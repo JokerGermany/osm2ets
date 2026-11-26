@@ -396,6 +396,9 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   60 m. `OSM2ETS_NO_PLAIN21=1` disables this. If such a change lies between two prefabs at most 70 m
   apart, the connection is laid as one smooth curve between the prefab nodes (no kink at the prefab;
   `OSM2ETS_NO_PLAINSMOOTH=1` disables it).
+  Test `OSM2ETS_UN_T=1`: if the change lies just behind a T junction, the 2+1 road starts there; the T
+  is then the universal "un cross 1-1 / 2-1 t 1-1" in its variant without markings (no template
+  change on the road).
 - Fuel stations (`amenity=fuel`): the station's own service ways are replaced by a station prefab
   (fuelling only works at prefab refuel points). `gas_small_road_01_ger` where a straight two-lane
   road (≥ 188 m without junction) runs past; otherwise `gas_universal_03_balt` (category dlc_balt)

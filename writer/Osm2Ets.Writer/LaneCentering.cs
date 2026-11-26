@@ -50,7 +50,7 @@ public static class LaneCentering
             Original[r] = (r.Points.Select(p => (double[])p.Clone()).ToList(),
                            r.Runs.Select(x => new RunEntry { From = x.From, To = x.To, Lanes = x.Lanes, Highway = x.Highway, Oneway = x.Oneway }).ToList());
         ResolvedStyle St(RoadEntry r, int k) => resolve(r.Runs.FirstOrDefault(x => x.From <= k && k < x.To) ?? r.Runs[^1]);
-        float Seg(RoadEntry r, int k) => St(r, k).Offset;
+        float Seg(RoadEntry r, int k) => Junctions.UnTRoads.Contains(r) ? 0f : St(r, k).Offset;
 
         // Versatz am Knoten: der der breitesten angeschlossenen Straße (die Hauptfahrbahn bleibt,
         // Rampen passen sich an); bei gleicher Breite das Mittel
@@ -61,7 +61,7 @@ public static class LaneCentering
         {
             if (r.Points.Count < 2) continue;
             foreach (var (info, k) in new[] { (r.Start, 0), (r.End, r.Points.Count - 2) })
-                if (info?.Kind == "node" && info.OsmNode is long id)
+                if (info?.Kind == "node" && info.OsmNode is long id && !Junctions.UnTRoads.Contains(r))
                     widest[id] = MathF.Max(widest.GetValueOrDefault(id), St(r, k).Width);
         }
         foreach (var r in roads)
@@ -71,7 +71,7 @@ public static class LaneCentering
                 if (info?.Kind == "node" && info.OsmNode is long id)
                 {
                     node.TryGetValue(id, out var e);
-                    bool main = St(r, k).Width >= widest[id] - 0.01f;
+                    bool main = !Junctions.UnTRoads.Contains(r) && St(r, k).Width >= widest.GetValueOrDefault(id) - 0.01f;
                     // N zählt alle Enden (für "Knoten mit ≥ 2 Enden"), Sum/M nur die breitesten
                     node[id] = (e.Sum + (main ? Seg(r, k) : 0), e.N + 1);
                     if (main) mainCount[id] = mainCount.GetValueOrDefault(id) + 1;
@@ -79,7 +79,7 @@ public static class LaneCentering
         }
 
         foreach (var id in node.Keys.ToList())
-            node[id] = (node[id].Sum / mainCount[id], node[id].N);
+            node[id] = (mainCount.TryGetValue(id, out var mc) && mc > 0 ? node[id].Sum / mc : 0f, node[id].N);
         // Wechsel 1+1 ↔ 2+1 ohne Übergang mit kurzer Landstraße: Linie der Landstraße beibehalten
         var noCenter = new HashSet<RoadEntry>();
         foreach (var id in plainChanges ?? new HashSet<long>())
