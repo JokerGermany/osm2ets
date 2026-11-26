@@ -2101,8 +2101,12 @@ public static class Junctions
             for (int k = 0; k < Math.Min(pn.Length, 3); k++)
             {
                 bool wide = p.Def == UNTR ? k == 1 : k == 0;
-                pn[k].Model = wide ? "ungcw3m" : "ungcw1m";
-                pn[k].Look = "01a";
+                // Arm mit Gehweg (OSM sidewalk=*): Rand als Gehweg weiterführen, sonst "curb wide"
+                int arm = Array.IndexOf(p.NodeOf, (ushort)k);
+                bool walk = arm >= 0 && p.Arms[arm].Road is var ar && ar.Runs.Count > 0
+                            && (StartsAt(ar, p.NodePos[k]) ? ar.Runs[0] : ar.Runs[^1]).Sidewalk is not null;
+                pn[k].Model = (walk ? "ungsdw" : "ungcw") + (wide ? "3m" : "1m");
+                pn[k].Look = walk ? "a00a_01a" : "01a";
                 pn[k].Variant = "default";
             }
         for (int i = 0; i < p.Arms.Length; i++)
