@@ -60,7 +60,7 @@ public static class MapWriter
         // Anschlussstellen mit Prefabs (nur wenn Prefab-Daten verfügbar sind)
         // Modelle mittig auf die OSM-Linie setzen, dann Gegenfahrbahnen höchstens berühren lassen
         Junctions.Stations = input.Areas.Where(a => a.Kind is "fuel" or "services" or "rest_area").ToList();
-        if (prefabs is not null) { Junctions.PrepareFuel(valid, warnings); Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); }
+        if (prefabs is not null) { Junctions.PrepareSlips(valid, warnings); Junctions.PrepareFuel(valid, warnings); Junctions.PrepareFork21(valid, warnings); int lc = Junctions.SplitLaneChanges21(valid); if (lc > 0) warnings.Add($"Info: {lc} Wechsel 2+1 ↔ Landstraße innerhalb einer OSM-Linie geteilt (Übergangs-Prefab)"); }
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOCENTER") is null) LaneCentering.Apply(valid, mapping.Resolve);
         if (LaneCentering.Shifted > 0) warnings.Add($"Info: {LaneCentering.Shifted} Straßen seitlich versetzt (Modell mittig auf OSM-Linie)");
         if (Environment.GetEnvironmentVariable("OSM2ETS_NOTWINSEP") is null)

@@ -42,6 +42,7 @@ var tests = new List<(string Name, Action Body)>
     ("Einmündung mit Abbiegespur: freier Rechtsabbieger aus der Sperrfläche entfällt", SlipDroppedInHatchedStretch),
     ("Füllgelände am Hang: grobes Quad stößt nicht durch die Prefab-Fahrbahn", SettleKeepsFillBelowPrefab),
     ("Tankstelle an gerader Landstraße: Durchfahrts-Prefab, Geländewege entfallen", FuelInline),
+    ("Tankstelle ohne lange Straße: Prefab mit Zufahrt und Einmündung mit Platz für das Kreuzungs-Prefab", FuelSingleAccess),
 };
 
 int failed = 0;
@@ -1090,5 +1091,29 @@ static void FuelInline()
     var plans = Junctions.Find(roads, (_, _) => "ger1", []);
     Check(n == 1 && plans.Count(p => p.Def == Junctions.GASR) == 1, $"kein Tankstellen-Prefab geplant ({n}, {string.Join(" | ", w)})");
     Check(!roads.Contains(svc) && roads.Count == 2, $"Geländeweg nicht ersetzt oder Straße nicht verbunden ({roads.Count} Straßen)");
+    Junctions.Stations = [];
+}
+
+static void FuelSingleAccess()
+{
+    // 150 m Straße (zu kurz für die Durchfahrt), Anschluss des Geländes 10 m vom Ostende –
+    // die Einmündung muss weiter nach Westen, damit das T-Prefab (Arme 18 m) Platz hat
+    var r = MakeRoad("r", [[-100, 0, 0], [40, 0, 0]], TRun(0, 1)); r.Start = TNode(1); r.End = TNode(3);
+    var r2 = MakeRoad("r2", [[40, 0, 0], [50, 0, 0]], TRun(0, 1)); r2.Start = TNode(3); r2.End = TNode(2);
+    var svc = MakeRoad("s", [[40, 0, 0], [40, 0, 30]], new RunEntry { From = 0, To = 1, Highway = "service", Role = "connector" });
+    svc.Start = TNode(3); svc.End = TNode(4);
+    var roads = new List<RoadEntry> { r, r2, svc };
+    Junctions.Reset();
+    Junctions.Stations = [new AreaEntry { Kind = "fuel", OsmWay = 8, Points = [[-60, 10], [50, 10], [50, 80], [-60, 80], [-60, 10]] }];
+    var w = new List<string>();
+    int n = Junctions.PrepareFuel(roads, w);
+    var plans = Junctions.Find(roads, (_, _) => "ger1", []);
+    var gas = plans.SingleOrDefault(p => p.Def == Junctions.GASB);
+    var t = plans.SingleOrDefault(p => p.Def == Junctions.TR1);
+    Check(n == 1 && gas is not null && t is not null, $"Tankstelle/Einmündung nicht geplant ({string.Join(" | ", w)}; {plans.Count} Pläne)");
+    Check(!roads.Contains(svc), "Geländeweg nicht ersetzt");
+    // Einmündung mit mindestens 20 m bis zu den Straßenenden (T-Arm 18 m + Rest)
+    Check(t!.Anchor.X >= -100 + 20 - 0.5f && t.Anchor.X <= 50 - 20 + 0.5f, $"Einmündung bei x {t.Anchor.X:0} zu nah am Straßenende");
+    Check(gas!.Anchor.Z > 15, $"Tankstelle nicht auf der Seite des Geländes (z {gas.Anchor.Z:0})");
     Junctions.Stations = [];
 }

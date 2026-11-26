@@ -390,7 +390,8 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 - Fuel stations (`amenity=fuel`): the station's own service ways are replaced by a station prefab
   (fuelling only works at prefab refuel points). `gas_small_road_01_ger` where a straight two-lane
   road (≥ 188 m without junction) runs past; otherwise `gas_universal_03_balt` (category dlc_balt)
-  with a 20 m access road from one of the station's former connections; otherwise unchanged.
+  with a 20 m access road joining the road in front of the site where the T junction prefab
+  fits (20 m to a road end, 26 m to a 2+1 change, 45 m to another junction); otherwise unchanged.
   `OSM2ETS_NO_FUEL=1` / `OSM2ETS_NO_FUEL_BALT=1` disable them.
 - Node roles and directions come from the `.ppd` files, variants/looks from the `.pmd`.
 

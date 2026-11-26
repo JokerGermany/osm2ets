@@ -395,7 +395,8 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
 - Tankstellen (`amenity=fuel`): Die Wege auf dem Gelände werden durch ein Tankstellen-Prefab ersetzt
   (getankt wird nur an Tankpunkten in Prefabs). `gas_small_road_01_ger`, wo eine gerade Landstraße 1+1
   (mindestens 188 m ohne Abzweig) vorbeiführt; sonst `gas_universal_03_balt` (Kategorie dlc_balt) mit
-  20 m Zufahrt von einem der bisherigen Anschlüsse; sonst bleibt alles wie in OSM.
+  20 m Zufahrt, die vor dem Gelände dort einmündet, wo das T-Prefab Platz hat (20 m bis zu einem
+  Straßenende, 26 m bis zu einem Wechsel 2+1, 45 m bis zur nächsten Kreuzung); sonst bleibt alles wie in OSM.
   `OSM2ETS_NO_FUEL=1` bzw. `OSM2ETS_NO_FUEL_BALT=1` schalten das ab.
 - Knotenrollen und Richtungen kommen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.
 

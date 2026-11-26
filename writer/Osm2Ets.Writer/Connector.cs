@@ -12,7 +12,7 @@ namespace Osm2Ets.Writer;
 public static class Connector
 {
     /// <summary>Größte Abweichung vom Geradeauslauf, die noch verbunden wird.</summary>
-    public const double MaxTurnDeg = 50.0;
+    public const double MaxTurnDeg = 50.0, MaxTurnDeg2 = 60.0;
 
     private sealed record End(RoadEntry Road, bool AtStart, Vector2 Away);
 
@@ -49,7 +49,9 @@ public static class Connector
                 var va = Away(a.Road, a.AtStart); var vb = Away(b.Road, b.AtStart);
                 double cos = Vector2.Dot(va, vb); // -1 = genau gegenüber = geradeaus
                 double turn = 180.0 - Math.Acos(Math.Clamp(cos, -1, 1)) * 180.0 / Math.PI;
-                if (turn > MaxTurnDeg) continue;
+                // nur zwei Straßenenden am Knoten: etwas mehr Knick zulassen – sonst Lücke (kurzes Stück
+                // zwischen Kreuzungs-Prefab und Spurwechsel 2+1 → 1+1 vor der B 85: 55°)
+                if (turn > (ends.Count == 2 ? MaxTurnDeg2 : MaxTurnDeg)) continue;
                 double score = turn + (a.Road.Role == b.Road.Role ? 0 : 30) + (a.Road.Role == "core" ? 0 : 5);
                 // Zweirichtungsstraße läuft lieber in eine Zweirichtungsstraße weiter als in eine Einbahn-
                 // Rampe (2+1 geht durch, die Ausfahrt zweigt ab)
