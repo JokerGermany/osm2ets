@@ -398,6 +398,10 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   Tankstellen-Zufahrten werden zuerst gesetzt; eine Kreuzung daneben schließt direkt an sie an.
   Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
   verbunden; Einbahn-Arme über `ChangeOrigin`.
+- Sperrbaken („dead end“) an der Kreuzung, an der eine Straße ins Nichts abzweigt: offene Enden
+  (in OSM geht es auf Wegen außerhalb der Stufe weiter) und Netze, die – auch über Sichtstücke –
+  keine andere Kreuzung, Autobahn oder offenes Ende erreichen (`OSM2ETS_DEAD_END_NO_NETWORK=1`:
+  nur offene Enden; `OSM2ETS_NO_DEAD_ENDS=1`: keine Sperren).
 - Einmündung mit Linksabbiegespur (OSM `lanes:forward`/`lanes:backward` 2/1 an einem Arm,
   Nebenstraße links): `ger r1 turn x r1 t tmpl`. Der gegenüberliegende Arm bekommt die Straße mit
   Sperrfläche `ger26` ("ger road 1 plus 1 tmpl") und nach 20 m den 60-m-Übergang

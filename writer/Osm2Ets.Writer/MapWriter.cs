@@ -643,7 +643,7 @@ public static class MapWriter
         if (Reachability.Apply(map, valid.Where(e => e.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link") && firstItem.ContainsKey(e)).Select(e => (IMapItem)firstItem[e]).Concat(Overlaps.Through.Where(firstItem.ContainsKey).Select(e => (IMapItem)firstItem[e]))) is int unreach and > 0)
             warnings.Add($"Info: {unreach} nicht erreichbare Straßenstücke/Prefabs (auch geheime) nicht auf der Karte");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
-        if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen");
+        if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen (davon {DeadEnds.Networks} vor Sackgassen-Netzen)");
         if (AreaCheck.Run(map, input.Areas.Where(a => a.Kind is not ("fuel" or "services" or "rest_area")).ToList()) is { } ac)
             warnings.Add($"Info: Lage zu area:highway: {ac.Points} Spurpunkte an Autobahnflächen, {ac.Outside} mehr als {AreaCheck.Tol:0} m außerhalb" +
                          $" ({100.0 * ac.Outside / Math.Max(ac.Points, 1):0.0} %), höchstens {ac.Max:0.0} m" +
