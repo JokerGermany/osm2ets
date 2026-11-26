@@ -394,8 +394,9 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   meeting at a sharp angle are bent onto an arc; junctions closer than their prefab radii
   are connected prefab-to-prefab; one-way arms via `ChangeOrigin`.
 - Dead-end barriers at the junction where a road leads nowhere: open ends (OSM continues on ways
-  outside the level) and networks that, also via visible-only stubs, reach no other junction,
-  motorway or open end (`OSM2ETS_DEAD_END_NO_NETWORK=1`: open ends only; `OSM2ETS_NO_DEAD_ENDS=1`:
+  outside the level) and networks that, also via visible-only stubs and further junctions, reach
+  neither a motorway nor a fuel station. When a whole junction lies in such a network, the barrier
+  stands in front of it instead of at its arms (`OSM2ETS_DEAD_END_NO_NETWORK=1`: open ends only; `OSM2ETS_NO_DEAD_ENDS=1`:
   no barriers).
 - T junction with a left-turn lane (OSM `lanes:forward`/`lanes:backward` 2/1 on one arm, side road
   on the left): `ger r1 turn x r1 t tmpl`. Its opposite arm gets the road with hatched centre

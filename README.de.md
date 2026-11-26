@@ -399,8 +399,9 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   Spitzwinklige Arme werden auf einen Bogen gelegt; zu nahe Kreuzungen werden Prefab an Prefab
   verbunden; Einbahn-Arme über `ChangeOrigin`.
 - Sperrbaken („dead end“) an der Kreuzung, an der eine Straße ins Nichts abzweigt: offene Enden
-  (in OSM geht es auf Wegen außerhalb der Stufe weiter) und Netze, die – auch über Sichtstücke –
-  keine andere Kreuzung, Autobahn oder offenes Ende erreichen (`OSM2ETS_DEAD_END_NO_NETWORK=1`:
+  (in OSM geht es auf Wegen außerhalb der Stufe weiter) und Netze, die – auch über Sichtstücke und
+  weitere Kreuzungen – weder eine Autobahn noch eine Tankstelle erreichen. Liegt eine Kreuzung ganz
+  in so einem Netz, steht die Sperre vor ihr statt an ihren Armen (`OSM2ETS_DEAD_END_NO_NETWORK=1`:
   nur offene Enden; `OSM2ETS_NO_DEAD_ENDS=1`: keine Sperren).
 - Einmündung mit Linksabbiegespur (OSM `lanes:forward`/`lanes:backward` 2/1 an einem Arm,
   Nebenstraße links): `ger r1 turn x r1 t tmpl`. Der gegenüberliegende Arm bekommt die Straße mit

@@ -29,6 +29,7 @@ internal static class DeadEnds
         var placed = new List<Placed>();
         var done = new HashSet<INode>();
         Networks = 0;
+        var atPrefab = new List<(Prefab P, MapItem Item)>();
         if (!Enabled) return placed;
         // nur Kreuzungen, die der Spieler von der Autobahn aus erreicht: Netz ab allen Autobahn- und
         // Rampenstücken über Knoten und Prefabs durchlaufen (Straßen ohne Anschluss an die Autobahn
@@ -149,13 +150,13 @@ internal static class DeadEnds
                 // der anderen Seite frei, ist das Stück nicht erreichbar – keine Sperre.
                 IMapItem cur = atStart ? fi : la;
                 var from = node;
-                INode? junction = null; INode? inner = null;
+                INode? junction = null; INode? inner = null; Prefab? junctionPrefab = null;
                 for (int step = 0; step < 500; step++)
                 {
                     if (cur is not Road rd) break;
                     var far = ReferenceEquals(rd.Node, from) ? rd.ForwardNode : rd.Node;
                     var next = (IMapItem?)(ReferenceEquals(far.BackwardItem, rd) ? far.ForwardItem : far.BackwardItem);
-                    if (next is Prefab pfj) { if (reach.Contains(pfj)) { junction = far; inner = from; } break; }
+                    if (next is Prefab pfj) { if (reach.Contains(pfj)) { junction = far; inner = from; junctionPrefab = pfj; } break; }
                     if (next is null) break;
                     from = far; cur = (IMapItem)next;
                 }
@@ -172,11 +173,13 @@ internal static class DeadEnds
                 var item = Buildings.Add(map, new Vector3(a.X, p.Y, a.Y), new Vector3(b.X, p.Y, b.Y), Scheme);
                 item.Stretch = 1f;
                 placed.Add(new Placed(item.Uid, r.Id, atStart ? "start" : "end", e.OsmNode, (atStart ? r.Runs[0] : r.Runs[^1]).OsmWays, p.X, p.Y, p.Z));
+                if (junctionPrefab is not null) atPrefab.Add((junctionPrefab, item));
             }
         }
         // Sackgassen-Netze: Arm einer erreichbaren Kreuzung, hinter dem die Straßen (auch Sichtstücke
-        // ohne Verkehr, z. B. Zufahrt zu einem Schnellrestaurant) weder eine andere Kreuzung noch eine
-        // Autobahn noch ein offenes Ende erreichen – im Spiel eine Sackgasse ohne Wendemöglichkeit
+        // ohne Verkehr, z. B. Zufahrt zu einem Schnellrestaurant) – über weitere Kreuzungen hinweg –
+        // keine Autobahn erreichen. Liegt eine Kreuzung ganz in einem solchen Netz (alle anderen Arme
+        // enden im Nichts), gehört die Sperre vor sie an den Arm davor; ihre eigenen Sperren entfallen.
         if (UseNetworks)
         {
             var entryOf = new Dictionary<IMapItem, (RoadEntry E, bool AtStart)>();
@@ -194,46 +197,105 @@ internal static class DeadEnds
                 if (atStart) return first.TryGetValue(r, out var f) ? f.Node.BackwardItem as Prefab : null;
                 return last.TryGetValue(r, out var l) ? l.ForwardNode.ForwardItem as Prefab : null;
             }
+            IEnumerable<(INode Node, RoadEntry E, bool AtStart, long? Near)> Arms(Prefab q)
+            {
+                foreach (var nd in q.Nodes)
+                {
+                    var arm = (IMapItem?)(ReferenceEquals(nd.ForwardItem, q) ? nd.BackwardItem : nd.ForwardItem);
+                    if (arm is Road && entryOf.TryGetValue(arm, out var ea))
+                        yield return (nd, ea.E, ea.AtStart, ea.AtStart ? ea.E.Start?.OsmNode : ea.E.End?.OsmNode);
+                }
+            }
+            // Prefab direkt an Prefab (ohne Straße dazwischen)
+            IEnumerable<Prefab> Snapped(Prefab q) => q.Nodes
+                .Select(nd => (IMapItem?)(ReferenceEquals(nd.ForwardItem, q) ? nd.BackwardItem : nd.ForwardItem))
+                .OfType<Prefab>().Where(x => !ReferenceEquals(x, q));
+            var dead = new List<(Prefab P, INode Node, RoadEntry? E, bool AtStart, long? Near, HashSet<Prefab> Inner)>();
+            // Netz hinter einem Arm von pf (Straße e0 oder direkt angesetztes Prefab q0) erreicht eine
+            // Autobahn bzw. ein Ziel? Dazu die Prefabs im Netz.
+            (bool Escape, HashSet<Prefab> Inner) Explore(Prefab pf, RoadEntry? e0, long? near, Prefab? q0)
+            {
+                bool escape = false; int seen = 0;
+                var inner = new HashSet<Prefab>();
+                var vis = new HashSet<RoadEntry>(); var st2 = new Stack<RoadEntry>();
+                var pst = new Stack<Prefab>();
+                if (e0 is not null) st2.Push(e0);
+                if (q0 is not null) pst.Push(q0);
+                while ((st2.Count > 0 || pst.Count > 0) && !escape)
+                {
+                    if (pst.Count > 0)
+                    {
+                        var q = pst.Pop();
+                        if (ReferenceEquals(q, pf) || !inner.Add(q)) continue;
+                        if (Destinations.Contains(q.Model.ToString())) { escape = true; break; }   // Tankstelle: Ziel
+                        foreach (var (_, oe, _, _) in Arms(q)) st2.Push(oe);
+                        foreach (var sp in Snapped(q)) pst.Push(sp);
+                        continue;
+                    }
+                    var r = st2.Pop();
+                    if (!vis.Add(r)) continue;
+                    if (++seen > 300 || r.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link")) { escape = true; break; }
+                    foreach (var atS in new[] { true, false })
+                    {
+                        var e = atS ? r.Start : r.End;
+                        var pa = PrefabAt(r, atS);
+                        if (pa is not null) { pst.Push(pa); continue; }
+                        if (e?.OsmNode is long on && on != near && byNode.TryGetValue(on, out var nb))
+                            foreach (var o in nb) st2.Push(o);
+                    }
+                }
+                return (escape, inner);
+            }
             foreach (var pf in reach.OfType<Prefab>())
+            {
+                foreach (var (nd, e0, s0, near) in Arms(pf))
+                {
+                    var (esc, inner) = Explore(pf, e0, near, null);
+                    if (!esc) dead.Add((pf, nd, e0, s0, near, inner));
+                }
                 foreach (var nd in pf.Nodes)
                 {
-                    var arm = (IMapItem?)(ReferenceEquals(nd.ForwardItem, pf) ? nd.BackwardItem : nd.ForwardItem);
-                    if (arm is not Road || !entryOf.TryGetValue(arm, out var ea) || done.Contains(nd)) continue;
-                    var (e0, s0) = ea;
-                    var near = s0 ? e0.Start?.OsmNode : e0.End?.OsmNode;
-                    bool escape = false; int seen = 0;
-                    var vis = new HashSet<RoadEntry>(); var st2 = new Stack<RoadEntry>(); st2.Push(e0);
-                    while (st2.Count > 0 && !escape)
-                    {
-                        var r = st2.Pop();
-                        if (!vis.Add(r)) continue;
-                        if (++seen > 300) { escape = true; break; }
-                        if (r.Runs.Any(x => x.Highway is "motorway" or "motorway_link" or "trunk" or "trunk_link")) { escape = true; break; }
-                        foreach (var atS in new[] { true, false })
-                        {
-                            var e = atS ? r.Start : r.End;
-                            if (e is { Open: true }) { escape = true; break; }
-                            var pa = PrefabAt(r, atS);
-                            if (pa is not null && !ReferenceEquals(pa, pf)) { escape = true; break; }
-                            if (e?.OsmNode is long on && on != near && byNode.TryGetValue(on, out var nb))
-                                foreach (var o in nb) if (!vis.Contains(o)) st2.Push(o);
-                        }
-                    }
-                    if (escape || !done.Add(nd)) continue;
-                    var p = nd.Position;
-                    var rd0 = (Road)arm;
-                    var q = ReferenceEquals(rd0.Node, nd) ? rd0.ForwardNode.Position : rd0.Node.Position;
-                    var d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));
-                    if (float.IsNaN(d.X)) continue;
-                    var st = styles[e0][s0 ? 0 : ^1];
-                    var at = new Vector2(p.X, p.Z) + d * Inset;
-                    var n = new Vector2(-d.Y, d.X);
-                    float half = st.Width / 2 + Extra;
-                    var item = Buildings.Add(map, new Vector3(at.X + n.X * half, p.Y, at.Y + n.Y * half), new Vector3(at.X - n.X * half, p.Y, at.Y - n.Y * half), Scheme);
-                    item.Stretch = 1f;
-                    placed.Add(new Placed(item.Uid, e0.Id, s0 ? "start" : "end", near, (s0 ? e0.Runs[0] : e0.Runs[^1]).OsmWays, p.X, p.Y, p.Z));
-                    Networks++;
+                    var other = (IMapItem?)(ReferenceEquals(nd.ForwardItem, pf) ? nd.BackwardItem : nd.ForwardItem);
+                    if (other is not Prefab q0 || ReferenceEquals(q0, pf)) continue;
+                    var (esc, inner) = Explore(pf, null, null, q0);
+                    if (!esc) dead.Add((pf, nd, null, false, null, inner));
                 }
+            }
+            var swallowed = new HashSet<Prefab>(dead.SelectMany(x => x.Inner));
+            // Sperren an Kreuzungen, die selbst in einem Sackgassen-Netz liegen, entfernen
+            foreach (var (pi, it) in atPrefab.ToList())
+                if (swallowed.Contains(pi)) { map.Delete(it); placed.RemoveAll(x => x.Uid == it.Uid); }
+            foreach (var (pf, nd, e0, s0, near, _) in dead)
+            {
+                if (swallowed.Contains(pf)) continue;
+                if (!done.Add(nd)) continue;   // Sperre für ein offenes Ende steht dort schon
+                var p = nd.Position;
+                Vector2 d;
+                float half;
+                if (e0 is not null)
+                {
+                    var rd0 = (Road)(ReferenceEquals(nd.ForwardItem, pf) ? nd.BackwardItem : nd.ForwardItem)!;
+                    var q = ReferenceEquals(rd0.Node, nd) ? rd0.ForwardNode.Position : rd0.Node.Position;
+                    d = Vector2.Normalize(new Vector2(q.X - p.X, q.Z - p.Z));
+                    half = styles[e0][s0 ? 0 : ^1].Width / 2 + Extra;
+                }
+                else
+                {
+                    // Prefab an Prefab: quer zur Knotenrichtung, vom Prefab weg; Breite wie ein Kreuzungsarm
+                    var f = Vector3.Transform(-Vector3.UnitZ, nd.Rotation);
+                    d = Vector2.Normalize(new Vector2(f.X, f.Z));
+                    var c = pf.Nodes.Aggregate(Vector3.Zero, (acc, k) => acc + k.Position) / pf.Nodes.Count;
+                    if (Vector2.Dot(d, new Vector2(p.X - c.X, p.Z - c.Z)) < 0) d = -d;
+                    half = SnapHalf;
+                }
+                if (float.IsNaN(d.X)) continue;
+                var at = new Vector2(p.X, p.Z) + d * Inset;
+                var n = new Vector2(-d.Y, d.X);
+                var item = Buildings.Add(map, new Vector3(at.X + n.X * half, p.Y, at.Y + n.Y * half), new Vector3(at.X - n.X * half, p.Y, at.Y - n.Y * half), Scheme);
+                item.Stretch = 1f;
+                placed.Add(new Placed(item.Uid, e0?.Id ?? "", e0 is null ? "prefab" : s0 ? "start" : "end", near, e0 is null ? [] : (s0 ? e0.Runs[0] : e0.Runs[^1]).OsmWays, p.X, p.Y, p.Z));
+                Networks++;
+            }
         }
         return placed;
     }
@@ -241,6 +303,10 @@ internal static class DeadEnds
     /// <summary>Sperre auch vor Sackgassen-Netzen (aus: OSM2ETS_DEAD_END_NO_NETWORK=1).</summary>
     public static bool UseNetworks = Environment.GetEnvironmentVariable("OSM2ETS_DEAD_END_NO_NETWORK") != "1";
     public static int Networks;
+    /// <summary>Halbe Breite der Sperre zwischen zwei direkt aneinandergesetzten Prefabs (m).</summary>
+    private const float SnapHalf = 5f;
+    /// <summary>Prefabs, die selbst ein Ziel sind (Tankstellen): ein Netz, das eine erreicht, ist keine Sackgasse.</summary>
+    private static readonly HashSet<string> Destinations = [Junctions.GASR.Prefab.Unit, Junctions.GASB.Prefab.Unit];
 
     public static void WriteSidecar(string path, List<Placed> placed)
     {
