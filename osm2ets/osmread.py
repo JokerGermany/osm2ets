@@ -90,6 +90,55 @@ def read_ways(path: str, classes: frozenset, exclude_access: frozenset = frozens
     return ways
 
 
+# Gleise laufen intern als Pseudo-Straßenklasse (highway-Feld der Wege und Läufe), damit sie
+# dieselben Wege durch Ketten, Höhen und Zwischenformat nehmen wie Straßen
+RAIL_CLASS = "railway"
+RAIL_KEPT_TAGS = ("railway", "usage", "service", "tracks", "electrified", "bridge", "tunnel", "layer",
+                  "ref", "name", "maxspeed", "railway:preferred_direction", "gauge")
+
+
+def rail_tags(tags) -> dict:
+    """Tags eines Gleises im Format der Straßenwege: highway = RAIL_CLASS, lanes = Gleiszahl (OSM
+    tracks, sonst 1), oneway nach railway:preferred_direction (nur eingleisig; die SCS-Vorlage für ein
+    Gleis hat eine Fahrspur, KI-Züge fahren dort in Kettenrichtung)."""
+    out = {k: tags.get(k) for k in RAIL_KEPT_TAGS if tags.get(k) is not None}
+    out["highway"] = RAIL_CLASS
+    try:
+        tracks = int(str(tags.get("tracks", "1")).split(";")[0].strip())
+    except ValueError:
+        tracks = 1
+    out["lanes"] = str(max(tracks, 1))
+    pref = tags.get("railway:preferred_direction")
+    if tracks <= 1 and pref in ("forward", "backward"):
+        out["oneway"] = "yes" if pref == "forward" else "-1"
+    return out
+
+
+def read_railways(path: str, kinds: frozenset, exclude_service: frozenset = frozenset()) -> list[Way]:
+    """Gleise (railway=<kinds>, ohne service=<exclude_service>, ohne area=yes) als Wege mit
+    rail_tags."""
+    ways: list[Way] = []
+    skipped = 0
+    fp = osmium.FileProcessor(path, osmium.osm.WAY).with_filter(osmium.filter.KeyFilter("railway"))
+    for w in fp:
+        if w.tags.get("railway") not in kinds or w.tags.get("area") == "yes":
+            continue
+        if w.tags.get("service") in exclude_service:
+            skipped += 1
+            continue
+        refs = array("q")
+        last = None
+        for n in w.nodes:
+            if n.ref != last:
+                refs.append(n.ref)
+                last = n.ref
+        if len(refs) < 2:
+            continue
+        ways.append(Way(id=w.id, nodes=refs, tags=rail_tags(w.tags)))
+    log.info("%d Gleise gelesen, %d Neben-/Rangiergleise ausgeschlossen", len(ways), skipped)
+    return ways
+
+
 AREA_KINDS = frozenset({"motorway", "motorway_link", "trunk", "trunk_link", "emergency", "shoulder"})
 
 

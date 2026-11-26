@@ -37,6 +37,7 @@ v1–v46 (siehe Commits).
 | Unterführungen: offenes Gelände unter Brücken über Straßen, Steinböschungen, Brückengeländer | umgesetzt, im Spiel noch nicht geprüft |
 | Brückenkörper (Überbau, Widerlager, Brüstung) für alle Brücken: SCS-Brückenmodelle je Straßentyp | umgesetzt, im Spiel noch nicht geprüft |
 | Sichtstücke: Straßen höherer Stufen unter/über Brücken und unmittelbar neben der Strecke | umgesetzt, im Spiel noch nicht geprüft |
+| Eisenbahn: Gleise nahe der Strecke mit KI-Zügen (ohne Bahnübergänge, Weichen, Oberleitung) | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -286,6 +287,29 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
      Stücke 15 m davor (keine ebenerdige Einmündung). Im Spiel: Straßentyp wie sonst, aber nicht
      auf Karte/Navi, Navi meidet; KI-Verkehr wie sonst (`visible` in `mapping.jsonc`).
 
+6. **Eisenbahn** (Rolle `rail`, in allen Stufen): Wie die Sichtstücke nur Abschnitte, die man von
+   der Strecke aus sieht – höchstens 300 m neben einer Straße der Stufe (Kern und Rampen, nicht
+   Zufahrten oder Sichtstücke; `railway.near_m`) und 300 m beiderseits einer höhenfreien Kreuzung
+   mit ihr (`railway.crossing_m`). Lücken bis 300 m werden geschlossen, freistehende Stücke unter
+   200 m entfallen. Nur `railway=rail` ohne `service=*` (Anschluss-, Abstell-, Rangiergleise
+   bräuchten Weichen-Prefabs). Gleise sind ein eigenes Netz ohne Verbindung zu den Straßen; im
+   Zwischenformat laufen sie als Pseudo-Klasse `highway=railway` mit der Gleiszahl (`tracks`) als
+   `lanes`. Höhen: Glättungsfenster 400 m, höchstens 2,5 % Steigung (auch an Bauwerken und
+   Unterführungen; `railway.smoothing_window_m`, `railway.max_grade`); Gleisbrücken werden nicht
+   pauschal angehoben, unter einer Autobahn wird das Gleis abgesenkt, unter anderen Straßen die
+   Straße angehoben, über einer Straße (nicht Autobahn) die Straße abgesenkt. Im Spiel: SCS-Vorlagen
+   `template99` „rail AI 01 tmpl“ (ein Gleis) bzw. `template98` „rail double AI 01 tmpl“
+   (`tracks` ≥ 2) mit KI-Zügen, nicht auf Karte/Navi. Grenzen:
+   - Eingleisige Vorlagen haben nur eine Fahrspur: KI-Züge fahren in Linienrichtung (nach
+     `railway:preferred_direction`, sonst in OSM-Richtung).
+   - Spuren ohne Oberleitung: nur Dieselzüge; Oberleitungen setzt osm2ets nicht.
+   - Bahnübergänge mit einer Straße der Karte haben noch kein Prefab: das Gleis endet beiderseits
+     15 m davor (`railway.level_crossing_gap_m`, im Bericht gezählt). An Weichen zwischen Strecken
+     läuft nur das geradeste Paar durch.
+   - Modellbreiten (5 m bzw. 8 m) geschätzt, Randstreifen `shldr_rail` nicht gesetzt; ob KI-Züge an
+     den offenen Gleisenden sauber verschwinden, ist ungeprüft.
+   - Feld-/Fußwege werden nie über ein Gleis hinweg auf dessen andere Seite geschoben.
+
 In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Schalter
 (`mapping.jsonc`):
 
@@ -348,7 +372,8 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 
 - `roads[]`: `points` (Spielkoordinaten), `runs` (Attributabschnitte: `highway`, `role`,
   `oneway`, `lanes`, `bridge`, `tunnel`, `layer`, `ref`, `maxspeed`, `osm_ways`),
-  `start`/`end` (OSM-Knoten oder `cut` am Rand).
+  `start`/`end` (OSM-Knoten oder `cut` am Rand). Gleise: `highway` = `railway`, `role` = `rail`,
+  `lanes` = Gleiszahl.
 - `junctions[]`: Knoten mit allen angrenzenden Straßenenden und deren Richtung –
   Grundlage für die geplanten Kreuzungs-Prefabs.
 - `qa.low_clearance_crossings`: höhenfreie Kreuzungen mit < 4,5 m Abstand.
@@ -456,7 +481,8 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
 ## Nächste Ausbaustufen
 
 1. Restliche Geländelücken schließen (Zwickel, Prefab-Ränder), Einschnittsböschungen neben abgesenkten Straßen.
-2. Restliche Kreuzungen: Y-Prefabs, Kreisverkehre.
+2. Restliche Kreuzungen: Y-Prefabs, Kreisverkehre; Bahnübergänge (z. B. `ger rail1 x r1 y v01`,
+   `ger rail2 x road1 narrow 01`) und Weichen, Oberleitungen, Anschlussgleise.
 3. 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze.
 4. Brückenmodelle, Geländematerial/Bewuchs aus OSM-Landnutzung, höher aufgelöstes DGM1.
 5. Größere Gebiete: Laufzeit und Speicher für ein Bundesland oder ganz Deutschland messen.

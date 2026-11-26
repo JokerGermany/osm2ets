@@ -87,6 +87,13 @@ def report_text(model: dict) -> str:
                      f"weggelassen, {vis['kept_off']} Enden vor einer Fahrbahn zurückgenommen, "
                      f"{vis.get('steep_m', 0) + (vis.get('trim') or {}).get('removed_m', 0)} m wegen zu großer "
                      f"Höhenunterschiede ausgelassen)")
+    rail = s.get("railway")
+    if rail:
+        km = s["km_game_by_highway"].get("railway", 0.0)
+        lines.append(f"Gleise:        {km:.2f} km im Spiel aus {rail['ways']} Gleiswegen ({rail['crossings']} "
+                     f"höhenfreie Kreuzungen mit der Strecke; {rail['edges']} ganze Kanten, {rail['partial']} "
+                     f"angeschnitten, {rail['dropped']} kurze Reste weggelassen, {rail['level_crossings']} "
+                     f"Bahnübergänge unterbrochen – noch ohne Prefab)")
     lines += [
         f"Knoten:        Kreuzungen {jk.get('junction', 0)}, Enden {jk.get('dead_end', 0)}, "
         f"Durchgänge {jk.get('through', 0)}",

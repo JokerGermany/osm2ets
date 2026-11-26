@@ -292,6 +292,16 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         for k, e in enumerate(split):
             e.idx = k + top
         selected = split
+    # 6. Gleise nahe der Strecke (eigenes Netz; nach allen Straßen, die Bahnübergänge bestimmen)
+    rail_stats = None
+    if (profile.railway or {}).get("enabled"):
+        from .rail import rail_sections
+        rail_edges, rail_stats = rail_sections(input_path, profile, selected)
+        if rail_edges:
+            top = max(e.idx for e in selected) + 1 if selected else 0
+            for k, e in enumerate(rail_edges):
+                e.idx = top + k
+            selected = selected + rail_edges
     chains = build_chains(selected)
     log.info("%d durchgehende Ketten", len(chains))
 
@@ -300,9 +310,9 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         needed.update(c.node_ids())
     log.info("Lese Koordinaten für %d Knoten ...", len(needed))
     locations = read_node_locations(input_path, {n for n in needed if n > 0})
-    for st in (ends_stats, vis_stats, stub_stats):
+    for st in (ends_stats, vis_stats, stub_stats, rail_stats):
         if st:
-            locations.update(st["locations"])   # berechnete Endpunkte (Verlängerungen, Sichtstücke)
+            locations.update(st["locations"])   # berechnete Endpunkte (Verlängerungen, Sichtstücke, Gleise)
 
     projector = Projector(profile.crs, profile.origin_lonlat)
     areas = _areas(input_path, projector, profile.scale_h, bbox)
@@ -377,6 +387,8 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     stats["services_access"] = services_stats
     stats["end_extensions"] = ({k: v for k, v in ends_stats.items() if k in ("ends", "edges")}
                                | {"partial": len(ends_stats["partial"])}) if ends_stats else None
+    stats["railway"] = ({k: v for k, v in rail_stats.items() if k != "locations"}
+                        if rail_stats else None)
     stats["visible_roads"] = ({k: v for k, v in vis_stats.items()
                                if k in ("crossings", "ways", "near_ways", "edges", "dropped", "kept_off", "steep_m",
                                         "trim")}

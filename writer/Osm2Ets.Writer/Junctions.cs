@@ -1308,6 +1308,7 @@ public static class Junctions
             var runs = list.Select(e => e.AtStart ? e.R.Runs[0] : e.R.Runs[^1]).ToList();
             if (runs.Any(x => x.Highway is "motorway" or "trunk" && x.Oneway)) continue; // Autobahnknoten
             if (runs.Any(IsMinorWay)) continue;   // Feld-/Fußwege usw.: kein Kreuzungs-Prefab
+            if (runs.Any(x => x.Highway == MapWriter.RailClass)) continue;   // Gleise: Weichen noch ohne Prefab
             if (list.Any(e => e.R.Closed)) continue;
             int oneway = runs.Count(x => x.Oneway);
             if (list.Count == 3 && oneway == 2)

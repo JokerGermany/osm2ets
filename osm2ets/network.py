@@ -30,7 +30,9 @@ ROLE_CONNECTOR = "connector"
 # Straße einer höheren Stufe, die eine Straße der Stufe höhenfrei kreuzt oder unmittelbar
 # daneben liegt – nur das Stück, das man von dort aus sieht (extras.visible_roads)
 ROLE_VISIBLE = "visible"
-_ROLE_RANK = {ROLE_CORE: 0, ROLE_LINK: 1, ROLE_CONNECTOR: 2, ROLE_VISIBLE: 3}
+# Gleis nahe der Strecke (rail.rail_sections) – eigenes Netz, ohne Verbindung zu den Straßen
+ROLE_RAIL = "rail"
+_ROLE_RANK = {ROLE_CORE: 0, ROLE_LINK: 1, ROLE_CONNECTOR: 2, ROLE_VISIBLE: 3, ROLE_RAIL: 4}
 
 
 def oneway_sign(tags: dict, implied: frozenset) -> int:

@@ -48,6 +48,7 @@ var tests = new List<(string Name, Action Body)>
     ("Gelände am Prefab-Anschluss: Spurpunkt am Knoten sperrt nur jenseits der Knotenlinie", PrefabLaneBoundAtNode),
     ("Ampel: Profil aus der .ppd und Prefab-Flag „Ampeln“, bleibt nach Speichern erhalten", TrafficSignalSwitchesSemaphoresOn),
     ("Land: Knoten von Straßen und Prefabs ja, Gelände und Gebäude nein", CountryOnNetworkNodesOnly),
+    ("Gleis: Schienenvorlage mit KI-Zügen, nicht im Navi, ohne Sperrbaken, Land gesetzt", RailWrittenAsTrack),
 };
 
 int failed = 0;
@@ -154,6 +155,28 @@ static void TrafficSignalSwitchesSemaphoresOn()
         finally { if (Directory.Exists(dir)) Directory.Delete(dir, true); }
     }
     finally { PrefabFootprint.Reset(); }
+}
+
+static void RailWrittenAsTrack()
+{
+    // Gleis (Pseudo-Klasse railway, Rolle rail) neben der Autobahn: eingleisig template99, zweigleisig
+    // template98 (lanes = Gleiszahl); nicht auf Karte/Navi, KI-Verkehr (Züge) an, an den abgeschnittenen
+    // Enden keine Sperrbaken; Gleisknoten tragen das Land.
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var input = Sample();
+    input.Profile = "de";
+    RunEntry Rail(int from, int to, int tracks) => new() { From = from, To = to, Highway = MapWriter.RailClass, Role = "rail", Lanes = tracks };
+    var one = MakeRoad("r1", [[1100.0, 0, 2000], [1100.0, 0, 1700], [1100.0, 0, 1400]], Rail(0, 2, 1));
+    var two = MakeRoad("r2", [[1200.0, 0, 2000], [1200.0, 0, 1600]], Rail(0, 1, 2));
+    foreach (var r in new[] { one, two }) { r.Role = "rail"; r.Start = new EndInfo { Kind = "cut", Open = true }; r.End = new EndInfo { Kind = "cut", Open = true }; }
+    input.Roads.AddRange([one, two]);
+    var (map, _) = MapWriter.Build(input, cfg);
+    var rails = map.MapItems.Values.OfType<Road>().Where(r => r.RoadType.ToString() is "template99" or "template98").ToList();
+    Check(rails.Any(r => r.RoadType.ToString() == "template99") && rails.Any(r => r.RoadType.ToString() == "template98"),
+          "Gleisstücke: " + string.Join(", ", rails.Select(r => r.RoadType.ToString())));
+    Check(rails.All(r => !r.ShowInUiMap && r.GpsAvoid && r.AiVehicles && !r.Secret), "Flags der Gleise");
+    Check(!map.MapItems.Values.OfType<Buildings>().Any(), "Sperrbaken an Gleisenden");
+    Check(rails.All(r => r.Node.ForwardCountry == 5 && r.ForwardNode.BackwardCountry == 5), "Land an Gleisknoten");
 }
 
 static void CountryOnNetworkNodesOnly()

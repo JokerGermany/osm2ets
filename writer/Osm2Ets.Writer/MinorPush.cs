@@ -96,7 +96,9 @@ public static class MinorPush
             {
             if (pass == 2)
                 foreach (var (id, c) in conflict)
-                    if (c > 0 && sideSum.TryGetValue(id, out var sv0) && sv0 != 0) { sideSum[id] = -sv0; flipped.Add(id); }
+                    // nie über ein Gleis hinweg auf dessen andere Seite (der Weg kreuzte es sonst)
+                    if (c > 0 && sideSum.TryGetValue(id, out var sv0) && sv0 != 0 && !(id is RoadEntry rr && MapWriter.IsRail(rr)))
+                    { sideSum[id] = -sv0; flipped.Add(id); }
             for (int i = 0; i < n; i++)
             {
                 var p = P(r.Points[i]);

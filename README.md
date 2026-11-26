@@ -37,6 +37,7 @@ v1–v46 (see commits).
 | Underpasses: open terrain under bridges over roads, stone slopes, bridge railings | implemented, not yet checked in game |
 | Bridge bodies (deck, abutments, parapets) for all bridges: SCS bridge models per road type | implemented, not yet checked in game |
 | Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
+| Railways: tracks near the route with AI trains (no level crossings, switches, overhead wires) | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
@@ -284,6 +285,29 @@ In addition, in every level (`extras` and `industry` in the profile):
      end 15 m before (no at-grade junction). In the game: road type as usual, but not on the
      map/GPS, GPS avoids; AI traffic as usual (`visible` in `mapping.jsonc`).
 
+6. **Railways** (role `rail`, in every level): like the visible pieces, only sections that can be
+   seen from the route – at most 300 m next to a road of the level (core and ramps, not access
+   roads or visible pieces; `railway.near_m`) and 300 m on both sides of a grade-separated crossing
+   with it (`railway.crossing_m`). Gaps up to 300 m are closed, free-standing pieces under 200 m
+   are dropped. Only `railway=rail` without `service=*` (sidings, spurs and yards would need switch
+   prefabs). Tracks form their own network without connection to the roads; in the intermediate
+   format they run as the pseudo class `highway=railway` with the number of tracks (`tracks`) as
+   `lanes`. Heights: smoothing window 400 m, at most 2.5 % grade (also at structures and underpasses;
+   `railway.smoothing_window_m`, `railway.max_grade`); railway bridges are not raised across the
+   board, under a motorway the track is lowered, under other roads the road is raised, over a road
+   (not a motorway) the road is lowered. In the game: SCS templates `template99` "rail AI 01 tmpl"
+   (one track) or `template98` "rail double AI 01 tmpl" (`tracks` ≥ 2) with AI trains, not on the
+   map/GPS. Limits:
+   - Single-track templates have one lane only: AI trains run in line direction (following
+     `railway:preferred_direction`, otherwise the OSM direction).
+   - Lanes without overhead wire: diesel trains only; osm2ets places no overhead wires.
+   - Level crossings with a road of the map have no prefab yet: the track ends 15 m before on
+     both sides (`railway.level_crossing_gap_m`, counted in the report). At switches between lines
+     only the straightest pair runs through.
+   - Model widths (5 m and 8 m) estimated, shoulder edge `shldr_rail` not set; whether AI trains
+     disappear cleanly at the open track ends is untested.
+   - Farm tracks and footpaths are never pushed across a railway track to its other side.
+
 L5 adds all ways. Ways without truck traffic get their own flags in the game
 (`mapping.jsonc`):
 
@@ -346,7 +370,8 @@ This is an approximation from OSM tags, not a survey.
 
 - `roads[]`: `points` (game coordinates), `runs` (attribute runs: `highway`, `role`,
   `oneway`, `lanes`, `bridge`, `tunnel`, `layer`, `ref`, `maxspeed`, `osm_ways`),
-  `start`/`end` (OSM node or `cut` at the boundary).
+  `start`/`end` (OSM node or `cut` at the boundary). Tracks: `highway` = `railway`, `role` =
+  `rail`, `lanes` = number of tracks.
 - `junctions[]`: nodes with all adjoining road ends and their directions.
 - `qa.low_clearance_crossings`: grade-separated crossings with < 4.5 m clearance.
 
@@ -449,7 +474,8 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
 ## Roadmap
 
 1. Close remaining terrain gaps (gores, prefab edges), cut slopes next to lowered roads.
-2. Remaining junctions: Y prefabs, roundabouts.
+2. Remaining junctions: Y prefabs, roundabouts; level crossings (e.g. `ger rail1 x r1 y v01`,
+   `ger rail2 x road1 narrow 01`) and switches, overhead wires, sidings.
 3. 3-lane interchanges, left-hand ramps, motorway interchanges.
 4. Bridge models, terrain material/vegetation from OSM land use, higher-resolution DGM1.
 5. Larger areas: measure run time and memory for a federal state or all of Germany.

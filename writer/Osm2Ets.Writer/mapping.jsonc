@@ -32,6 +32,20 @@
   "default": { "road_type": "ger1", "width": 8, "boundary": false,
                "terrain_left": 20, "terrain_right": 20, "resolution": "HighPoly" },
   "rules": [
+    // Gleise (Pseudo-Klasse "railway" aus dem Zwischenformat: OSM railway=rail, lanes = Gleiszahl laut
+    // tracks). SCS-Vorlagen aus road_look.template.sii (ETS2 1.61):
+    //   template98 = "rail double AI 01 tmpl": zwei Gleise (rail1_double.pmd links und rechts,
+    //                road_offset 1), je Seite eine Spur – KI-Züge in beide Richtungen
+    //   template99 = "rail AI 01 tmpl": ein Gleis (rail1.pmd), nur rechts eine Spur – KI-Züge fahren nur
+    //                in Linienrichtung (osm2ets legt sie nach railway:preferred_direction, sonst OSM-Richtung)
+    // Spuren traffic_lane.rail.train ohne Oberleitung: nur Dieselzüge (Oberleitungen setzt osm2ets nicht).
+    // Breiten geschätzt (Modelle nicht vermessen). Nicht auf Karte/Navi, Navi meidet.
+    { "name": "Gleis zweigleisig", "match": { "highway": ["railway"], "lanes_min": 2 },
+      "road_type": "template98", "width": 8, "terrain_left": 20, "terrain_right": 20,
+      "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": true },
+    { "name": "Gleis", "match": { "highway": ["railway"] },
+      "road_type": "template99", "width": 5, "terrain_left": 20, "terrain_right": 20,
+      "show_in_ui_map": false, "gps_avoid": true, "ai_vehicles": true },
     // Nur in L5: Wege, die kein Lkw befahren soll. Breite geschätzt (Modelle nicht vermessen).
     //   ger37 = "ger r1 minim dirt" (Schotter-/Feldweg), ger4 = "ger road 1 minim"
     //   (schmale Asphaltstraße); beide mit Spuren "no_vehicles" (kein KI-Verkehr).

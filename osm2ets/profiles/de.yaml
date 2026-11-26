@@ -124,6 +124,31 @@ extras:
                     unclassified, residential, living_street, service, road,
                     track, path, footway, cycleway, bridleway, pedestrian]
 
+# 6. Eisenbahn – in allen Detailstufen, wie die Sichtstücke nur Abschnitte, die man von den
+#    Straßen der Stufe (Kern und Rampen) aus sieht. Im Spiel Gleise der SCS-Vorlagen mit KI-Zügen
+#    (Writer: "railway" in mapping.jsonc); eigenes Netz ohne Verbindung zu den Straßen.
+railway:
+  enabled: true
+  # OSM railway=*
+  kinds: [rail]
+  # Anschluss-, Abstell- und Rangiergleise (service=*) bleiben weg – sie bräuchten Weichen-Prefabs
+  exclude_service: [siding, spur, yard, crossover]
+  # Abschnitte höchstens so weit neben einer Straße der Stufe (Spielmeter; bei 1:1 = Echtmeter)
+  near_m: 300
+  # Kreuzt ein Gleis eine Straße der Stufe höhenfrei (unter einer Brücke hindurch, auf einer Brücke
+  # darüber), beiderseits der Kreuzung so weit – an Abzweigen nur geradeaus (Spielmeter)
+  crossing_m: 300
+  # Lücken bis zu dieser Länge schließen; freistehende Stücke unter min_m weglassen (Spielmeter)
+  gap_m: 300
+  min_m: 200
+  # Bahnübergang mit einer Straße der Karte: Gleis beiderseits so weit unterbrochen – Prefabs für
+  # Bahnübergänge setzt osm2ets noch nicht (Spielmeter)
+  level_crossing_gap_m: 15
+  # Glättungsfenster der Geländehöhe längs des Gleises (Echtmeter) und größte Längsneigung
+  # (Hauptbahnen meist höchstens 1,25 %, Nebenbahnen selten über 4 %)
+  smoothing_window_m: 400
+  max_grade: 0.025
+
 # 1. Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen: Ziele höchstens
 #    max_distance_m (Weg entlang der Straße) von einer Kreuzung bzw. Abfahrt des Netzes;
 #    erreichte Gebiete werden ganz aufgenommen. Auf Autobahnen/Kraftfahrstraßen selbst

@@ -22,6 +22,13 @@ public sealed record WriteResult(
 /// <summary>Baut aus dem Zwischenformat eine TruckLib-Karte.</summary>
 public static class MapWriter
 {
+    /// <summary>Pseudo-Straßenklasse der Gleise im Zwischenformat (railway=rail, Gleiszahl als lanes). Gleise
+    /// sind ein eigenes Netz ohne Verbindung zu den Straßen: keine Kreuzungs-Prefabs, keine Sperrbaken, kein
+    /// Auseinanderrücken als Richtungsfahrbahn; Straßentyp, KI-Züge usw. aus mapping.jsonc.</summary>
+    public const string RailClass = "railway";
+
+    public static bool IsRail(RoadEntry r) => r.Runs.Any(x => x.Highway == RailClass);
+
     // Spielgrenzen (TruckLib: Road.MinLength bei HighPoly, Road.MaxLength).
     // TruckLib prüft beides NICHT selbst; doppelte Punkte bringen den Prozess
     // sogar zum Absturz (Stapelüberlauf). Daher hier streng prüfen.

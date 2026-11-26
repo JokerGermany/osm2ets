@@ -85,6 +85,7 @@ class Profile:
     lods: dict = field(default_factory=dict)
     industry: dict = field(default_factory=dict)
     extras: dict = field(default_factory=dict)
+    railway: dict = field(default_factory=dict)
 
     def lod(self, name: str) -> LodConfig:
         try:
@@ -223,6 +224,23 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
             "track", "path", "footway", "cycleway", "bridleway", "pedestrian"]), "extras.visible_highway"),
     }
 
+    rw = data.get("railway") or {}
+    if not isinstance(rw, dict):
+        raise ConfigError("railway: YAML-Objekt erwartet")
+    railway = {
+        "enabled": bool(rw.get("enabled", True)),
+        "kinds": _str_set(rw.get("kinds", ["rail"]), "railway.kinds"),
+        "exclude_service": _str_set(rw.get("exclude_service", ["siding", "spur", "yard", "crossover"]),
+                                    "railway.exclude_service"),
+        "near_m": _float(rw, "near_m", "railway", default=300.0, positive=False),
+        "crossing_m": _float(rw, "crossing_m", "railway", default=300.0, positive=False),
+        "gap_m": _float(rw, "gap_m", "railway", default=300.0, positive=False),
+        "min_m": _float(rw, "min_m", "railway", default=200.0, positive=False),
+        "level_crossing_gap_m": _float(rw, "level_crossing_gap_m", "railway", default=15.0, positive=False),
+        "smoothing_window_m": _float(rw, "smoothing_window_m", "railway", default=400.0),
+        "max_grade": _float(rw, "max_grade", "railway", default=0.025),
+    }
+
     profile = Profile(
         name=str(data.get("name", "profil")),
         description=str(data.get("description", "")),
@@ -246,6 +264,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         exclude_service=_str_set(net.get("exclude_service", []), "network.exclude_service"),
         lods=lods,
         extras=extras,
+        railway=railway,
         industry={
             "enabled": bool((data.get("industry") or {}).get("enabled", True)),
             "highway": _str_set((data.get("industry") or {}).get("highway", drivable_default), "industry.highway"),

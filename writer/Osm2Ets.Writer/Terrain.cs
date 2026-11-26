@@ -323,7 +323,7 @@ public static class CarriagewaySeparation
 
     public static int Apply(List<RoadEntry> roads, Dictionary<RoadEntry, ResolvedStyle[]> styles)
     {
-        var cands = roads.Where(r => r.Runs.All(x => x.Oneway) && r.Points.Count >= 2).ToList();
+        var cands = roads.Where(r => r.Runs.All(x => x.Oneway) && r.Points.Count >= 2 && !MapWriter.IsRail(r)).ToList();
         var segs = new List<(RoadEntry R, Vector2 A, Vector2 B, float Hw)>();
         foreach (var r in cands)
             for (int i = 0; i < r.Points.Count - 1; i++)

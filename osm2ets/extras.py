@@ -478,7 +478,8 @@ def _subtract(intervals: list, cuts: list) -> list:
 def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, near_m: float,
                   extra_edges=(), blocked=frozenset(), tol_m: float = 5.0, gap_m: float = 40.0,
                   min_m: float = 30.0, keep_off_m: float = 15.0, height=None, slope: float = 0.67,
-                  tol_h: float = 1.0, id_start: int = -2_000_000_000) -> dict:
+                  tol_h: float = 1.0, id_start: int = -2_000_000_000, role: str | None = None,
+                  cut_nodes=frozenset(), cut_m: float = 0.0, label: str = "Sichtstücke") -> dict:
     """5. Straßen, die man von der Strecke aus sieht oder die unmittelbar daneben liegen.
 
     Straßen, die nicht zur Auswahl gehören (Klasse in ``classes``), werden mit aufgenommen:
@@ -504,6 +505,8 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
     ``extra_edges``: weitere Kanten der Auswahl außerhalb von ``net`` (z. B. angeschnittene
     Straßenenden); ``blocked``: Kanten von ``net``, die schon teilweise vergeben sind.
     ``xy`` muss auch die berechneten Knoten der ``extra_edges`` enthalten.
+    ``role``: Rolle der aufgenommenen Kanten (Vorgabe ``visible``); ``cut_nodes``: Knoten, um die
+    herum die Stücke immer ``cut_m`` weit unterbrochen werden (Gleise an Bahnübergängen).
 
     Rückgabe: {"crossings", "ways", "near_ways", "edges", "dropped", "kept_off",
     "partial": [Edge], "locations": {id: (lon, lat)}}.
@@ -515,8 +518,9 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
     from .network import ROLE_VISIBLE, Edge, is_tunnel
     from .osmread import Way
 
+    role = role or ROLE_VISIBLE
     stats = {"crossings": 0, "ways": 0, "near_ways": 0, "edges": 0, "dropped": 0, "kept_off": 0,
-             "steep_m": 0.0, "partial": [], "locations": {}}
+             "steep_m": 0.0, "cut_points": 0, "partial": [], "locations": {}}
     if cross_m <= 0 and near_m <= 0:
         return stats
 
@@ -750,7 +754,13 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
         anc = anchors.get(ei, [])
         # zu steile Nahabschnitte bleiben offen, außer im Umkreis einer Kreuzung
         cuts = _subtract(_merge(steep.get(ei, []), 0.0), anc)
-        for a, b in _subtract(_merge(ivs, gap_m), cuts):
+        # Unterbrechungen um cut_nodes (Bahnübergänge) gelten überall
+        hard = [(cum[m] - cut_m, cum[m] + cut_m) for m, n in enumerate(ids) if n in cut_nodes]
+        merged = _merge(ivs, gap_m)
+        if hard:
+            stats["cut_points"] += sum(1 for c0, c1 in hard if any(a < c1 and b > c0 for a, b in merged))
+            merged = _subtract(merged, hard)
+        for a, b in _subtract(merged, cuts):
             a = 0.0 if a <= tol_m else a
             b = length if b >= length - tol_m else b
             if a <= 0.0 and ids[0] in carriage:
@@ -829,7 +839,7 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
         ids, pts, cum = geo(ei)
         length = cum[-1]
         if a <= 0.0 and b >= length:
-            e.role = ROLE_VISIBLE
+            e.role = role
             stats["edges"] += 1
             continue
         nodes: list[int] = []
@@ -858,14 +868,14 @@ def visible_roads(net, xy: dict, loc: dict, classes: frozenset, cross_m: float, 
             continue
         way = Way(id=e.way.id, nodes=array("q", clean), tags=dict(e.way.tags))
         stats["partial"].append(Edge(idx=-1, way=way, i0=0, i1=len(clean) - 1, oneway=e.oneway,
-                                     role=ROLE_VISIBLE))
+                                     role=role))
     stats["crossings"] = len(crossings)
     stats["ways"] = len(crossed_ways)
     stats["near_ways"] = len(near_ways - crossed_ways)
     stats["steep_m"] = round(stats["steep_m"])
-    log.info("Sichtstücke: %d höhenfreie Kreuzungen mit %d Wegen, %d weitere Wege daneben; "
+    log.info("%s: %d höhenfreie Kreuzungen mit %d Wegen, %d weitere Wege daneben; "
              "%d ganze Kanten, %d angeschnitten, %d freistehende Reste weggelassen, %d m zu steil",
-             stats["crossings"], stats["ways"], stats["near_ways"], stats["edges"],
+             label, stats["crossings"], stats["ways"], stats["near_ways"], stats["edges"],
              len(stats["partial"]), stats["dropped"], stats["steep_m"])
     return stats
 

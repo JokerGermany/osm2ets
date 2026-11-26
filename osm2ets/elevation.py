@@ -187,6 +187,11 @@ def clamp_grade(z: np.ndarray, ea, eb, elen, grade: float, iterations: int = 200
 # Höchste Längsneigung nach RAA (Entwurfsklassen): EKA 1A 4 %, EKA 1B/2 4,5 %, Rampen ~6 %
 MAJOR = {"motorway", "trunk"}
 GRADE_BY_HIGHWAY = {"motorway": 0.06, "trunk": 0.06}
+# Gleise (Pseudo-Klasse, osmread.RAIL_CLASS): Steigung und Glättungsfenster aus dem Profil
+# (railway.max_grade, railway.smoothing_window_m), auch für Rampen an Brücken und Unterführungen;
+# Gleisbrücken werden nicht pauschal angehoben, unter Straßenbrücken bleibt das Gleis liegen
+# (außer unter Autobahnen/Kraftfahrstraßen), über Straßen ebenso (die Straße wird abgesenkt)
+RAIL = "railway"
 # Glättungsfenster der Geländehöhe längs der Straße (m): Autobahnen weiträumiger
 WINDOW_BY_HIGHWAY = {"motorway": 200.0, "trunk": 180.0, "motorway_link": 140.0, "trunk_link": 140.0}
 
@@ -204,10 +209,11 @@ CLEARANCE_MARGIN_M = 0.2
 # 4,5 m unter der Bauwerksunterkante (Bauwerk 1,6 m), und zwar über die ganze Breite der unteren Fahrbahn –
 # die obere Straße steigt oder fällt auf diesem Stück (bis 0,5 m weniger als an der Achse)
 MAJOR_MIN_CLEARANCE_M = 4.5
-MAJOR_LOWER = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link"}
-# halbe Breite je Straßenklasse (Spielmeter, Modellrand; Autobahn: ger16 −9…8 m)
+MAJOR_LOWER = {"motorway", "motorway_link", "trunk", "trunk_link", "primary", "primary_link", RAIL}
+# halbe Breite je Straßenklasse (Spielmeter, Modellrand; Autobahn: ger16 −9…8 m; Gleis: eingleisig
+# etwa ±2,5 m, geschätzt wie in mapping.jsonc)
 HALF_WIDTH_M = {"motorway": 9.0, "trunk": 8.0, "primary": 5.0, "motorway_link": 5.0,
-                "trunk_link": 5.0, "primary_link": 4.0, "secondary": 4.0, "tertiary": 4.0}
+                "trunk_link": 5.0, "primary_link": 4.0, "secondary": 4.0, "tertiary": 4.0, RAIL: 2.5}
 
 
 def parse_maxheight(value) -> Optional[float]:
@@ -263,10 +269,10 @@ def _highway(piece: Piece, seg: int) -> str:
     return piece.chain.parts[piece.dense.seg_part[seg]].edge.highway
 
 
-def _piece_window(piece: Piece, default: float) -> float:
+def _piece_window(piece: Piece, default: float, extra: Optional[dict] = None) -> float:
     n = max(len(piece.dense.xy) - 1, 1)
     best = default
-    for hw, win in WINDOW_BY_HIGHWAY.items():
+    for hw, win in {**WINDOW_BY_HIGHWAY, **(extra or {})}.items():
         share = sum(1 for j in range(n) if _highway(piece, j) == hw) / n
         if share >= 0.5:
             best = max(best, win)
@@ -284,6 +290,8 @@ def _road_width(piece: Piece, seg: int) -> float:
             return 14.5 if int(str(tags.get("lanes", "2")).split(";")[0]) >= 3 else 11.0
         except ValueError:
             return 11.0
+    if hw == RAIL:
+        return 5.0
     if hw.endswith("_link") or oneway:
         return 6.5
     return 8.0
@@ -666,6 +674,11 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     """
     from .qa import find_crossings
 
+    rail_cfg = getattr(profile, "railway", None) or {}
+    rail_window = float(rail_cfg.get("smoothing_window_m") or 0.0)
+    rail_grade = float(rail_cfg.get("max_grade") or 0.0)
+    extra_windows = {RAIL: rail_window} if rail_window > 0 else None
+
     # --- Punktgraph: gemeinsame Knoten zusammenlegen
     offsets: list[int] = []
     total = 0
@@ -697,7 +710,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             smoothed.append(None)
             continue
         raw = dem.sample(d.xy)
-        win = _piece_window(p, profile.smoothing_window_m)
+        win = _piece_window(p, profile.smoothing_window_m, extra_windows)
         ground = low_percentile_along(d.s, raw, profile.smoothing_window_m / 2, 25.0)
         # unter Brücken liegt das Tal: dort für die Glättung linear zwischen den
         # Brückenenden überbrücken, sonst zieht das breite Fenster die Enden ins Tal
@@ -736,7 +749,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         base[canon[off:off + len(d.xy)]] = pinned / profile.scale_v
 
     # --- Kanten
-    ea_l, eb_l, elen_l, flags_l, egrade_l = [], [], [], [], []
+    ea_l, eb_l, elen_l, flags_l, egrade_l, rail_l = [], [], [], [], [], []
     flags_by_piece = []
     for p, off in zip(pieces, offsets):
         flags = _segment_flags(p)
@@ -747,8 +760,10 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             eb_l.append(int(canon[off + j + 1]))
             elen_l.append(float(seg_len[j]))
             flags_l.append(flags[j])
-            egrade_l.append(min(GRADE_BY_HIGHWAY.get(_highway(p, j), profile.terrain_max_grade),
-                                profile.terrain_max_grade))
+            hw = _highway(p, j)
+            gmax = rail_grade if hw == RAIL and rail_grade > 0 else GRADE_BY_HIGHWAY.get(hw, profile.terrain_max_grade)
+            egrade_l.append(min(gmax, profile.terrain_max_grade))
+            rail_l.append(hw == RAIL)
     ea = np.array(ea_l, np.int64)
     eb = np.array(eb_l, np.int64)
     elen = np.array(elen_l, float)
@@ -760,6 +775,14 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
         incident.setdefault(a, []).append(e)
         incident.setdefault(b, []).append(e)
     degree = {v: len(es) for v, es in incident.items()}
+    # Rampen an Bauwerken und Kreuzungen breiten sich mit max_ramp_grade aus; auf Gleisen mit deren
+    # Steigung (Kanten dafür kürzer gewichtet: Abfall je Kante = max_ramp_grade · w · g/max_ramp_grade)
+    adj_ramp: dict[int, list[tuple[int, float]]] = {}
+    for e, (a, b, w) in enumerate(zip(ea_l, eb_l, elen_l)):
+        g_e = min(rail_grade, profile.max_ramp_grade) if rail_l[e] and rail_grade > 0 else profile.max_ramp_grade
+        w2 = w * g_e / profile.max_ramp_grade
+        adj_ramp.setdefault(a, []).append((b, w2))
+        adj_ramp.setdefault(b, []).append((a, w2))
     if dem is not None:
         # Kanten in Bauwerken nicht begrenzen – dort liegt das Tal unter der Brücke
         keep = [e for e, f in enumerate(flags_l) if not (f[0] or f[1])]
@@ -788,7 +811,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
     major_edge = []
     for p in pieces:
         for j in range(len(p.dense.xy) - 1):
-            major_edge.append(_highway(p, j) in MAJOR)
+            major_edge.append(_highway(p, j) in MAJOR or _highway(p, j) == RAIL)
     # Kreuzt eine Brücke eine Straße des Netzes, ergibt sich ihre Höhe aus deren Höhe plus
     # Lichtraum (Schritt 4) – kein pauschales Anheben. Pauschal (+Lichtraum über die Linie
     # zwischen den Widerlagern) lag z. B. die BT 46 über der A 9 gut 4 m höher als nötig,
@@ -816,7 +839,7 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             value = min(clearance * max(flags_l[e][2], 1), max_offset)
             lift[ea[e]] = max(lift[ea[e]], value)
             lift[eb[e]] = max(lift[eb[e]], value)
-    _propagate(lift, adj, np.flatnonzero(lift > 0), grade)
+    _propagate(lift, adj_ramp, np.flatnonzero(lift > 0), grade)
 
     def heights() -> np.ndarray:
         z = base + lift - sink
@@ -870,8 +893,10 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
                 continue
             hw_up = _highway(pieces[la if ra >= rb else lb], sa if ra >= rb else sb)
             hw_low = _highway(pieces[lb if ra >= rb else la], sb if ra >= rb else sa)
-            # Tunnel oder untergeordnete Straße unter Autobahn: unten absenken, sonst oben anheben
-            lower = f_low[1] or (hw_up in MAJOR and hw_low not in MAJOR)
+            # Tunnel oder untergeordnete Straße unter Autobahn: unten absenken, sonst oben anheben;
+            # Gleis über einer Straße (nicht Autobahn): die Straße absenken, das Gleis bleibt
+            lower = f_low[1] or (hw_up in MAJOR and hw_low not in MAJOR) \
+                or (hw_up == RAIL and hw_low not in MAJOR and hw_low != RAIL)
             out.append((low if lower else up, deficit, lower))
         return out
 
@@ -892,8 +917,8 @@ def apply_elevation(pieces: list[Piece], profile, dem: Optional[DemSampler],
             break
         raised += len(set(lift_seeds))
         sunk += len(set(sink_seeds))
-        _propagate(lift, adj, lift_seeds, grade)
-        _propagate(sink, adj, sink_seeds, grade)
+        _propagate(lift, adj_ramp, lift_seeds, grade)
+        _propagate(sink, adj_ramp, sink_seeds, grade)
     maxheight_used = len(mh_crossings)
 
     z = heights()

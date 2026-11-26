@@ -141,6 +141,7 @@ internal static class DeadEnds
         foreach (var r in roads)
         {
             if (!first.TryGetValue(r, out var fi) || !last.TryGetValue(r, out var la)) continue;
+            if (MapWriter.IsRail(r)) continue;   // Gleise: eigenes Netz, keine Sperrbaken
             foreach (var atStart in new[] { true, false })
             {
                 var e = atStart ? r.Start : r.End;
