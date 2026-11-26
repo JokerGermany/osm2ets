@@ -2095,6 +2095,16 @@ public static class Junctions
         pf.Variant = p.Def.Prefab.Variant;
         pf.Look = p.Def.Prefab.Look;
         pf.ViewDistance = 1400;
+        // Universal-Einmündung: Ränder "curb wide" an allen Armen (im Editor als bester Kompromiss gewählt);
+        // die Bordstein-Modelle heißen je nach Armbreite …1m bzw. …3m (corner0..2 in der Prefab-Definition)
+        if ((p.Def == UNTL || p.Def == UNTR) && pf.PrefabNodes is { } pn)
+            for (int k = 0; k < Math.Min(pn.Length, 3); k++)
+            {
+                bool wide = p.Def == UNTR ? k == 1 : k == 0;
+                pn[k].Model = wide ? "ungcw3m" : "ungcw1m";
+                pn[k].Look = "01a";
+                pn[k].Variant = "default";
+            }
         for (int i = 0; i < p.Arms.Length; i++)
         {
             var k = p.NodeOf[i];
