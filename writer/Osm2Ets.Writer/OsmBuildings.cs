@@ -80,6 +80,8 @@ internal static class OsmBuildings
     public const float PrefabGap = 8f;       // Abstand zu Prefab-Spurpunkten
     public const float MaxBuried = 3f;       // so tief darf die Bergseite im Gelände stecken
     public const int MaxTiles = 8;
+    public const int MaxRows = 4;
+    static readonly HashSet<string> WideTileable = ["industrial", "retail", "commercial", "farm"];
     static readonly HashSet<string> PathLike = ["footway", "path", "cycleway", "steps", "bridleway", "pedestrian", "track"];
 
     static readonly Dictionary<string, string[]> Related = new()
@@ -94,7 +96,8 @@ internal static class OsmBuildings
     public sealed record Result(int Placed, int Items, int Tiled, int NoModel, int OnRoad, int OnPrefab, int Steep,
                                 Dictionary<string, int> ByKind, Dictionary<string, int> ByCountry);
 
-    public sealed record Choice(BuildingModel Model, int Tiles, float ScaleLong, float ScaleShort, float ScaleY, float Cost);
+    /// <summary>Tiles: Stücke längs, Rows: Reihen quer (nur Hallen, Läden, Büros, Höfe).</summary>
+    public sealed record Choice(BuildingModel Model, int Tiles, float ScaleLong, float ScaleShort, float ScaleY, float Cost, int Rows = 1);
 
     /// <summary>Bestes Modell für ein Rechteck L × B (Höhe h oder null) der Art kind; null, wenn keins passt.</summary>
     public static Choice? Choose(BuildingCatalog cat, string kind, double length, double width, double? height, string seed)
@@ -108,13 +111,17 @@ internal static class OsmBuildings
                 if (length > m.Long * MaxScale && Tileable.Contains(k))
                     n = (int)Math.Ceiling(length / (m.Long * MaxScale));
                 if (n > MaxTiles) continue;
-                float sl = (float)(length / n / m.Long), sw = (float)(width / m.Short);
+                int w = 1;
+                if (width > m.Short * MaxScale && WideTileable.Contains(k) && WideTileable.Contains(kind))
+                    w = (int)Math.Ceiling(width / (m.Short * MaxScale));
+                if (w > MaxRows) continue;
+                float sl = (float)(length / n / m.Long), sw = (float)(width / w / m.Short);
                 if (!In(sl) || !In(sw)) continue;
                 float sy = height is double h ? Math.Clamp((float)(h / m.SizeY), 1 / MaxScale, MaxScale) : MathF.Sqrt(sl * sw);
-                float cost = MathF.Abs(MathF.Log(sl)) + MathF.Abs(MathF.Log(sw)) + extra + (n - 1) * 0.05f
+                float cost = MathF.Abs(MathF.Log(sl)) + MathF.Abs(MathF.Log(sw)) + extra + (n * w - 1) * 0.05f
                            + CountryCost(m.Country)
                            + (height is double h2 ? 0.5f * MathF.Abs(MathF.Log((float)(h2 / m.SizeY))) : 0);
-                all.Add(new Choice(m, n, sl, sw, sy, cost));
+                all.Add(new Choice(m, n, sl, sw, sy, cost, w));
             }
         }
         if (all.Count == 0) return null;
@@ -247,12 +254,14 @@ internal static class OsmBuildings
             var tiles = new List<(Vector2 C, float H)>();
             bool skip = false;
             float hmin = float.PositiveInfinity, hmax = float.NegativeInfinity;
-            for (int i = 0; i < ch.Tiles && !skip; i++)
+            float rowW = (float)(b.Width / ch.Rows);
+            for (int k = 0; k < ch.Tiles * ch.Rows && !skip; k++)
             {
-                var tc = center + u * (float)((i + 0.5) * tileLen - b.Length / 2);
+                int i = k % ch.Tiles, j = k / ch.Tiles;
+                var tc = center + u * (float)((i + 0.5) * tileLen - b.Length / 2) + nrm * ((j + 0.5f) * rowW - (float)b.Width / 2);
                 foreach (var (fl, fw) in new[] { (0f, 0f), (-0.5f, -0.5f), (0.5f, -0.5f), (0.5f, 0.5f), (-0.5f, 0.5f), (0f, -0.5f), (0f, 0.5f), (-0.5f, 0f), (0.5f, 0f) })
                 {
-                    var q = tc + u * (fl * tileLen) + nrm * (fw * (float)b.Width);
+                    var q = tc + u * (fl * tileLen) + nrm * (fw * rowW);
                     var nq = Nearest(q);
                     float hq = terrain?.Invoke(q.X, q.Y) ?? float.NaN;
                     if (float.IsNaN(hq)) hq = float.IsNaN(nq.Y) ? 0 : nq.Y;
@@ -282,7 +291,7 @@ internal static class OsmBuildings
                 items++;
             }
             placed++;
-            if (ch.Tiles > 1) tiled++;
+            if (ch.Tiles * ch.Rows > 1) tiled++;
             byKind[m.Kind] = byKind.GetValueOrDefault(m.Kind) + 1;
             byCountry[m.Country] = byCountry.GetValueOrDefault(m.Country) + 1;
         }

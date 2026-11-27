@@ -504,7 +504,8 @@ most ±15 % per axis, height included. German models come first, then Austria, S
 country, Benelux; a different kind weighs more than a different country. Among almost equally good
 models the choice is spread by OSM ID (first the model, then the variant), and so is the look
 (colour, material) – all pieces of one building get the same. Long halls and terraces are assembled from up to 8 identical models
-along the long side. The long axis follows the OSM rectangle, the front faces the street. Height:
+along the long side, wide halls, stores, offices and farms also from up to 4 rows across.
+The long axis follows the OSM rectangle, the front faces the street. Height:
 lowest terrain point under the building; on slopes the model is raised as far as its plinth
 reaches. Left out are buildings without a fitting model, closer than 2 m to a carriageway (20 m
 where the carriageway lies more than 2 m above or below the terrain – embankment), at prefabs, and

@@ -52,6 +52,7 @@ var tests = new List<(string Name, Action Body)>
     ("Gebäudekatalog: mitgelieferte buildings.jsonc gültig, Haus bekommt deutsches Modell (±15 %)", BuildingCatalogShipped),
     ("Gebäude: Modell auf dem OSM-Rechteck, Vorderseite zur Straße; auf der Fahrbahn weggelassen", BuildingPlacedFacingStreet),
     ("Gebäude: lange Halle aus mehreren gleichen Modellen längs", LongHallTiled),
+    ("Gebäude: großer Markt 126 × 92 m aus Stücken längs und quer", WideHallTiled),
 };
 
 int failed = 0;
@@ -257,12 +258,28 @@ static void LongHallTiled()
     input.Buildings.Add(new BuildingEntry { Osm = "w9", Kind = "industrial", Center = [1200, 1700], Length = 150, Width = 30, Angle = 90 });
     var (map, _) = MapWriter.Build(input, cfg, buildings: cat);
     var models = map.MapItems.Values.OfType<Model>().ToList();
-    Check(models.Count == ch.Tiles, $"{models.Count} Modelle statt {ch.Tiles}");
+    Check(models.Count == ch.Tiles * ch.Rows, $"{models.Count} Modelle statt {ch.Tiles} × {ch.Rows}");
     Check(models.All(x => x.Name.ToString() == ch.Model.Token && x.Variant.ToString() == ch.Model.Variant
                           && x.Look == models[0].Look && x.Node.Rotation == models[0].Node.Rotation), "verschiedene Modelle/Varianten/Looks/Drehungen");
     var cs = models.Select(x => ModelCenter(x, ch.Model)).OrderBy(v => v.Y).ToList();
-    Check(cs.All(v => MathF.Abs(v.X - 1200) < 0.05f), "Mitten nicht auf der Längsachse");
+    Check(MathF.Abs(cs.Average(v => v.X) - 1200) < 0.05f && MathF.Abs(cs.Max(v => v.X) - cs.Min(v => v.X) - (30 - 30f / ch.Rows)) < 0.1f, "Reihen quer falsch");
     Check(MathF.Abs(cs[^1].Y - cs[0].Y - (150 - 150f / ch.Tiles)) < 0.1f, "Abstand der äußeren Stücke");
+}
+
+static void WideHallTiled()
+{
+    // breiter als jedes Modell (+15 %): Reihen quer; alle Stücke gleich, zusammen so groß wie der Markt
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var cat = BuildingCatalog.Load(ShippedBuildings());
+    var ch = OsmBuildings.Choose(cat, "retail", 126, 92, null, "w7");
+    Check(ch is not null && ch.Rows >= 2, $"Markt: {ch?.Model.Token} {ch?.Tiles} × {ch?.Rows}");
+    Check(MathF.Abs(ch!.ScaleShort * ch.Model.Short * ch.Rows - 92) < 0.5f && MathF.Abs(ch.ScaleLong * ch.Model.Long * ch.Tiles - 126) < 0.5f, "Gesamtmaße");
+    var input = Sample();
+    input.Buildings.Add(new BuildingEntry { Osm = "w7", Kind = "retail", Center = [1300, 1700], Length = 126, Width = 92, Angle = 90 });
+    var (map, _) = MapWriter.Build(input, cfg, buildings: cat);
+    Check(map.MapItems.Values.OfType<Model>().Count() == ch.Tiles * ch.Rows, "Stückzahl");
+    // Wohnhäuser werden nicht quer zusammengesetzt
+    Check(OsmBuildings.Choose(cat, "house", 12, 30, null, "w8") is not { Rows: > 1 }, "Haus quer zusammengesetzt");
 }
 
 static void CountryOnNetworkNodesOnly()

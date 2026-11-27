@@ -511,7 +511,8 @@ höchstens ±15 % skaliert, auch in der Höhe. Deutsche Modelle haben Vorrang, d
 ohne Land, Benelux; eine andere Art wiegt schwerer als ein anderes Land. Unter fast gleich guten
 Modellen wird nach OSM-ID gestreut (erst das Modell, dann die Variante), ebenso beim Look (Farbe,
 Material) – alle Stücke eines Gebäudes bekommen denselben. Lange Hallen und Reihenhäuser werden aus bis zu 8 gleichen Modellen längs
-zusammengesetzt. Die Längsachse folgt dem OSM-Rechteck, die Vorderseite zeigt zur Straße. Höhe:
+zusammengesetzt, breite Hallen, Märkte, Büros und Höfe zusätzlich aus bis zu 4 Reihen quer.
+Die Längsachse folgt dem OSM-Rechteck, die Vorderseite zeigt zur Straße. Höhe:
 tiefster Geländepunkt unter dem Gebäude; am Hang wird das Modell angehoben, soweit sein Sockel
 reicht. Weggelassen werden Gebäude ohne passendes Modell, näher als 2 m an einer Fahrbahn (20 m, wo
 die Fahrbahn mehr als 2 m über oder unter dem Gelände liegt – Böschung), an Prefabs und auf Gelände,
