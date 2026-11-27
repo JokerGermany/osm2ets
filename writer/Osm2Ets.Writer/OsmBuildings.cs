@@ -80,6 +80,7 @@ internal static class OsmBuildings
     public const float PrefabGap = 8f;       // Abstand zu Prefab-Spurpunkten
     public const float MaxBuried = 3f;       // so tief darf die Bergseite im Gelände stecken
     public const int MaxTiles = 8;
+    static readonly HashSet<string> PathLike = ["footway", "path", "cycleway", "steps", "bridleway", "pedestrian", "track"];
 
     static readonly Dictionary<string, string[]> Related = new()
     {
@@ -166,6 +167,10 @@ internal static class OsmBuildings
                 var s = st[Math.Min(i, st.Length - 1)];
                 var a = MapWriter.ToVector(r.Points[i]); var b = MapWriter.ToVector(r.Points[i + 1]);
                 float half = s.Width / 2 + MathF.Abs(s.ModelCenter) + MathF.Abs(s.Offset);
+                // Fuß-, Rad- und Feldwege führen in OSM oft dicht an der Hauswand entlang: dort zählt nur, dass
+                // die Wegachse nicht durchs Gebäude läuft (die Wegbreite der Karte ist meist breiter als real)
+                var hw = r.Runs.FirstOrDefault(u => u.From <= i && i < u.To)?.Highway ?? "";
+                if (PathLike.Contains(hw)) half = 0.5f - RoadGap;
                 float pad = half + BankDist;
                 for (int gx = (int)MathF.Floor((MathF.Min(a.X, b.X) - pad) / cell); gx <= (int)MathF.Floor((MathF.Max(a.X, b.X) + pad) / cell); gx++)
                     for (int gz = (int)MathF.Floor((MathF.Min(a.Z, b.Z) - pad) / cell); gz <= (int)MathF.Floor((MathF.Max(a.Z, b.Z) + pad) / cell); gz++)
@@ -251,8 +256,8 @@ internal static class OsmBuildings
                     var nq = Nearest(q);
                     float hq = terrain?.Invoke(q.X, q.Y) ?? float.NaN;
                     if (float.IsNaN(hq)) hq = float.IsNaN(nq.Y) ? 0 : nq.Y;
-                    if (nq.Edge < RoadGap || (nq.Edge < BankDist && MathF.Abs(nq.Y - hq) > BankHeight)) { onRoad++; skip = true; break; }
-                    if (NearLane(q) || prefabDisks.Any(d => Vector2.DistanceSquared(d.C, q) < d.R * d.R)) { onPrefab++; skip = true; break; }
+                    if (nq.Edge < RoadGap || (nq.Edge < BankDist && MathF.Abs(nq.Y - hq) > BankHeight)) { onRoad++; skip = true; if (Debug) Console.Error.WriteLine($"BROAD {b.Kind} {b.Osm} rand {nq.Edge:0.0} m, Höhe Fahrbahn−Gelände {nq.Y - hq:0.0} m"); break; }
+                    if (NearLane(q) || prefabDisks.Any(d => Vector2.DistanceSquared(d.C, q) < d.R * d.R)) { onPrefab++; skip = true; if (Debug) Console.Error.WriteLine($"BPREFAB {b.Kind} {b.Osm}"); break; }
                     hmin = MathF.Min(hmin, hq); hmax = MathF.Max(hmax, hq);
                 }
                 tiles.Add((tc, 0));
@@ -263,7 +268,7 @@ internal static class OsmBuildings
             // halben Höhenunterschied) – die Talseite steht dann auf dem Sockel, die Bergseite steckt
             // um den Rest im Gelände
             float lift = MathF.Min((hmax - hmin) / 2, MathF.Max(0, -m.Min[1] * ch.ScaleY));
-            if (hmax - hmin - lift > MaxBuried) { steep++; continue; }
+            if (hmax - hmin - lift > MaxBuried) { steep++; if (Debug) Console.Error.WriteLine($"BSTEEP {b.Kind} {b.Osm} {hmax - hmin:0.0} m"); continue; }
             var cLocal = new Vector3((m.Min[0] + m.Max[0]) / 2 * sx, 0, (m.Min[2] + m.Max[2]) / 2 * sz);
             var off = Vector3.Transform(cLocal, rot);
             var look = LookFor(m, b.Osm);
