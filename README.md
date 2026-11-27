@@ -507,9 +507,10 @@ models the choice is spread by OSM ID (first the model, then the variant), and s
 along the long side, wide halls, stores, offices and farms also from up to 4 rows across.
 The long axis follows the OSM rectangle, the front faces the street. Height:
 lowest terrain point under the building; on slopes the model is raised as far as its plinth
-reaches. Left out are buildings without a fitting model, closer than 2 m to a carriageway (20 m
+reaches; where that is not enough (up to 12 m height difference) the terrain under it is levelled
+(2 m margin, 12 m transition). Left out are buildings without a fitting model, closer than 2 m to a carriageway (20 m
 where the carriageway lies more than 2 m above or below the terrain – embankment), at prefabs, and
-on terrain where the uphill side would be buried more than 3 m. `--buildings <file>` uses another
+on terrain with more than 12 m height difference under the building. `--buildings <file>` uses another
 catalogue, `OSM2ETS_NO_BUILDINGS=1` turns buildings off.
 
 Catalogue:

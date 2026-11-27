@@ -506,6 +506,7 @@ public static class MapWriter
         if (prefabs is not null)
             warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
 
+        OsmBuildings.Result? buildingResult = null;
         // Füllgelände zuletzt: dann sind alle Prefabs gesetzt und ihre Fahrspuren bekannt
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg2 && Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null)
         {
@@ -530,6 +531,12 @@ public static class MapWriter
                 };
             }
             tg2.Post = post;
+            // Gebäude vor dem Gelände: am Hang wird das Raster unter ihnen eingeebnet
+            if (OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
+            {
+                buildingResult = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map), (x, z) => tg2.HeightAt(x, z));
+                if (buildingResult.Pads.Count > 0) tg2.Post = OsmBuildings.PadPost(buildingResult.Pads, post);
+            }
             if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null && underpasses is not null)
                 Console.Error.WriteLine("UNDERPASS " + string.Join(" ", underpasses.Ids));
             if (TerrainFill.WideRoadTerrain)
@@ -661,12 +668,12 @@ public static class MapWriter
         foreach (var m in sigMissing) warnings.Add($"Ampel in OSM, aber Prefab ohne Ampelplätze: {m}");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen (davon {DeadEnds.Networks} vor Sackgassen-Netzen)");
-        if (OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
+        if (buildingResult is null && OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
+            buildingResult = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),
+                input.TerrainGrid is { Nx: > 1, Nz: > 1 } tgb ? (x, z) => tgb.HeightAt(x, z) : null);
+        if (buildingResult is { } br)
         {
-            var grid = input.TerrainGrid is { Nx: > 1, Nz: > 1 } tgb ? tgb : null;
-            var br = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),
-                                        grid is null ? null : (x, z) => grid.HeightAt(x, z));
-            warnings.Add($"Info: Gebäude: {br.Placed} von {input.Buildings.Count} gesetzt ({br.Items} Modelle, {br.Tiled} aus mehreren zusammengesetzt); " +
+            warnings.Add($"Info: Gebäude: {br.Placed} von {input.Buildings.Count} gesetzt ({br.Items} Modelle, {br.Tiled} aus mehreren zusammengesetzt, {br.Pads.Count} am Hang eingeebnet); " +
                          $"weggelassen: {br.NoModel} ohne passendes Modell, {br.OnRoad} zu nah an Fahrbahn oder Böschung, {br.OnPrefab} an Prefabs, {br.Steep} zu steiles Gelände; " +
                          "Arten: " + string.Join(", ", br.ByKind.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) +
                          "; Länder: " + string.Join(", ", br.ByCountry.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")));

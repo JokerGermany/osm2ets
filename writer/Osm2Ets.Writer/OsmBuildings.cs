@@ -94,7 +94,50 @@ internal static class OsmBuildings
     static readonly HashSet<string> Tileable = ["industrial", "farm", "retail", "garage", "house", "apartments", "commercial"];
 
     public sealed record Result(int Placed, int Items, int Tiled, int NoModel, int OnRoad, int OnPrefab, int Steep,
-                                Dictionary<string, int> ByKind, Dictionary<string, int> ByCountry);
+                                Dictionary<string, int> ByKind, Dictionary<string, int> ByCountry, List<Pad> Pads);
+
+    /// <summary>Eingeebnete Fläche unter einem Gebäude am Hang: Rechteck (Mitte, Längsrichtung U, halbe
+    /// Länge/Breite) auf Höhe H.</summary>
+    public sealed record Pad(Vector2 C, Vector2 U, float HalfL, float HalfW, float H);
+    public const float MaxFlatten = 12f;     // bis zu diesem Höhenunterschied wird das Gelände eingeebnet
+    public const float PadMargin = 2f;       // eben noch so weit um das Gebäude
+    public const float PadBlend = 12f;       // danach Übergang ins Gelände auf dieser Breite
+
+    /// <summary>Rasterhöhe mit eingeebneten Flächen: innen Padhöhe, außen linear zurück ins Gelände.</summary>
+    public static Func<float, float, float, float> PadPost(List<Pad> pads, Func<float, float, float, float>? inner)
+    {
+        const float cell = 50f;
+        var grid = new Dictionary<(int, int), List<Pad>>();
+        foreach (var p in pads)
+        {
+            float r = MathF.Sqrt(p.HalfL * p.HalfL + p.HalfW * p.HalfW) + PadMargin + PadBlend;
+            for (int gx = (int)MathF.Floor((p.C.X - r) / cell); gx <= (int)MathF.Floor((p.C.X + r) / cell); gx++)
+                for (int gz = (int)MathF.Floor((p.C.Y - r) / cell); gz <= (int)MathF.Floor((p.C.Y + r) / cell); gz++)
+                {
+                    if (!grid.TryGetValue((gx, gz), out var l)) grid[(gx, gz)] = l = [];
+                    l.Add(p);
+                }
+        }
+        return (x, z, h) =>
+        {
+            if (grid.TryGetValue(((int)MathF.Floor(x / cell), (int)MathF.Floor(z / cell)), out var l))
+            {
+                // stärkster Einfluss gewinnt (nächstes Pad)
+                float bestW = 0, bestH = h;
+                foreach (var p in l)
+                {
+                    var d = new Vector2(x, z) - p.C;
+                    float a = MathF.Abs(Vector2.Dot(d, p.U)) - p.HalfL - PadMargin;
+                    float b = MathF.Abs(p.U.X * d.Y - p.U.Y * d.X) - p.HalfW - PadMargin;
+                    float dist = MathF.Sqrt(MathF.Max(a, 0) * MathF.Max(a, 0) + MathF.Max(b, 0) * MathF.Max(b, 0));
+                    float w = Math.Clamp(1 - dist / PadBlend, 0, 1);
+                    if (w > bestW) { bestW = w; bestH = p.H; }
+                }
+                if (bestW > 0) h = h + (bestH - h) * bestW;
+            }
+            return inner is null ? h : inner(x, z, h);
+        };
+    }
 
     /// <summary>Tiles: Stücke längs, Rows: Reihen quer (nur Hallen, Läden, Büros, Höfe).</summary>
     public sealed record Choice(BuildingModel Model, int Tiles, float ScaleLong, float ScaleShort, float ScaleY, float Cost, int Rows = 1);
@@ -161,7 +204,8 @@ internal static class OsmBuildings
         var byKind = new Dictionary<string, int>();
         var byCountry = new Dictionary<string, int>();
         int placed = 0, items = 0, tiled = 0, noModel = 0, onRoad = 0, onPrefab = 0, steep = 0;
-        if (input.Buildings.Count == 0) return new(0, 0, 0, 0, 0, 0, 0, byKind, byCountry);
+        var pads = new List<Pad>();
+        if (input.Buildings.Count == 0) return new(0, 0, 0, 0, 0, 0, 0, byKind, byCountry, pads);
 
         // Fahrbahnen (alle Straßen und Gleise) und Prefab-Spurpunkte in Raster
         const float cell = 50f;
@@ -277,13 +321,22 @@ internal static class OsmBuildings
             // halben Höhenunterschied) – die Talseite steht dann auf dem Sockel, die Bergseite steckt
             // um den Rest im Gelände
             float lift = MathF.Min((hmax - hmin) / 2, MathF.Max(0, -m.Min[1] * ch.ScaleY));
-            if (hmax - hmin - lift > MaxBuried) { steep++; if (Debug) Console.Error.WriteLine($"BSTEEP {b.Kind} {b.Osm} {hmax - hmin:0.0} m"); continue; }
+            float baseY = hmin + lift;
+            bool flatten = hmax - hmin - lift > MaxBuried;
+            if (flatten && hmax - hmin <= MaxFlatten)
+            {
+                // zu steil zum Hineinstellen: Gelände unter dem Gebäude einebnen (Mitte zwischen Berg und Tal)
+                baseY = (hmin + hmax) / 2;
+                pads.Add(new Pad(center, u, (float)b.Length / 2, (float)b.Width / 2, baseY));
+                flatten = false;
+            }
+            if (flatten) { steep++; if (Debug) Console.Error.WriteLine($"BSTEEP {b.Kind} {b.Osm} {hmax - hmin:0.0} m"); continue; }
             var cLocal = new Vector3((m.Min[0] + m.Max[0]) / 2 * sx, 0, (m.Min[2] + m.Max[2]) / 2 * sz);
             var off = Vector3.Transform(cLocal, rot);
             var look = LookFor(m, b.Osm);
             foreach (var (tc, _) in tiles)
             {
-                var pos = new Vector3(tc.X - off.X, hmin + lift - 0.1f, tc.Y - off.Z);
+                var pos = new Vector3(tc.X - off.X, baseY - 0.1f, tc.Y - off.Z);
                 var item = Model.Add(map, pos, m.Token, m.Variant, look);
                 item.Node.Rotation = rot;
                 item.Scale = scale;
@@ -295,6 +348,6 @@ internal static class OsmBuildings
             byKind[m.Kind] = byKind.GetValueOrDefault(m.Kind) + 1;
             byCountry[m.Country] = byCountry.GetValueOrDefault(m.Country) + 1;
         }
-        return new(placed, items, tiled, noModel, onRoad, onPrefab, steep, byKind, byCountry);
+        return new(placed, items, tiled, noModel, onRoad, onPrefab, steep, byKind, byCountry, pads);
     }
 }

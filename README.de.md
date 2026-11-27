@@ -514,9 +514,10 @@ Material) – alle Stücke eines Gebäudes bekommen denselben. Lange Hallen und 
 zusammengesetzt, breite Hallen, Märkte, Büros und Höfe zusätzlich aus bis zu 4 Reihen quer.
 Die Längsachse folgt dem OSM-Rechteck, die Vorderseite zeigt zur Straße. Höhe:
 tiefster Geländepunkt unter dem Gebäude; am Hang wird das Modell angehoben, soweit sein Sockel
-reicht. Weggelassen werden Gebäude ohne passendes Modell, näher als 2 m an einer Fahrbahn (20 m, wo
+reicht; reicht das nicht (bis 12 m Höhenunterschied), wird das Gelände darunter eingeebnet (2 m Rand,
+12 m Übergang). Weggelassen werden Gebäude ohne passendes Modell, näher als 2 m an einer Fahrbahn (20 m, wo
 die Fahrbahn mehr als 2 m über oder unter dem Gelände liegt – Böschung), an Prefabs und auf Gelände,
-in dem die Bergseite mehr als 3 m stecken würde. `--buildings <Datei>` nimmt einen anderen Katalog,
+mit mehr als 12 m Höhenunterschied unter dem Gebäude. `--buildings <Datei>` nimmt einen anderen Katalog,
 `OSM2ETS_NO_BUILDINGS=1` schaltet die Gebäude ab.
 
 Katalog:
