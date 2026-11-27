@@ -38,6 +38,7 @@ v1–v46 (siehe Commits).
 | Brückenkörper (Überbau, Widerlager, Brüstung) für alle Brücken: SCS-Brückenmodelle je Straßentyp | umgesetzt, im Spiel noch nicht geprüft |
 | Sichtstücke: Straßen höherer Stufen unter/über Brücken und unmittelbar neben der Strecke | umgesetzt, im Spiel noch nicht geprüft |
 | Eisenbahn: Gleise nahe der Strecke mit KI-Zügen (ohne Bahnübergänge, Weichen, Oberleitung) | umgesetzt, im Spiel noch nicht geprüft |
+| Gebäude: OSM-`building=*` nahe der Strecke als SCS-Modelle (Grundspiel, deutsche bevorzugt) | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -310,6 +311,9 @@ Zusätzlich in jeder Stufe (`extras` und `industry` im Profil):
      den offenen Gleisenden sauber verschwinden, ist ungeprüft.
    - Feld-/Fußwege werden nie über ein Gleis hinweg auf dessen andere Seite geschoben.
 
+7. **Gebäude** (in allen Stufen): `building=*` bis 300 m neben Kern und Rampen der Stufe
+   (`buildings.near_m`), je als ein SCS-Modell – siehe „Gebäude (SCS-Modelle)“.
+
 In L5 kommen alle Wege dazu. Wege ohne Lkw-Verkehr bekommen im Spiel eigene Schalter
 (`mapping.jsonc`):
 
@@ -374,6 +378,10 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
   `oneway`, `lanes`, `bridge`, `tunnel`, `layer`, `ref`, `maxspeed`, `osm_ways`),
   `start`/`end` (OSM-Knoten oder `cut` am Rand). Gleise: `highway` = `railway`, `role` = `rail`,
   `lanes` = Gleiszahl.
+- `buildings[]`: `osm` (z. B. `w123`, `r45`), `building`, `kind`, `landuse`, `center` [x, z],
+  `length`/`width` (kleinstes umschließendes Rechteck), `angle` (Richtung der Längsseite in Grad,
+  x-z-Ebene), `area`, `fill` (Grundfläche / Rechteck), `height`, `levels`, `street` (Einheitsvektor
+  [x, z] zur nächsten Straße oder null).
 - `junctions[]`: Knoten mit allen angrenzenden Straßenenden und deren Richtung –
   Grundlage für die geplanten Kreuzungs-Prefabs.
 - `qa.low_clearance_crossings`: höhenfreie Kreuzungen mit < 4,5 m Abstand.
@@ -381,9 +389,9 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 41 Tests, synthetische Netze
+python3 -m pytest                                   # 81 Tests, synthetische Netze
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 10 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 44 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
 ```
 
 Als echter Ausschnitt dient die OSM-Testdatei `core/files/north-bayreuth.osm.gz`
@@ -478,13 +486,62 @@ sich mit `osm2ets-writer extract --game … --paths liste.txt --out …` aus den
   `OSM2ETS_NO_FUEL=1` bzw. `OSM2ETS_NO_FUEL_BALT=1` schalten das ab.
 - Knotenrollen und Richtungen kommen aus den `.ppd`-Dateien, Varianten/Looks aus den `.pmd`.
 
+## Gebäude (SCS-Modelle)
+
+ETS2 kennt keine frei geformten Gebäude; osm2ets setzt auf jedes OSM-Gebäude (`building=*`) bis
+300 m neben Kern und Rampen der Stufe (`buildings.near_m`) ein fertiges SCS-Modell (Map-Item
+„Model“). Der Python-Teil schreibt je Gebäude ins Zwischenformat (`buildings[]`):
+
+- das kleinste umschließende Rechteck (Mitte, Länge, Breite, Richtung der Längsseite),
+- die Art `kind`: house, apartments, garage, shed, industrial, commercial, retail, farm, church,
+  silo – aus `building=*`; bei `building=yes` (in Deutschland die meisten) aus `shop`/`amenity`/
+  `office`, der umgebenden `landuse`-Fläche und der Grundfläche (z. B. im Wohngebiet unter 15 m²
+  Schuppen, unter 40 m² oder schmal und lang (Garagenzeile) Garage, unter 300 m² Haus, sonst
+  Mehrfamilienhaus),
+- Höhe aus `height` bzw. Stockwerke aus `building:levels` (selten erfasst),
+- die Richtung zur nächsten Straße (`street`) – aus allen OSM-Straßen bis 60 m, auch solchen, die
+  nicht in der Karte sind; Autobahnen, Einfahrten und Parkplatzgassen zählen nicht.
+
+Nicht übernommen: `building=roof`, `carport`, `construction`, `ruins`, `no` u. a. (`buildings.exclude`),
+`building:part` und Gebäude, deren Mitte in einem größeren liegt (doppelt erfasst).
+
+Der Writer wählt aus dem Katalog `writer/Osm2Ets.Writer/buildings.jsonc` je Gebäude das Modell
+seiner Art (sonst einer verwandten), dessen Grundfläche am besten passt – je Achse höchstens ±15 %
+skaliert, auch in der Höhe. Deutsche Modelle haben Vorrang, danach Österreich, Schweiz, ohne Land,
+Benelux; eine andere Art wiegt schwerer als ein anderes Land. Unter fast gleich guten Modellen wird
+nach OSM-ID gestreut. Lange Hallen und Reihenhäuser werden aus bis zu 8 gleichen Modellen längs
+zusammengesetzt. Die Längsachse folgt dem OSM-Rechteck, die Vorderseite zeigt zur Straße. Höhe:
+tiefster Geländepunkt unter dem Gebäude; am Hang wird das Modell angehoben, soweit sein Sockel
+reicht. Weggelassen werden Gebäude ohne passendes Modell, näher als 2 m an einer Fahrbahn (20 m, wo
+die Fahrbahn mehr als 2 m über oder unter dem Gelände liegt – Böschung), an Prefabs und auf Gelände,
+in dem die Bergseite mehr als 3 m stecken würde. `--buildings <Datei>` nimmt einen anderen Katalog,
+`OSM2ETS_NO_BUILDINGS=1` schaltet die Gebäude ab.
+
+Katalog: `scripts/building_catalog.py <entpackt>/def/world <entpackt> > writer/Osm2Ets.Writer/buildings.jsonc`
+liest die Modelldefinitionen (`/def/world/model*.sii`) und die Bounding-Boxen der `.pmg`-Dateien aus
+einem mit `osm2ets-writer extract` entpackten Ordner. Im Repository stehen nur Kürzel, Art, Land und
+Maße, keine Spieldateien. Nur Grundspiel-Länder (de, at, ch, be/lux, nl, uk, cz) und Grundspielmodelle
+ohne Land (amerikanische, mit ATS geteilte nur als Hallen, Silos und Tanks); DLC-Modelle, Sprites,
+Ruinen, Schilder, Wahrzeichen, Eckhäuser u. Ä. bleiben weg.
+
+Grenzen:
+- Für kleine Garagen und Schuppen (typisch 6 × 3 m) und kleine Häuser hat das Grundspiel kaum Modelle
+  in ±15 % – sie fehlen (im Testgebiet 258 von 1116).
+- Welche lokale Achse die Vorderseite eines SCS-Modells ist, ist ungeprüft (Katalog: `front`, `"-z"`
+  angenommen; `"+z"` dreht alle Gebäude um).
+- Look/Variante: `default` (die `.pmd`-Dateien sind nicht ausgewertet) – ungeprüft, ob jedes Modell
+  diese Namen hat.
+- Formen (L-, U-Form, Innenhof), Dachform, Farbe und Material aus OSM werden nicht nachgebildet; manche
+  SCS-Modelle sind deutlich höher als Häuser im Dorf (z. B. `village_close_03_de` mit 16,8 m).
+
 ## Nächste Ausbaustufen
 
 1. Restliche Geländelücken schließen (Zwickel, Prefab-Ränder), Einschnittsböschungen neben abgesenkten Straßen.
 2. Restliche Kreuzungen: Y-Prefabs, Kreisverkehre; Bahnübergänge (z. B. `ger rail1 x r1 y v01`,
    `ger rail2 x road1 narrow 01`) und Weichen, Oberleitungen, Anschlussgleise.
 3. 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze.
-4. Brückenmodelle, Geländematerial/Bewuchs aus OSM-Landnutzung, höher aufgelöstes DGM1.
+4. Brückenmodelle, Geländematerial/Bewuchs aus OSM-Landnutzung, höher aufgelöstes DGM1;
+   Gebäude: Garagen/Schuppen, Looks aus den `.pmd`, Vorderseite prüfen.
 5. Größere Gebiete: Laufzeit und Speicher für ein Bundesland oder ganz Deutschland messen.
 6. Stufen, die aufeinander aufbauen: L1 herunterladen, für ein dichteres Netz L2 usw. dazupacken.
    Dafür muss L(n+1) die Straßen von L(n) unverändert übernehmen (gleiche UIDs, Höhen, Prefabs) und

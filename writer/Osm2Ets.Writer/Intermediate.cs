@@ -21,6 +21,8 @@ public sealed class IntermediateFile
     public TerrainGridEntry? TerrainGrid { get; set; }
     /// <summary>Optional: Fahrbahnflächen aus OSM (area:highway), nur zur Lageprüfung.</summary>
     public List<AreaEntry> Areas { get; set; } = [];
+    /// <summary>Optional: Gebäude nahe der Strecke (Rechteck, Art, Höhe) – der Writer setzt SCS-Modelle.</summary>
+    public List<BuildingEntry> Buildings { get; set; } = [];
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -61,6 +63,34 @@ public sealed class EndInfo
     public long? OsmNode { get; set; }
     /// <summary>Straße geht in OSM auf befahrbaren Wegen weiter, die nicht in der Karte sind (oder Kartenrand).</summary>
     public bool Open { get; set; }
+}
+
+/// <summary>Gebäude (building=*) als kleinstes umschließendes Rechteck in Spielkoordinaten.</summary>
+public sealed class BuildingEntry
+{
+    /// <summary>OSM-Objekt, z. B. "w123" (Weg) oder "r45" (Multipolygon).</summary>
+    public string Osm { get; set; } = "";
+    public string? Building { get; set; }
+    /// <summary>Art: house, apartments, garage, shed, industrial, commercial, retail, farm, church, silo.</summary>
+    public string Kind { get; set; } = "house";
+    public string? Landuse { get; set; }
+    /// <summary>Mitte [x, z].</summary>
+    public double[] Center { get; set; } = [0, 0];
+    /// <summary>Längere und kürzere Seite (Spielmeter).</summary>
+    public double Length { get; set; }
+    public double Width { get; set; }
+    /// <summary>Richtung der Längsseite in Grad (x-z-Ebene, 0 = +x, 90 = +z).</summary>
+    public double Angle { get; set; }
+    public double Area { get; set; }
+    /// <summary>Grundfläche / Rechteckfläche (1 = Rechteck).</summary>
+    public double Fill { get; set; }
+    /// <summary>Höhe (Spielmeter) aus height, sonst null.</summary>
+    public double? Height { get; set; }
+    /// <summary>Stockwerke aus building:levels, sonst null.</summary>
+    public double? Levels { get; set; }
+    /// <summary>Einheitsvektor [x, z] von der Mitte zur nächsten OSM-Straße (auch außerhalb der Karte),
+    /// null, wenn keine nahe ist – dann zählt die nächste Fahrbahn der Karte.</summary>
+    public double[]? Street { get; set; }
 }
 
 /// <summary>Fahrbahnfläche (area:highway=…) als Umriss in Spielkoordinaten [x, z].</summary>

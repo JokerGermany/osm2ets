@@ -87,6 +87,11 @@ def report_text(model: dict) -> str:
                      f"weggelassen, {vis['kept_off']} Enden vor einer Fahrbahn zurückgenommen, "
                      f"{vis.get('steep_m', 0) + (vis.get('trim') or {}).get('removed_m', 0)} m wegen zu großer "
                      f"Höhenunterschiede ausgelassen)")
+    bd = s.get("buildings")
+    if bd:
+        kinds = ", ".join(f"{k} {v}" for k, v in bd["by_kind"].items())
+        lines.append(f"Gebäude:       {bd['near']} nahe der Strecke (von {bd['read']} gelesen; {bd.get('nested', 0)} "
+                     f"in einem größeren weggelassen): {kinds}")
     rail = s.get("railway")
     if rail:
         km = s["km_game_by_highway"].get("railway", 0.0)

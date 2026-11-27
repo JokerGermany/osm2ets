@@ -10,6 +10,7 @@ public static class Program
         osm2ets-writer – schreibt das osm2ets-Zwischenformat als ETS2-Karte (TruckLib, Kartenformat 907 = ETS2 1.59–1.61)
 
           write  --input <roads.ets.json> --out <ordner> [--name <kartenname>] [--mapping <mapping.jsonc>]
+                 [--buildings <buildings.jsonc>]
                  [--force] [--verify] [--no-layer-files] [--game <ETS2-Spielordner> | --prefab-dir <ordner>]
                  Mit --game (oder entpackten .ppd-Dateien in --prefab-dir) werden an Autobahn-
                  Anschlussstellen SCS-Prefabs eingesetzt.
@@ -17,6 +18,8 @@ public static class Program
                  Achtung: Mit --force werden vorhandene Sektordateien (.base, .aux, .data, .desc, .snd, .layer)
                  in diesem Sektorordner gelöscht.
                  Standardmäßig wird je Sektor eine leere .layer-Datei angelegt (--no-layer-files: nicht).
+                 Gebäude aus dem Zwischenformat bekommen SCS-Modelle aus dem Katalog (Vorgabe: buildings.jsonc
+                 neben dem Programm; erzeugt mit scripts/building_catalog.py).
           looks  --game <ETS2-Spielordner> [--filter <text>] [--all]
                  Listet die Straßentypen (road_look) aus den .scs-Archiven, um mapping.jsonc zu füllen.
           prefabs --game <ETS2-Spielordner> [--filter <text>] [--all]
@@ -123,7 +126,12 @@ public static class Program
         using var prefabs = (o.ContainsKey("--prefab-dir") || o.ContainsKey("--game"))
             ? new Interchanges.PpdSource(o.GetValueOrDefault("--prefab-dir"), o.GetValueOrDefault("--game"))
             : null;
-        var (map, result) = MapWriter.Build(input, mapping, prefabs);
+        var buildingsPath = o.GetValueOrDefault("--buildings") ?? Path.Combine(AppContext.BaseDirectory, "buildings.jsonc");
+        if (o.ContainsKey("--buildings") && !File.Exists(buildingsPath))
+            throw new UsageException($"Gebäudekatalog nicht gefunden: {buildingsPath}");
+        var buildings = File.Exists(buildingsPath) ? BuildingCatalog.Load(buildingsPath) : null;
+        if (buildings is not null) Console.WriteLine($"Gebäude:  {buildingsPath} ({buildings.Models.Count} Modelle)");
+        var (map, result) = MapWriter.Build(input, mapping, prefabs, buildings);
         if (result.RoadsWritten == 0)
         {
             Console.Error.WriteLine("Fehler: keine einzige Straße schreibbar – Karte nicht gespeichert.");

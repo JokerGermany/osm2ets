@@ -376,7 +376,10 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         from .terrain import build_grid
         terrain_grid = build_grid(roads, dem, profile)
     junctions = _junctions(kept)
+    from .buildings import building_entries
+    buildings, building_stats = building_entries(input_path, profile, roads, projector, bbox)
     stats = _stats(kept, roads, junctions, profile, dropped)
+    stats["buildings"] = building_stats if (profile.buildings or {}).get("enabled") else None
     stats["elevation"] = elevation_stats
     stats["elevation"]["implicit_bridges"] = implicit
     stats["industry_access"] = industry_stats
@@ -423,6 +426,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         "junctions": junctions,
         "terrain_grid": terrain_grid,
         "areas": areas,
+        "buildings": buildings,
         "stats": stats,
         "qa": {"min_clearance_m": MIN_CLEARANCE_M, "low_clearance_crossings": low[:200],
                "dropped_short_pieces": dropped_info[:200]},

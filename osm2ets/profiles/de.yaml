@@ -149,6 +149,17 @@ railway:
   smoothing_window_m: 400
   max_grade: 0.025
 
+# 7. Gebäude (building=*) – in allen Detailstufen wie die Gleise nur nahe der Strecke. Ins
+#    Zwischenformat kommen Rechteck, Art und Höhe; der Writer setzt passende SCS-Modelle
+#    (buildings.jsonc).
+buildings:
+  enabled: true
+  # höchstens so weit neben einer Straße der Stufe (Kern und Rampen; Spielmeter)
+  near_m: 300
+  # nie (offene Dächer, Baustellen, Ruinen, Brücken, Zelte …)
+  exclude: [roof, carport, construction, ruins, "no", bridge, tent, ship, container, grandstand,
+            proposed, demolished, abandoned, collapsed]
+
 # 1. Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen: Ziele höchstens
 #    max_distance_m (Weg entlang der Straße) von einer Kreuzung bzw. Abfahrt des Netzes;
 #    erreichte Gebiete werden ganz aufgenommen. Auf Autobahnen/Kraftfahrstraßen selbst

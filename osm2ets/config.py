@@ -86,6 +86,7 @@ class Profile:
     industry: dict = field(default_factory=dict)
     extras: dict = field(default_factory=dict)
     railway: dict = field(default_factory=dict)
+    buildings: dict = field(default_factory=dict)
 
     def lod(self, name: str) -> LodConfig:
         try:
@@ -241,6 +242,17 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         "max_grade": _float(rw, "max_grade", "railway", default=0.025),
     }
 
+    bd = data.get("buildings") or {}
+    if not isinstance(bd, dict):
+        raise ConfigError("buildings: YAML-Objekt erwartet")
+    buildings = {
+        "enabled": bool(bd.get("enabled", True)),
+        "near_m": _float(bd, "near_m", "buildings", default=300.0, positive=False),
+        "exclude": _str_set(bd.get("exclude", ["roof", "carport", "construction", "ruins", "no", "bridge",
+                                                "tent", "ship", "container", "grandstand", "proposed",
+                                                "demolished", "abandoned", "collapsed"]), "buildings.exclude"),
+    }
+
     profile = Profile(
         name=str(data.get("name", "profil")),
         description=str(data.get("description", "")),
@@ -265,6 +277,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         lods=lods,
         extras=extras,
         railway=railway,
+        buildings=buildings,
         industry={
             "enabled": bool((data.get("industry") or {}).get("enabled", True)),
             "highway": _str_set((data.get("industry") or {}).get("highway", drivable_default), "industry.highway"),

@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <None Update="mapping.jsonc" CopyToOutputDirectory="PreserveNewest" />
+    <None Update="buildings.jsonc" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

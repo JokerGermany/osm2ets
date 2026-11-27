@@ -49,6 +49,9 @@ var tests = new List<(string Name, Action Body)>
     ("Ampel: Profil aus der .ppd und Prefab-Flag „Ampeln“, bleibt nach Speichern erhalten", TrafficSignalSwitchesSemaphoresOn),
     ("Land: Knoten von Straßen und Prefabs ja, Gelände und Gebäude nein", CountryOnNetworkNodesOnly),
     ("Gleis: Schienenvorlage mit KI-Zügen, nicht im Navi, ohne Sperrbaken, Land gesetzt", RailWrittenAsTrack),
+    ("Gebäudekatalog: mitgelieferte buildings.jsonc gültig, Haus bekommt deutsches Modell (±15 %)", BuildingCatalogShipped),
+    ("Gebäude: Modell auf dem OSM-Rechteck, Vorderseite zur Straße; auf der Fahrbahn weggelassen", BuildingPlacedFacingStreet),
+    ("Gebäude: lange Halle aus mehreren gleichen Modellen längs", LongHallTiled),
 };
 
 int failed = 0;
@@ -77,6 +80,17 @@ static void Check(bool condition, string message)
 
 static string ShippedMapping() =>
     Path.Combine(AppContext.BaseDirectory, "mapping.jsonc");
+
+static string ShippedBuildings() =>
+    Path.Combine(AppContext.BaseDirectory, "buildings.jsonc");
+
+// Mitte der Modell-Bounding-Box in der Welt (x/z)
+static Vector2 ModelCenter(Model m, BuildingModel bm)
+{
+    var local = new Vector3((bm.Min[0] + bm.Max[0]) / 2 * m.Scale.X, 0, (bm.Min[2] + bm.Max[2]) / 2 * m.Scale.Z);
+    var c = m.Node.Position + Vector3.Transform(local, m.Node.Rotation);
+    return new Vector2(c.X, c.Z);
+}
 
 static RunEntry MakeRun(int from, int to, string highway, string role = "core", bool oneway = false,
                     bool bridge = false) =>
@@ -177,6 +191,72 @@ static void RailWrittenAsTrack()
     Check(rails.All(r => !r.ShowInUiMap && r.GpsAvoid && r.AiVehicles && !r.Secret), "Flags der Gleise");
     Check(!map.MapItems.Values.OfType<Buildings>().Any(), "Sperrbaken an Gleisenden");
     Check(rails.All(r => r.Node.ForwardCountry == 5 && r.ForwardNode.BackwardCountry == 5), "Land an Gleisknoten");
+}
+
+static void BuildingCatalogShipped()
+{
+    var cat = BuildingCatalog.Load(ShippedBuildings());
+    var kinds = new HashSet<string> { "house", "apartments", "garage", "shed", "industrial", "commercial", "retail", "farm", "church", "silo" };
+    Check(cat.Models.Count > 100, $"nur {cat.Models.Count} Modelle");
+    Check(cat.Models.All(m => kinds.Contains(m.Kind)), "unbekannte Art");
+    Check(cat.Models.Select(m => m.Token).Distinct().Count() == cat.Models.Count, "doppelte Kürzel");
+    foreach (var k in new[] { "house", "apartments", "industrial", "shed" })
+        Check(cat.Models.Any(m => m.Kind == k && m.Country == "de"), $"kein deutsches Modell für {k}");
+    // gewöhnliches Einfamilienhaus 12 × 9 m: deutsches Modell, ein Stück, je Achse höchstens ±15 %
+    var ch = OsmBuildings.Choose(cat, "house", 12, 9, null, "w1");
+    Check(ch is not null && ch.Model.Country == "de" && ch.Tiles == 1, $"Haus: {ch?.Model.Token} ({ch?.Model.Country})");
+    foreach (var f in new[] { ch!.ScaleLong, ch.ScaleShort, ch.ScaleY })
+        Check(f >= 1 / OsmBuildings.MaxScale - 1e-3f && f <= OsmBuildings.MaxScale + 1e-3f, $"Skalierung {f}");
+    // gleiche Wahl für dieselbe OSM-ID, Streuung über mehrere IDs
+    Check(OsmBuildings.Choose(cat, "house", 12, 9, null, "w1")!.Model == ch.Model, "Wahl nicht stabil");
+    var picks = Enumerable.Range(0, 40).Select(i => OsmBuildings.Choose(cat, "house", 12, 9, null, $"w{i}")!.Model.Token).Distinct().Count();
+    Check(picks > 1, "keine Abwechslung");
+    // Winzige Hütte (2 × 1,5 m): kein Modell passt
+    Check(OsmBuildings.Choose(cat, "shed", 2, 1.5, null, "w2") is null, "Hütte 2 × 1,5 m bekam ein Modell");
+}
+
+static void BuildingPlacedFacingStreet()
+{
+    // Autobahn längs z bei x = 1000 (Sample). Haus 40 m östlich, Längsseite längs z, Straße (OSM) im
+    // Osten: ein Modell, Bounding-Box-Mitte auf der OSM-Mitte, Längsachse längs z, lokale −z (Katalog:
+    // front) nach Osten. Ein zweites Haus quer über der Fahrbahn bleibt weg.
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var cat = BuildingCatalog.Load(ShippedBuildings());
+    var input = Sample();
+    input.Buildings.Add(new BuildingEntry { Osm = "w1", Kind = "house", Center = [1040, 1800], Length = 12, Width = 9, Angle = 90, Street = [1, 0] });
+    input.Buildings.Add(new BuildingEntry { Osm = "w2", Kind = "house", Center = [1000, 1650], Length = 12, Width = 9, Angle = 0 });
+    var (map, _) = MapWriter.Build(input, cfg, buildings: cat);
+    var models = map.MapItems.Values.OfType<Model>().ToList();
+    Check(models.Count == 1, $"{models.Count} Modelle statt 1");
+    var m = models[0];
+    var bm = cat.Models.Single(x => x.Token == m.Name.ToString());
+    var c = ModelCenter(m, bm);
+    Check(Vector2.Distance(c, new Vector2(1040, 1800)) < 0.05f, $"Mitte {c}");
+    var front = Vector3.Transform(cat.Front == "-z" ? -Vector3.UnitZ : Vector3.UnitZ, m.Node.Rotation);
+    var longAxis = Vector3.Transform(bm.LongIsX ? Vector3.UnitX : Vector3.UnitZ, m.Node.Rotation);
+    Check(MathF.Abs(longAxis.Z) > 0.999f, $"Längsachse {longAxis}");
+    Check(bm.LongIsX ? front.X > 0.999f : front.Z * front.Z > 0.998f, $"Vorderseite {front} (Modell {bm.Token})");
+    Check(m.Scale.X > 0 && MathF.Abs(m.Scale.X - 1) <= 0.151f && MathF.Abs(m.Scale.Z - 1) <= 0.151f, $"Skalierung {m.Scale}");
+}
+
+static void LongHallTiled()
+{
+    // Halle 150 × 30 m: länger als jedes Hallenmodell (+15 %) – mehrere gleiche Modelle längs, zusammen so
+    // lang wie die Halle, alle gleich gedreht, Mitten auf der Längsachse
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var cat = BuildingCatalog.Load(ShippedBuildings());
+    var ch = OsmBuildings.Choose(cat, "industrial", 150, 30, null, "w9");
+    Check(ch is not null && ch.Tiles >= 2, $"Halle: {ch?.Model.Token} × {ch?.Tiles}");
+    Check(MathF.Abs(ch!.ScaleLong * ch.Model.Long * ch.Tiles - 150) < 0.5f, "Gesamtlänge");
+    var input = Sample();
+    input.Buildings.Add(new BuildingEntry { Osm = "w9", Kind = "industrial", Center = [1200, 1700], Length = 150, Width = 30, Angle = 90 });
+    var (map, _) = MapWriter.Build(input, cfg, buildings: cat);
+    var models = map.MapItems.Values.OfType<Model>().ToList();
+    Check(models.Count == ch.Tiles, $"{models.Count} Modelle statt {ch.Tiles}");
+    Check(models.All(x => x.Name.ToString() == ch.Model.Token && x.Node.Rotation == models[0].Node.Rotation), "verschiedene Modelle/Drehungen");
+    var cs = models.Select(x => ModelCenter(x, ch.Model)).OrderBy(v => v.Y).ToList();
+    Check(cs.All(v => MathF.Abs(v.X - 1200) < 0.05f), "Mitten nicht auf der Längsachse");
+    Check(MathF.Abs(cs[^1].Y - cs[0].Y - (150 - 150f / ch.Tiles)) < 0.1f, "Abstand der äußeren Stücke");
 }
 
 static void CountryOnNetworkNodesOnly()

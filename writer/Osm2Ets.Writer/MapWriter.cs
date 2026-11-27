@@ -36,7 +36,7 @@ public static class MapWriter
     public const float MaxSegment = 1000f;
 
     public static (Map Map, WriteResult Result) Build(IntermediateFile input, MappingConfig mapping,
-        Interchanges.PpdSource? prefabs = null)
+        Interchanges.PpdSource? prefabs = null, BuildingCatalog? buildings = null)
     {
         var map = new Map
         {
@@ -661,6 +661,18 @@ public static class MapWriter
         foreach (var m in sigMissing) warnings.Add($"Ampel in OSM, aber Prefab ohne Ampelplätze: {m}");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen (davon {DeadEnds.Networks} vor Sackgassen-Netzen)");
+        if (OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
+        {
+            var grid = input.TerrainGrid is { Nx: > 1, Nz: > 1 } tgb ? tgb : null;
+            var br = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),
+                                        grid is null ? null : (x, z) => grid.HeightAt(x, z));
+            warnings.Add($"Info: Gebäude: {br.Placed} von {input.Buildings.Count} gesetzt ({br.Items} Modelle, {br.Tiled} aus mehreren zusammengesetzt); " +
+                         $"weggelassen: {br.NoModel} ohne passendes Modell, {br.OnRoad} zu nah an Fahrbahn oder Böschung, {br.OnPrefab} an Prefabs, {br.Steep} zu steiles Gelände; " +
+                         "Arten: " + string.Join(", ", br.ByKind.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) +
+                         "; Länder: " + string.Join(", ", br.ByCountry.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")));
+        }
+        else if (input.Buildings.Count > 0 && buildings is null)
+            warnings.Add($"Info: {input.Buildings.Count} Gebäude im Zwischenformat, aber kein Gebäudekatalog (--buildings) – keine gesetzt");
         // zuletzt: Land in den Knoten von Straßen und Prefabs, ein Grenzknoten je Netz
         int countryNets = Country.Apply(map, input.Profile);
         if (countryNets > 0) warnings.Add($"Info: Land {Country.Id} an {countryNets} Netzen gesetzt (Grenzknoten)");

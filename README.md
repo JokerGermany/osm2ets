@@ -38,6 +38,7 @@ v1–v46 (see commits).
 | Bridge bodies (deck, abutments, parapets) for all bridges: SCS bridge models per road type | implemented, not yet checked in game |
 | Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
 | Railways: tracks near the route with AI trains (no level crossings, switches, overhead wires) | implemented, not yet checked in game |
+| Buildings: OSM `building=*` near the route as SCS models (base game, German models preferred) | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
@@ -308,6 +309,9 @@ In addition, in every level (`extras` and `industry` in the profile):
      disappear cleanly at the open track ends is untested.
    - Farm tracks and footpaths are never pushed across a railway track to its other side.
 
+7. **Buildings** (in every level): `building=*` up to 300 m next to core and ramps of the level
+   (`buildings.near_m`), each as one SCS model – see "Buildings (SCS models)".
+
 L5 adds all ways. Ways without truck traffic get their own flags in the game
 (`mapping.jsonc`):
 
@@ -372,15 +376,19 @@ This is an approximation from OSM tags, not a survey.
   `oneway`, `lanes`, `bridge`, `tunnel`, `layer`, `ref`, `maxspeed`, `osm_ways`),
   `start`/`end` (OSM node or `cut` at the boundary). Tracks: `highway` = `railway`, `role` =
   `rail`, `lanes` = number of tracks.
+- `buildings[]`: `osm` (e.g. `w123`, `r45`), `building`, `kind`, `landuse`, `center` [x, z],
+  `length`/`width` (smallest enclosing rectangle), `angle` (direction of the long side in degrees,
+  x-z plane), `area`, `fill` (footprint / rectangle), `height`, `levels`, `street` (unit vector
+  [x, z] to the nearest street, or null).
 - `junctions[]`: nodes with all adjoining road ends and their directions.
 - `qa.low_clearance_crossings`: grade-separated crossings with < 4.5 m clearance.
 
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 41 tests, synthetic networks
+python3 -m pytest                                   # 81 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 10 writer tests: mapping, validation, save/load, connections
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 44 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
 ```
 
 The real extract is the OSM test file `core/files/north-bayreuth.osm.gz` from the
@@ -471,13 +479,62 @@ from the `.scs` archives with `osm2ets-writer extract --game … --paths list.tx
   `OSM2ETS_NO_FUEL=1` / `OSM2ETS_NO_FUEL_BALT=1` disable them.
 - Node roles and directions come from the `.ppd` files, variants/looks from the `.pmd`.
 
+## Buildings (SCS models)
+
+ETS2 has no free-form buildings; osm2ets puts a ready-made SCS model (map item "Model") on every
+OSM building (`building=*`) up to 300 m next to core and ramps of the level (`buildings.near_m`).
+For each building the Python part writes to the intermediate format (`buildings[]`):
+
+- the smallest enclosing rectangle (centre, length, width, direction of the long side),
+- the kind `kind`: house, apartments, garage, shed, industrial, commercial, retail, farm, church,
+  silo – from `building=*`; for `building=yes` (most buildings in Germany) from `shop`/`amenity`/
+  `office`, the surrounding `landuse` area and the footprint (e.g. in a residential area under
+  15 m² shed, under 40 m² or narrow and long (row of garages) garage, under 300 m² house,
+  otherwise apartments),
+- height from `height` or storeys from `building:levels` (rarely mapped),
+- the direction to the nearest street (`street`) – from all OSM streets within 60 m, including
+  those not in the map; motorways, driveways and parking aisles do not count.
+
+Left out: `building=roof`, `carport`, `construction`, `ruins`, `no` and others (`buildings.exclude`),
+`building:part`, and a building whose centre lies inside a larger one (mapped twice).
+
+For each building the writer picks from the catalogue `writer/Osm2Ets.Writer/buildings.jsonc` the
+model of its kind (otherwise of a related kind) whose footprint fits best – scaled by at most ±15 %
+per axis, height included. German models come first, then Austria, Switzerland, without country,
+Benelux; a different kind weighs more than a different country. Among almost equally good models
+the choice is spread by OSM ID. Long halls and terraces are assembled from up to 8 identical models
+along the long side. The long axis follows the OSM rectangle, the front faces the street. Height:
+lowest terrain point under the building; on slopes the model is raised as far as its plinth
+reaches. Left out are buildings without a fitting model, closer than 2 m to a carriageway (20 m
+where the carriageway lies more than 2 m above or below the terrain – embankment), at prefabs, and
+on terrain where the uphill side would be buried more than 3 m. `--buildings <file>` uses another
+catalogue, `OSM2ETS_NO_BUILDINGS=1` turns buildings off.
+
+Catalogue: `scripts/building_catalog.py <extracted>/def/world <extracted> > writer/Osm2Ets.Writer/buildings.jsonc`
+reads the model definitions (`/def/world/model*.sii`) and the bounding boxes of the `.pmg` files from
+a folder extracted with `osm2ets-writer extract`. The repository only contains tokens, kind, country
+and dimensions, no game files. Only base-game countries (de, at, ch, be/lux, nl, uk, cz) and
+base-game models without country (American ones, shared with ATS, only as halls, silos and tanks);
+DLC models, sprites, ruins, signs, landmarks, corner houses and the like are left out.
+
+Limits:
+- For small garages and sheds (typically 6 × 3 m) and small houses the base game has hardly any
+  models within ±15 % – they are missing (258 of 1116 in the test area).
+- Which local axis is the front of an SCS model is unverified (catalogue: `front`, `"-z"` assumed;
+  `"+z"` turns all buildings around).
+- Look/variant: `default` (the `.pmd` files are not evaluated) – unverified whether every model has
+  these names.
+- Shapes (L, U, courtyard), roof shape, colour and material from OSM are not reproduced; some SCS
+  models are clearly taller than village houses (e.g. `village_close_03_de`, 16.8 m).
+
 ## Roadmap
 
 1. Close remaining terrain gaps (gores, prefab edges), cut slopes next to lowered roads.
 2. Remaining junctions: Y prefabs, roundabouts; level crossings (e.g. `ger rail1 x r1 y v01`,
    `ger rail2 x road1 narrow 01`) and switches, overhead wires, sidings.
 3. 3-lane interchanges, left-hand ramps, motorway interchanges.
-4. Bridge models, terrain material/vegetation from OSM land use, higher-resolution DGM1.
+4. Bridge models, terrain material/vegetation from OSM land use, higher-resolution DGM1;
+   buildings: garages/sheds, looks from the `.pmd` files, check the front side.
 5. Larger areas: measure run time and memory for a federal state or all of Germany.
 6. Levels that build on each other: download L1, add L2 etc. for a denser network. For that,
    L(n+1) must take over the roads of L(n) unchanged (same UIDs, heights, prefabs) and only
