@@ -389,7 +389,7 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 81 Tests, synthetische Netze
+python3 -m pytest                                   # 83 Tests, synthetische Netze
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
 dotnet run --project writer/Osm2Ets.Writer.Tests    # 44 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
 ```
@@ -506,10 +506,11 @@ Nicht übernommen: `building=roof`, `carport`, `construction`, `ruins`, `no` u. 
 `building:part` und Gebäude, deren Mitte in einem größeren liegt (doppelt erfasst).
 
 Der Writer wählt aus dem Katalog `writer/Osm2Ets.Writer/buildings.jsonc` je Gebäude das Modell
-seiner Art (sonst einer verwandten), dessen Grundfläche am besten passt – je Achse höchstens ±15 %
-skaliert, auch in der Höhe. Deutsche Modelle haben Vorrang, danach Österreich, Schweiz, ohne Land,
-Benelux; eine andere Art wiegt schwerer als ein anderes Land. Unter fast gleich guten Modellen wird
-nach OSM-ID gestreut. Lange Hallen und Reihenhäuser werden aus bis zu 8 gleichen Modellen längs
+seiner Art (sonst einer verwandten) samt Variante, dessen Grundfläche am besten passt – je Achse
+höchstens ±15 % skaliert, auch in der Höhe. Deutsche Modelle haben Vorrang, danach Österreich, Schweiz,
+ohne Land, Benelux; eine andere Art wiegt schwerer als ein anderes Land. Unter fast gleich guten
+Modellen wird nach OSM-ID gestreut (erst das Modell, dann die Variante), ebenso beim Look (Farbe,
+Material) – alle Stücke eines Gebäudes bekommen denselben. Lange Hallen und Reihenhäuser werden aus bis zu 8 gleichen Modellen längs
 zusammengesetzt. Die Längsachse folgt dem OSM-Rechteck, die Vorderseite zeigt zur Straße. Höhe:
 tiefster Geländepunkt unter dem Gebäude; am Hang wird das Modell angehoben, soweit sein Sockel
 reicht. Weggelassen werden Gebäude ohne passendes Modell, näher als 2 m an einer Fahrbahn (20 m, wo
@@ -517,22 +518,26 @@ die Fahrbahn mehr als 2 m über oder unter dem Gelände liegt – Böschung), an
 in dem die Bergseite mehr als 3 m stecken würde. `--buildings <Datei>` nimmt einen anderen Katalog,
 `OSM2ETS_NO_BUILDINGS=1` schaltet die Gebäude ab.
 
-Katalog: `scripts/building_catalog.py <entpackt>/def/world <entpackt> > writer/Osm2Ets.Writer/buildings.jsonc`
-liest die Modelldefinitionen (`/def/world/model*.sii`) und die Bounding-Boxen der `.pmg`-Dateien aus
-einem mit `osm2ets-writer extract` entpackten Ordner. Im Repository stehen nur Kürzel, Art, Land und
-Maße, keine Spieldateien. Nur Grundspiel-Länder (de, at, ch, be/lux, nl, uk, cz) und Grundspielmodelle
-ohne Land (amerikanische, mit ATS geteilte nur als Hallen, Silos und Tanks); DLC-Modelle, Sprites,
-Ruinen, Schilder, Wahrzeichen, Eckhäuser u. Ä. bleiben weg.
+Katalog:
+`scripts/building_catalog.py <entpackt>/def/world <entpackt-pmg> [<entpackt-pmd>] > writer/Osm2Ets.Writer/buildings.jsonc`
+liest aus mit `osm2ets-writer extract` entpackten Ordnern die Modelldefinitionen (`/def/world/model*.sii`),
+die Geometrie (`.pmg`: Bounding-Box je Teil) und die Modellbeschreibung (`.pmd`: Looks, Varianten und
+welche Teile je Variante sichtbar sind). Je Modell und Variante entsteht ein Eintrag mit der Box der
+sichtbaren Teile – Varianten unterscheiden sich oft deutlich (Anbauten, Stockwerke). Modelle ohne
+`.pmd` bleiben weg, ebenso Varianten für Reihen, Ecken und Hänge (`left`, `corner`, `row`, `connect`,
+`slope` …), leere und solche, die nicht bis zum Boden reichen, und Looks für andere Gegenden (`fr`,
+`south`). Im Repository stehen nur Kürzel, Namen von Variante und Looks, Art, Land und Maße, keine
+Spieldateien. Nur Grundspiel-Länder (de, at, ch, be/lux, nl, uk, cz) und Grundspielmodelle ohne Land
+(amerikanische, mit ATS geteilte nur als Hallen, Silos und Tanks); DLC-Modelle, Sprites, Ruinen,
+Schilder, Wahrzeichen, Leuchttürme, Eckhäuser u. Ä. bleiben weg.
 
 Grenzen:
 - Für kleine Garagen und Schuppen (typisch 6 × 3 m) und kleine Häuser hat das Grundspiel kaum Modelle
-  in ±15 % – sie fehlen (im Testgebiet 258 von 1116).
+  in ±15 % – sie fehlen (im Testgebiet 227 von 1116).
 - Welche lokale Achse die Vorderseite eines SCS-Modells ist, ist ungeprüft (Katalog: `front`, `"-z"`
   angenommen; `"+z"` dreht alle Gebäude um).
-- Look/Variante: `default` (die `.pmd`-Dateien sind nicht ausgewertet) – ungeprüft, ob jedes Modell
-  diese Namen hat.
 - Formen (L-, U-Form, Innenhof), Dachform, Farbe und Material aus OSM werden nicht nachgebildet; manche
-  SCS-Modelle sind deutlich höher als Häuser im Dorf (z. B. `village_close_03_de` mit 16,8 m).
+  SCS-Modelle sind deutlich höher als Häuser im Dorf (z. B. `village_close_03_de` mit 15,5 m).
 
 ## Nächste Ausbaustufen
 
@@ -541,7 +546,7 @@ Grenzen:
    `ger rail2 x road1 narrow 01`) und Weichen, Oberleitungen, Anschlussgleise.
 3. 3-spurige Anschlussstellen, Rampen links, Autobahnkreuze.
 4. Brückenmodelle, Geländematerial/Bewuchs aus OSM-Landnutzung, höher aufgelöstes DGM1;
-   Gebäude: Garagen/Schuppen, Looks aus den `.pmd`, Vorderseite prüfen.
+   Gebäude: Garagen/Schuppen, Vorderseite prüfen.
 5. Größere Gebiete: Laufzeit und Speicher für ein Bundesland oder ganz Deutschland messen.
 6. Stufen, die aufeinander aufbauen: L1 herunterladen, für ein dichteres Netz L2 usw. dazupacken.
    Dafür muss L(n+1) die Straßen von L(n) unverändert übernehmen (gleiche UIDs, Höhen, Prefabs) und

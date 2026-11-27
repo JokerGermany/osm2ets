@@ -17,10 +17,15 @@ public sealed class BuildingCatalog
         var cat = JsonSerializer.Deserialize<BuildingCatalog>(File.ReadAllText(path), IntermediateFile.JsonOptions)
                   ?? throw new InvalidDataException($"{path}: leer");
         if (cat.Front is not ("-z" or "+z")) throw new InvalidDataException($"{path}: front muss \"-z\" oder \"+z\" sein");
+        var seen = new HashSet<(string, string)>();
         foreach (var m in cat.Models)
         {
-            if (!TruckLib.Token.IsValidToken(m.Token) || m.Min.Length != 3 || m.Max.Length != 3 || m.SizeX <= 0 || m.SizeY <= 0 || m.SizeZ <= 0)
-                throw new InvalidDataException($"{path}: Modell '{m.Token}' ungültig");
+            if (!TruckLib.Token.IsValidToken(m.Token) || !TruckLib.Token.IsValidToken(m.Variant)
+                || !m.Looks.All(TruckLib.Token.IsValidToken) || !TruckLib.Token.IsValidToken(m.Look)
+                || m.Min.Length != 3 || m.Max.Length != 3 || m.SizeX <= 0 || m.SizeY <= 0 || m.SizeZ <= 0)
+                throw new InvalidDataException($"{path}: Modell '{m.Token}' (Variante '{m.Variant}') ungültig");
+            if (!seen.Add((m.Token, m.Variant)))
+                throw new InvalidDataException($"{path}: Modell '{m.Token}' Variante '{m.Variant}' doppelt");
         }
         return cat;
     }
@@ -34,8 +39,11 @@ public sealed class BuildingModel
     public float[] Min { get; set; } = [0, 0, 0];
     public float[] Max { get; set; } = [0, 0, 0];
     public string Model { get; set; } = "";
-    public string Look { get; set; } = "default";
+    /// <summary>Variante (aus der .pmd); Min/Max gelten für die in ihr sichtbaren Teile.</summary>
     public string Variant { get; set; } = "default";
+    /// <summary>Looks des Modells (aus der .pmd); leer: <see cref="Look"/>.</summary>
+    public List<string> Looks { get; set; } = [];
+    public string Look { get; set; } = "default";
     public float SizeX => Max[0] - Min[0];
     public float SizeY => Max[1] - Min[1];
     public float SizeZ => Max[2] - Min[2];
@@ -46,8 +54,8 @@ public sealed class BuildingModel
 
 /// <summary>
 /// Gebäude aus OSM als SCS-Modelle (Model-Items). Je Gebäude das Modell seiner Art (sonst einer
-/// verwandten), dessen Grundfläche am besten passt: je Achse höchstens ±15 % skaliert, deutsche Modelle
-/// bevorzugt, unter gleich guten Modellen nach OSM-ID gestreut. Lange Hallen und Reihenhäuser werden aus
+/// verwandten) samt Variante, dessen Grundfläche am besten passt: je Achse höchstens ±15 % skaliert, deutsche
+/// Modelle bevorzugt, unter gleich guten Modellen und bei Variante und Look nach OSM-ID gestreut. Lange Hallen und Reihenhäuser werden aus
 /// mehreren gleichen Modellen längs zusammengesetzt. Die Längsachse folgt dem OSM-Rechteck, die Vorderseite
 /// (Katalog: front) zeigt zur nächsten Straße (Zwischenformat: street; sonst die nächste Fahrbahn der Karte).
 /// Höhe: tiefster Geländepunkt unter dem Gebäude, am Hang angehoben, soweit der Sockel reicht.
@@ -110,11 +118,17 @@ internal static class OsmBuildings
         }
         if (all.Count == 0) return null;
         var top = all.MinBy(c => c.Cost)!;
-        // zur Abwechslung fast gleich gute Modelle – aber keins aus einem weniger bevorzugten Land
+        // zur Abwechslung fast gleich gute Modelle – aber keins aus einem weniger bevorzugten Land; erst das
+        // Modell, dann die Variante, damit Modelle mit vielen Varianten nicht öfter drankommen
         var good = all.Where(c => c.Cost <= top.Cost + VarietyCost && CountryCost(c.Model.Country) <= CountryCost(top.Model.Country))
-                      .OrderBy(c => c.Model.Token, StringComparer.Ordinal).ToList();
-        return good[(int)(StableHash(seed) % (uint)good.Count)];
+                      .GroupBy(c => c.Model.Token).OrderBy(g => g.Key, StringComparer.Ordinal).ToList();
+        var pick = good[(int)(StableHash(seed) % (uint)good.Count)].OrderBy(c => c.Model.Variant, StringComparer.Ordinal).ToList();
+        return pick[(int)(StableHash(seed + "/variant") % (uint)pick.Count)];
     }
+
+    /// <summary>Look für ein Gebäude: nach OSM-ID gestreut, für alle Stücke eines Gebäudes gleich.</summary>
+    public static string LookFor(BuildingModel m, string seed) =>
+        m.Looks.Count == 0 ? m.Look : m.Looks[(int)(StableHash(seed + "/look") % (uint)m.Looks.Count)];
 
     static bool In(float s) => s >= 1 / MaxScale - 1e-4f && s <= MaxScale + 1e-4f;
 
@@ -252,10 +266,11 @@ internal static class OsmBuildings
             if (hmax - hmin - lift > MaxBuried) { steep++; continue; }
             var cLocal = new Vector3((m.Min[0] + m.Max[0]) / 2 * sx, 0, (m.Min[2] + m.Max[2]) / 2 * sz);
             var off = Vector3.Transform(cLocal, rot);
+            var look = LookFor(m, b.Osm);
             foreach (var (tc, _) in tiles)
             {
                 var pos = new Vector3(tc.X - off.X, hmin + lift - 0.1f, tc.Y - off.Z);
-                var item = Model.Add(map, pos, m.Token, m.Variant, m.Look);
+                var item = Model.Add(map, pos, m.Token, m.Variant, look);
                 item.Node.Rotation = rot;
                 item.Scale = scale;
                 item.ViewDistance = (ushort)(b.Length > 25 || m.SizeY * ch.ScaleY > 15 ? 900 : 600);

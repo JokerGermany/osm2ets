@@ -386,7 +386,7 @@ This is an approximation from OSM tags, not a survey.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 81 tests, synthetic networks
+python3 -m pytest                                   # 83 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
 dotnet run --project writer/Osm2Ets.Writer.Tests    # 44 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
 ```
@@ -499,10 +499,11 @@ Left out: `building=roof`, `carport`, `construction`, `ruins`, `no` and others (
 `building:part`, and a building whose centre lies inside a larger one (mapped twice).
 
 For each building the writer picks from the catalogue `writer/Osm2Ets.Writer/buildings.jsonc` the
-model of its kind (otherwise of a related kind) whose footprint fits best – scaled by at most ±15 %
-per axis, height included. German models come first, then Austria, Switzerland, without country,
-Benelux; a different kind weighs more than a different country. Among almost equally good models
-the choice is spread by OSM ID. Long halls and terraces are assembled from up to 8 identical models
+model of its kind (otherwise of a related kind) and variant whose footprint fits best – scaled by at
+most ±15 % per axis, height included. German models come first, then Austria, Switzerland, without
+country, Benelux; a different kind weighs more than a different country. Among almost equally good
+models the choice is spread by OSM ID (first the model, then the variant), and so is the look
+(colour, material) – all pieces of one building get the same. Long halls and terraces are assembled from up to 8 identical models
 along the long side. The long axis follows the OSM rectangle, the front faces the street. Height:
 lowest terrain point under the building; on slopes the model is raised as far as its plinth
 reaches. Left out are buildings without a fitting model, closer than 2 m to a carriageway (20 m
@@ -510,22 +511,27 @@ where the carriageway lies more than 2 m above or below the terrain – embankme
 on terrain where the uphill side would be buried more than 3 m. `--buildings <file>` uses another
 catalogue, `OSM2ETS_NO_BUILDINGS=1` turns buildings off.
 
-Catalogue: `scripts/building_catalog.py <extracted>/def/world <extracted> > writer/Osm2Ets.Writer/buildings.jsonc`
-reads the model definitions (`/def/world/model*.sii`) and the bounding boxes of the `.pmg` files from
-a folder extracted with `osm2ets-writer extract`. The repository only contains tokens, kind, country
-and dimensions, no game files. Only base-game countries (de, at, ch, be/lux, nl, uk, cz) and
-base-game models without country (American ones, shared with ATS, only as halls, silos and tanks);
-DLC models, sprites, ruins, signs, landmarks, corner houses and the like are left out.
+Catalogue:
+`scripts/building_catalog.py <extracted>/def/world <extracted-pmg> [<extracted-pmd>] > writer/Osm2Ets.Writer/buildings.jsonc`
+reads from folders extracted with `osm2ets-writer extract` the model definitions
+(`/def/world/model*.sii`), the geometry (`.pmg`: bounding box per part) and the model description
+(`.pmd`: looks, variants and which parts each variant shows). Each model and variant becomes one
+entry with the box of its visible parts – variants often differ a lot (annexes, storeys). Models
+without `.pmd` are left out, as are variants for rows, corners and slopes (`left`, `corner`, `row`,
+`connect`, `slope` …), empty ones and ones that do not reach the ground, and looks for other
+regions (`fr`, `south`). The repository only contains tokens, names of variants and looks, kind,
+country and dimensions, no game files. Only base-game countries (de, at, ch, be/lux, nl, uk, cz)
+and base-game models without country (American ones, shared with ATS, only as halls, silos and
+tanks); DLC models, sprites, ruins, signs, landmarks, lighthouses, corner houses and the like are
+left out.
 
 Limits:
 - For small garages and sheds (typically 6 × 3 m) and small houses the base game has hardly any
-  models within ±15 % – they are missing (258 of 1116 in the test area).
+  models within ±15 % – they are missing (227 of 1116 in the test area).
 - Which local axis is the front of an SCS model is unverified (catalogue: `front`, `"-z"` assumed;
   `"+z"` turns all buildings around).
-- Look/variant: `default` (the `.pmd` files are not evaluated) – unverified whether every model has
-  these names.
 - Shapes (L, U, courtyard), roof shape, colour and material from OSM are not reproduced; some SCS
-  models are clearly taller than village houses (e.g. `village_close_03_de`, 16.8 m).
+  models are clearly taller than village houses (e.g. `village_close_03_de`, 15.5 m).
 
 ## Roadmap
 
@@ -534,7 +540,7 @@ Limits:
    `ger rail2 x road1 narrow 01`) and switches, overhead wires, sidings.
 3. 3-lane interchanges, left-hand ramps, motorway interchanges.
 4. Bridge models, terrain material/vegetation from OSM land use, higher-resolution DGM1;
-   buildings: garages/sheds, looks from the `.pmd` files, check the front side.
+   buildings: garages/sheds, check the front side.
 5. Larger areas: measure run time and memory for a federal state or all of Germany.
 6. Levels that build on each other: download L1, add L2 etc. for a denser network. For that,
    L(n+1) must take over the roads of L(n) unchanged (same UIDs, heights, prefabs) and only

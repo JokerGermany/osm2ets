@@ -199,7 +199,8 @@ static void BuildingCatalogShipped()
     var kinds = new HashSet<string> { "house", "apartments", "garage", "shed", "industrial", "commercial", "retail", "farm", "church", "silo" };
     Check(cat.Models.Count > 100, $"nur {cat.Models.Count} Modelle");
     Check(cat.Models.All(m => kinds.Contains(m.Kind)), "unbekannte Art");
-    Check(cat.Models.Select(m => m.Token).Distinct().Count() == cat.Models.Count, "doppelte Kürzel");
+    Check(cat.Models.Select(m => (m.Token, m.Variant)).Distinct().Count() == cat.Models.Count, "doppelte Modell/Variante");
+    Check(cat.Models.All(m => m.Looks.Count > 0 && m.Variant != ""), "Modell ohne Looks oder Variante");
     foreach (var k in new[] { "house", "apartments", "industrial", "shed" })
         Check(cat.Models.Any(m => m.Kind == k && m.Country == "de"), $"kein deutsches Modell für {k}");
     // gewöhnliches Einfamilienhaus 12 × 9 m: deutsches Modell, ein Stück, je Achse höchstens ±15 %
@@ -207,10 +208,13 @@ static void BuildingCatalogShipped()
     Check(ch is not null && ch.Model.Country == "de" && ch.Tiles == 1, $"Haus: {ch?.Model.Token} ({ch?.Model.Country})");
     foreach (var f in new[] { ch!.ScaleLong, ch.ScaleShort, ch.ScaleY })
         Check(f >= 1 / OsmBuildings.MaxScale - 1e-3f && f <= OsmBuildings.MaxScale + 1e-3f, $"Skalierung {f}");
-    // gleiche Wahl für dieselbe OSM-ID, Streuung über mehrere IDs
+    // gleiche Wahl für dieselbe OSM-ID, Streuung über mehrere IDs (Modell, Variante, Look)
     Check(OsmBuildings.Choose(cat, "house", 12, 9, null, "w1")!.Model == ch.Model, "Wahl nicht stabil");
-    var picks = Enumerable.Range(0, 40).Select(i => OsmBuildings.Choose(cat, "house", 12, 9, null, $"w{i}")!.Model.Token).Distinct().Count();
-    Check(picks > 1, "keine Abwechslung");
+    var picks = Enumerable.Range(0, 40).Select(i => OsmBuildings.Choose(cat, "house", 12, 9, null, $"w{i}")!.Model).ToList();
+    Check(picks.Select(p => p.Token).Distinct().Count() > 1, "keine Abwechslung bei den Modellen");
+    Check(picks.Select(p => (p.Token, p.Variant)).Distinct().Count() > picks.Select(p => p.Token).Distinct().Count(), "keine Abwechslung bei den Varianten");
+    var looks = Enumerable.Range(0, 40).Select(i => OsmBuildings.LookFor(picks[i], $"w{i}")).ToList();
+    Check(looks.Select((l, i) => picks[i].Looks.Contains(l)).All(x => x) && looks.Distinct().Count() > 1, "Looks nicht aus dem Modell oder ohne Abwechslung");
     // Winzige Hütte (2 × 1,5 m): kein Modell passt
     Check(OsmBuildings.Choose(cat, "shed", 2, 1.5, null, "w2") is null, "Hütte 2 × 1,5 m bekam ein Modell");
 }
@@ -229,7 +233,8 @@ static void BuildingPlacedFacingStreet()
     var models = map.MapItems.Values.OfType<Model>().ToList();
     Check(models.Count == 1, $"{models.Count} Modelle statt 1");
     var m = models[0];
-    var bm = cat.Models.Single(x => x.Token == m.Name.ToString());
+    var bm = cat.Models.Single(x => x.Token == m.Name.ToString() && x.Variant == m.Variant.ToString());
+    Check(bm.Looks.Contains(m.Look.ToString()), $"Look {m.Look} nicht im Modell");
     var c = ModelCenter(m, bm);
     Check(Vector2.Distance(c, new Vector2(1040, 1800)) < 0.05f, $"Mitte {c}");
     var front = Vector3.Transform(cat.Front == "-z" ? -Vector3.UnitZ : Vector3.UnitZ, m.Node.Rotation);
@@ -253,7 +258,8 @@ static void LongHallTiled()
     var (map, _) = MapWriter.Build(input, cfg, buildings: cat);
     var models = map.MapItems.Values.OfType<Model>().ToList();
     Check(models.Count == ch.Tiles, $"{models.Count} Modelle statt {ch.Tiles}");
-    Check(models.All(x => x.Name.ToString() == ch.Model.Token && x.Node.Rotation == models[0].Node.Rotation), "verschiedene Modelle/Drehungen");
+    Check(models.All(x => x.Name.ToString() == ch.Model.Token && x.Variant.ToString() == ch.Model.Variant
+                          && x.Look == models[0].Look && x.Node.Rotation == models[0].Node.Rotation), "verschiedene Modelle/Varianten/Looks/Drehungen");
     var cs = models.Select(x => ModelCenter(x, ch.Model)).OrderBy(v => v.Y).ToList();
     Check(cs.All(v => MathF.Abs(v.X - 1200) < 0.05f), "Mitten nicht auf der Längsachse");
     Check(MathF.Abs(cs[^1].Y - cs[0].Y - (150 - 150f / ch.Tiles)) < 0.1f, "Abstand der äußeren Stücke");
