@@ -680,6 +680,13 @@ public static class MapWriter
                                $"({fr.Rows} Reihen, {fr.Items} Kurven-Items); Baumreihen: {fr.TreeRows} ({fr.TreeRowKm:0.0} km); Einzelbäume: {fr.Trees} von {input.Trees.Count} gesetzt " +
                                $"({fr.TreesShifted} aus dem Weg verschoben, höchstens {Forests.MaxShift:0} m; {fr.TreesBlocked} ohne Platz oder ohne Gelände)" +
                                (fr.TreesByModel is { Count: > 0 } bm ? ": " + string.Join(", ", bm.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) : ""));
+        // Geländematerial zuletzt: alle Straßen-, Füll- und Prefab-Gelände stehen
+        if (Landcover.Enabled)
+        {
+            var lr = Landcover.Apply(map, input);
+            warnings.Insert(0, $"Info: Geländematerial: Gras auf {lr.Sides} Geländeseiten und {lr.PrefabSides} Prefab-Geländen; {lr.Quads} Quads nach OSM-Bodenbedeckung " +
+                               $"({input.Landcover.Count} Flächen)" + (lr.ByKind.Count > 0 ? ": " + string.Join(", ", lr.ByKind.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) : ""));
+        }
         if (buildingResult is null && OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
             buildingResult = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),
                 input.TerrainGrid is { Nx: > 1, Nz: > 1 } tgb ? (x, z) => tgb.HeightAt(x, z) : null);

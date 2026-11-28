@@ -383,6 +383,9 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     from .forests import forest_entries
     greenery, forest_stats = forest_entries(input_path, profile, projector, roads)
     stats["forests"] = forest_stats if (profile.forests or {}).get("enabled") else None
+    from .landcover import landcover_entries
+    landcover, landcover_stats = landcover_entries(input_path, profile, projector)
+    stats["landcover"] = landcover_stats if (profile.landcover or {}).get("enabled") else None
     stats["elevation"] = elevation_stats
     stats["elevation"]["implicit_bridges"] = implicit
     stats["industry_access"] = industry_stats
@@ -434,6 +437,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         "trees": greenery["trees"],
         "tree_rows": greenery["tree_rows"],
         "forest_near_m": float((profile.forests or {}).get("near_m", 300.0)),
+        "landcover": landcover,
         "stats": stats,
         "qa": {"min_clearance_m": MIN_CLEARANCE_M, "low_clearance_crossings": low[:200],
                "dropped_short_pieces": dropped_info[:200]},

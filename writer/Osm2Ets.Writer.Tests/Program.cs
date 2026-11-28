@@ -57,6 +57,7 @@ var tests = new List<(string Name, Action Body)>
     ("Wald: Straße durch den Wald – Wände beiderseits, Fahrbahn frei", ForestWallsAlongRoadThroughForest),
     ("Baumreihe: eine Reihe Bäume, an der Fahrbahn unterbrochen", TreeRowAsCurve),
     ("Einzelbaum: Modell nach Gattung/Blattwerk/Höhe, skaliert; aus der Fahrbahn geschoben", SingleTrees),
+    ("Geländematerial: überall Gras, Quads in OSM-Flächen nach Art (kleinere Fläche gewinnt)", LandcoverPaint),
 };
 
 int failed = 0;
@@ -384,6 +385,42 @@ static void SingleTrees()
     float edge = MathF.Abs(oak.Node.Position.X - 1000) - half;
     Check(edge >= tm.Crown * oak.Scale.X - Forests.MaxOverhang - 0.01f, $"Krone ragt zu weit: {tm.Name} {edge:0.0} m");
     Check(Vector2.Distance(new Vector2(oak.Node.Position.X, oak.Node.Position.Z), new Vector2(1000 + half + 4, 1700)) <= Forests.MaxShift + 0.01f, "zu weit verschoben");
+}
+
+static void LandcoverPaint()
+{
+    // Geländestreifen x 0…100 bei z = 0, links (Norden, −z) 40 m, rechts 40 m, 10 × 4 Quads je Seite.
+    // Acker x 0…60 über die ganze Breite, darin eine Wiese x 20…40, z −20…0 (kleiner, gewinnt).
+    var map = new Map();
+    var t = Terrain.Add(map, new Vector3(0, 0, 0), new Vector3(100, 0, 0), "0", 40, 40);
+    foreach (var (side, sign) in new[] { (t.Left.Terrain, -1f), (t.Right.Terrain, 1f) })
+    {
+        var q = side.QuadData;
+        q.Cols = 10; q.Rows = 4;
+        q.Quads = Enumerable.Range(0, 40).Select(_ => new TerrainQuad()).ToList();
+        q.Offsets.Clear();
+        for (int i = 0; i <= 10; i++)
+            for (int j = 0; j <= 4; j++)
+                q.Offsets.Add(new VertexData { X = (ushort)i, Y = (ushort)j, Data = new Vector3(10 * i, 0, sign * 10 * j) });
+    }
+    var input = new IntermediateFile
+    {
+        Landcover =
+        [
+            new LandcoverEntry { Osm = "w1", Kind = "farmland", Outer = [[0, -50], [60, -50], [60, 50], [0, 50]] },
+            new LandcoverEntry { Osm = "w2", Kind = "meadow", Outer = [[20, -20], [40, -20], [40, 0], [20, 0]] },
+        ],
+    };
+    var r = Landcover.Apply(map, input);
+    var L = t.Left.Terrain.QuadData; var R = t.Right.Terrain.QuadData;
+    Check(L.BrushMaterials[0].Name.ToString() == Landcover.Default && R.BrushMaterials[0].Name.ToString() == Landcover.Default, "Grundmaterial");
+    string Mat(TerrainQuadData q, int i, int j) => q.BrushMaterials[(int)q.Quads[i * q.Rows + j].MainMaterial].Name.ToString();
+    // links: Quad (Spalte 2, Reihe 0) liegt bei x 20…30, z −10…0 → Wiese; (Spalte 2, Reihe 3) z −40…−30 → Acker
+    Check(Mat(L, 2, 0) == Landcover.Materials["meadow"] && Mat(L, 2, 1) == Landcover.Materials["meadow"], "Wiese links");
+    Check(Mat(L, 2, 3) == Landcover.Materials["farmland"] && Mat(L, 0, 0) == Landcover.Materials["farmland"], "Acker links");
+    Check(Mat(L, 7, 0) == Landcover.Default && Mat(R, 9, 3) == Landcover.Default, "außerhalb nicht Gras");
+    Check(Mat(R, 2, 0) == Landcover.Materials["farmland"], "rechts Acker, nicht Wiese");
+    Check(r.Quads == 6 * 4 * 2 && r.ByKind["meadow"] == 4 && r.ByKind["farmland"] == 44, $"{r.Quads} Quads, Wiese {r.ByKind.GetValueOrDefault("meadow")}");
 }
 
 static void CountryOnNetworkNodesOnly()

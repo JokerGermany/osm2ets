@@ -97,6 +97,10 @@ def report_text(model: dict) -> str:
         leaf = ", ".join(f"{k} {v}" for k, v in fo["by_leaf"].items())
         lines.append(f"Wälder:        {fo['kept']} Flächen nahe der Strecke, {fo['area_km2']} km² (von {fo['read']} "
                      f"gelesen): {leaf}; {fo['tree_rows']} Baumreihen, {fo['trees']} Einzelbäume")
+    lc = s.get("landcover")
+    if lc:
+        kinds = ", ".join(f"{k} {v} ({lc['area_km2'].get(k, 0)} km²)" for k, v in lc["by_kind"].items())
+        lines.append(f"Bodenbedeckung: {lc['kept']} Flächen (von {lc['read']} gelesen): {kinds}")
     rail = s.get("railway")
     if rail:
         km = s["km_game_by_highway"].get("railway", 0.0)

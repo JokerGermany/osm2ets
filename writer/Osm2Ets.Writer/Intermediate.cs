@@ -26,6 +26,8 @@ public sealed class IntermediateFile
     public List<ForestEntry> Forests { get; set; } = [];
     public List<TreeRowEntry> TreeRows { get; set; } = [];
     public List<TreeEntry> Trees { get; set; } = [];
+    /// <summary>Bodenbedeckung fürs Geländematerial (Gras, Wiese, Acker, Heide, Gebüsch, offener Boden).</summary>
+    public List<LandcoverEntry> Landcover { get; set; } = [];
     /// <summary>Waldwände nur so weit (Spielmeter) neben den Straßen der Karte (Profil: forests.near_m).</summary>
     public double ForestNearM { get; set; } = 300;
 
@@ -227,4 +229,13 @@ public sealed class TreeEntry
     public double[] Pos { get; set; } = [0, 0];
     /// <summary>Höhe in Spielmetern (height=*), sonst null.</summary>
     public double? Height { get; set; }
+}
+
+/// <summary>Fläche der Bodenbedeckung (kind: lawn, meadow, farmland, heath, scrub, bare).</summary>
+public sealed class LandcoverEntry
+{
+    public string Osm { get; set; } = "";
+    public string Kind { get; set; } = "";
+    public List<double[]> Outer { get; set; } = [];
+    public List<List<double[]>> Inner { get; set; } = [];
 }

@@ -172,6 +172,14 @@ forests:
   simplify_m: 5
   min_area_m2: 500
 
+# 9. Bodenbedeckung fürs Geländematerial – ganze Karte. Das Gelände ist überall Gras; Flächen mit
+#    gepflegtem Gras (Rasen, Parks, Grünstreifen), Wiesen, Äckern, Heide, Gebüsch und offenem Boden
+#    bekommen eine passende Grasart bzw. Erde (landcover.py).
+landcover:
+  enabled: true
+  simplify_m: 3
+  min_area_m2: 100
+
 # 1. Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen: Ziele höchstens
 #    max_distance_m (Weg entlang der Straße) von einer Kreuzung bzw. Abfahrt des Netzes;
 #    erreichte Gebiete werden ganz aufgenommen. Auf Autobahnen/Kraftfahrstraßen selbst

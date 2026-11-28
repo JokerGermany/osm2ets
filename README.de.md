@@ -41,6 +41,7 @@ v1–v46 (siehe Commits).
 | Gebäude: OSM-`building=*` nahe der Strecke als SCS-Modelle (Grundspiel, deutsche bevorzugt) | umgesetzt, im Spiel noch nicht geprüft |
 | Wälder als Waldwände (Ränder bis 300 m neben der Strecke, Straßen durch Wald), Baumreihen | umgesetzt, im Spiel noch nicht geprüft |
 | Einzelbäume (`natural=tree`) als Baummodelle des Grundspiels | umgesetzt, im Spiel noch nicht geprüft |
+| Geländematerial: überall Gras, Grasarten/Erde nach OSM-Bodenbedeckung | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -391,9 +392,9 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 85 Tests, synthetische Netze
+python3 -m pytest                                   # 87 Tests, synthetische Netze
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 49 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 50 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
 ```
 
 Als echter Ausschnitt dient die OSM-Testdatei `core/files/north-bayreuth.osm.gz`
@@ -581,6 +582,28 @@ Einzelbäume ab.
 Grenzen: Ob die Bäume einer Kurve im Spiel auf dem Gelände stehen oder der Kurvenlinie folgen, ist
 ungeprüft. Wälder weiter als 300 m von der Strecke fehlen (keine Fern-Waldwände; die Fernwand-Modelle
 des Grundspiels sind flache, 19–29 m hohe Wände entlang der Kurvenlinie).
+
+## Geländematerial (Gras)
+
+Das ganze Gelände – Füllgelände, Straßengelände, Gelände der Prefabs – bekommt das Material „grass ger
+main“ (`terrain_mat.34`; vorher TruckLibs Vorgabe „dirt“); darauf wächst die deutsche Detailvegetation des
+Spiels (Grasbüschel, Blumen). Flächen der Bodenbedeckung aus OSM (`landcover[]`, ganze Datei, Umrisse auf
+3 m vereinfacht, unter 100 m² weggelassen – `landcover` im Profil) färben die Quads darin anders ein:
+
+| Art | OSM | Material |
+|---|---|---|
+| `lawn` | `landuse=grass/village_green/greenery/recreation_ground`, `landcover=grass`, `leisure=park/garden/golf_course`, `leisure=pitch` (Rasen/ohne `surface`) | „grass green main“ (82) |
+| `meadow` | `landuse=meadow/orchard`, `natural=grassland` | „grass flowers main“ (77) |
+| `farmland` | `landuse=farmland` | „grass yellowish main“ (86) – Feldtexturen gibt es nur in DLCs |
+| `heath` | `natural=heath` | „grass droughty main“ (80) |
+| `scrub` | `natural=scrub` | „dirty grass“ (24) |
+| `bare` | `landuse=quarry/landfill/construction/brownfield`, `natural=bare_rock/scree/sand` | „dirt“ (0) |
+
+Je Quad zählt seine Mitte; in Überschneidungen gilt die kleinere Fläche, schon bemalte Quads (Stein unter
+Brücken) bleiben. `OSM2ETS_NO_LANDCOVER=1` lässt alles beim alten Material. Ungeprüft: das Aussehen der
+gewählten Materialien und die Reihenfolge der Quads (Spalte für Spalte, je Spalte die Reihen nach außen –
+aus der SCS-Karte abgeleitet wie für das Steinmaterial unter Brücken). Die erste Reihe des Straßengeländes
+am Fahrbahnrand bleibt beim Grundmaterial.
 
 ## Nächste Ausbaustufen
 

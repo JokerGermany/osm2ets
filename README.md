@@ -41,6 +41,7 @@ v1–v46 (see commits).
 | Buildings: OSM `building=*` near the route as SCS models (base game, German models preferred) | implemented, not yet checked in game |
 | Forests as tree walls (edges up to 300 m from the route, roads through forests), tree rows | implemented, not yet checked in game |
 | Single trees (`natural=tree`) as base-game tree models | implemented, not yet checked in game |
+| Terrain material: grass everywhere, grass kinds/dirt by OSM land cover | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
@@ -388,9 +389,9 @@ This is an approximation from OSM tags, not a survey.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 85 tests, synthetic networks
+python3 -m pytest                                   # 87 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 49 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 50 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
 ```
 
 The real extract is the OSM test file `core/files/north-bayreuth.osm.gz` from the
@@ -572,6 +573,28 @@ instead of oak); if that is not enough it is dropped. `OSM2ETS_NO_FORESTS=1` tur
 Limits: whether the trees of a curve stand on the terrain in game or follow the curve line is
 unverified. Forests farther than 300 m from the route are missing (no far tree walls; the base-game far
 wall models are flat walls 19–29 m high along the curve line).
+
+## Terrain material (grass)
+
+All terrain – fill terrain, road terrain, prefab terrain – gets the material "grass ger main"
+(`terrain_mat.34`; before: TruckLib's default "dirt"); the game's German detail vegetation (grass tufts,
+flowers) grows on it. Land cover areas from OSM (`landcover[]`, whole file, outlines simplified to 3 m,
+under 100 m² dropped – `landcover` in the profile) paint the quads inside them differently:
+
+| Kind | OSM | Material |
+|---|---|---|
+| `lawn` | `landuse=grass/village_green/greenery/recreation_ground`, `landcover=grass`, `leisure=park/garden/golf_course`, `leisure=pitch` (grass/no `surface`) | "grass green main" (82) |
+| `meadow` | `landuse=meadow/orchard`, `natural=grassland` | "grass flowers main" (77) |
+| `farmland` | `landuse=farmland` | "grass yellowish main" (86) – field textures only exist in DLCs |
+| `heath` | `natural=heath` | "grass droughty main" (80) |
+| `scrub` | `natural=scrub` | "dirty grass" (24) |
+| `bare` | `landuse=quarry/landfill/construction/brownfield`, `natural=bare_rock/scree/sand` | "dirt" (0) |
+
+The centre of each quad counts; where areas overlap the smaller one wins, already painted quads (stone
+under bridges) stay. `OSM2ETS_NO_LANDCOVER=1` keeps the old material. Unverified: the look of the chosen
+materials and the quad order (column by column, rows outwards within a column – derived from the SCS map
+as for the stone under bridges). The first row of road terrain at the carriageway edge keeps the base
+material.
 
 ## Roadmap
 
