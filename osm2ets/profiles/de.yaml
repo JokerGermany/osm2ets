@@ -173,8 +173,9 @@ forests:
   min_area_m2: 500
 
 # 9. Bodenbedeckung fürs Geländematerial – ganze Karte. Das Gelände ist überall Gras; Flächen mit
-#    gepflegtem Gras (Rasen, Parks, Grünstreifen), Wiesen, Äckern, Heide, Gebüsch und offenem Boden
-#    bekommen eine passende Grasart bzw. Erde (landcover.py).
+#    gepflegtem Gras (Rasen, Parks, Grünstreifen), Wiesen, Äckern (Feldmaterial, an der Längsseite
+#    ausgerichtet, nach crop=*), Hofflächen, Obst- und Rebanlagen, Baumschulen, Gewächshausflächen,
+#    Heide, Gebüsch und offenem Boden bekommen ein passendes Material (landcover.py).
 landcover:
   enabled: true
   simplify_m: 3

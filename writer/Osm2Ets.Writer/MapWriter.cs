@@ -721,6 +721,10 @@ public static class MapWriter
             var lr = Landcover.Apply(map, input);
             warnings.Insert(0, $"Info: Geländematerial: Gras auf {lr.Sides} Geländeseiten und {lr.PrefabSides} Prefab-Geländen; {lr.Quads} Quads nach OSM-Bodenbedeckung " +
                                $"({input.Landcover.Count} Flächen)" + (lr.ByKind.Count > 0 ? ": " + string.Join(", ", lr.ByKind.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) : ""));
+            if (lr.Fields.Count > 0)
+                warnings.Insert(1, $"Info: Äcker: {lr.Fields.Values.Sum()} Flächen mit Feldmaterial (nah/mittel/fern {lr.FieldDistance[0]}/{lr.FieldDistance[1]}/{lr.FieldDistance[2]}): " +
+                                   string.Join(", ", lr.Fields.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) +
+                                   $"; {lr.Rotated} Quads mit gedrehtem Material (Reihen an der Längsseite)");
         }
         if (buildingResult is null && OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
             buildingResult = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),

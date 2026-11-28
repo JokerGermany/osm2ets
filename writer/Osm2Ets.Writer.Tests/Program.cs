@@ -392,7 +392,8 @@ static void SingleTrees()
 static void LandcoverPaint()
 {
     // Geländestreifen x 0…100 bei z = 0, links (Norden, −z) 40 m, rechts 40 m, 10 × 4 Quads je Seite.
-    // Acker x 0…60 über die ganze Breite, darin eine Wiese x 20…40, z −20…0 (kleiner, gewinnt).
+    // Acker (Mais, Längsseite 30°) x 0…60 über die ganze Breite, darin eine Wiese x 20…40, z −20…0 (kleiner,
+    // gewinnt); Baumschule (Reihen −90°) x 70…90, z 0…30.
     var map = new Map();
     var t = Terrain.Add(map, new Vector3(0, 0, 0), new Vector3(100, 0, 0), "0", 40, 40);
     foreach (var (side, sign) in new[] { (t.Left.Terrain, -1f), (t.Right.Terrain, 1f) })
@@ -409,20 +410,33 @@ static void LandcoverPaint()
     {
         Landcover =
         [
-            new LandcoverEntry { Osm = "w1", Kind = "farmland", Outer = [[0, -50], [60, -50], [60, 50], [0, 50]] },
+            new LandcoverEntry { Osm = "w1", Kind = "farmland", Outer = [[0, -50], [60, -50], [60, 50], [0, 50]], Crop = "maize", Angle = 30 },
             new LandcoverEntry { Osm = "w2", Kind = "meadow", Outer = [[20, -20], [40, -20], [40, 0], [20, 0]] },
+            new LandcoverEntry { Osm = "w3", Kind = "nursery", Outer = [[70, 0], [90, 0], [90, 30], [70, 30]], Angle = -90 },
         ],
     };
     var r = Landcover.Apply(map, input);
+    string corn = Landcover.FieldLooks.First(f => f.Name == "corn").Far;            // ohne Straßen: fern
     var L = t.Left.Terrain.QuadData; var R = t.Right.Terrain.QuadData;
     Check(L.BrushMaterials[0].Name.ToString() == Landcover.Default && R.BrushMaterials[0].Name.ToString() == Landcover.Default, "Grundmaterial");
     string Mat(TerrainQuadData q, int i, int j) => q.BrushMaterials[(int)q.Quads[i * q.Rows + j].MainMaterial].Name.ToString();
     // links: Quad (Spalte 2, Reihe 0) liegt bei x 20…30, z −10…0 → Wiese; (Spalte 2, Reihe 3) z −40…−30 → Acker
     Check(Mat(L, 2, 0) == Landcover.Materials["meadow"] && Mat(L, 2, 1) == Landcover.Materials["meadow"], "Wiese links");
-    Check(Mat(L, 2, 3) == Landcover.Materials["farmland"] && Mat(L, 0, 0) == Landcover.Materials["farmland"], "Acker links");
-    Check(Mat(L, 7, 0) == Landcover.Default && Mat(R, 9, 3) == Landcover.Default, "außerhalb nicht Gras");
-    Check(Mat(R, 2, 0) == Landcover.Materials["farmland"], "rechts Acker, nicht Wiese");
-    Check(r.Quads == 6 * 4 * 2 && r.ByKind["meadow"] == 4 && r.ByKind["farmland"] == 44, $"{r.Quads} Quads, Wiese {r.ByKind.GetValueOrDefault("meadow")}");
+    float Rot(TerrainQuadData q, int i, int j) => q.BrushMaterials[(int)q.Quads[i * q.Rows + j].MainMaterial].Rotation;
+    Check(Mat(L, 2, 3) == corn && Mat(L, 0, 0) == corn, $"Acker links: {Mat(L, 2, 3)}");
+    Check(Mat(L, 7, 0) == Landcover.Default && Mat(R, 9, 3) == Landcover.Default && Mat(R, 7, 3) == Landcover.Default, "außerhalb nicht Gras");
+    Check(Mat(R, 2, 0) == corn, "rechts Acker, nicht Wiese");
+    // Reihen an der Längsseite: Streifen läuft nach +x (0°) → Acker 30°, Baumschule −90° = 90°
+    Check(Rot(L, 2, 3) == 30 && Rot(R, 0, 0) == 30 && Rot(L, 2, 0) == 0, $"Drehung Acker {Rot(L, 2, 3)}, Wiese {Rot(L, 2, 0)}");
+    Check(Mat(R, 7, 0) == Landcover.Materials["nursery"] && Rot(R, 8, 2) == 90, $"Baumschule {Mat(R, 7, 0)} {Rot(R, 8, 2)}");
+    Check(Landcover.Rotation(30, 45) == 165 && Landcover.Rotation(100, -80) == 0 && Landcover.Rotation(52, 0) == 45, "Drehung: Rest auf 0…180°, 15°-Schritte");
+    Check(r.Quads == 6 * 4 * 2 + 6 && r.ByKind["meadow"] == 4 && r.ByKind["farmland"] == 44 && r.ByKind["nursery"] == 6,
+          $"{r.Quads} Quads, Wiese {r.ByKind.GetValueOrDefault("meadow")}");
+    Check(r.Fields.GetValueOrDefault("corn") == 1 && r.FieldDistance[2] == 1 && r.Rotated == 44 + 6, $"Feldbilder {string.Join(",", r.Fields)} gedreht {r.Rotated}");
+    // ohne crop: fest nach der OSM-Kennung gestreut, alle Feldbilder kommen vor
+    var looks = Enumerable.Range(0, 2000).Select(k => Landcover.LookFor($"w{k}", null).Name).GroupBy(x => x).ToDictionary(g => g.Key, g => g.Count());
+    Check(looks.Count == Landcover.FieldLooks.Length && Landcover.LookFor("w5", null) == Landcover.LookFor("w5", null), "Streuung: " + string.Join(",", looks));
+    Check(Landcover.LookFor("w9", "barley").Name.StartsWith("wheat") || Landcover.LookFor("w9", "barley").Name == "stubble", "Getreide");
 }
 
 static IEnumerable<(Vector3 C, string Mat, bool NoGrass)> TerrainQuads(Map map)

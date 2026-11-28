@@ -41,7 +41,7 @@ v1–v46 (see commits).
 | Buildings: OSM `building=*` near the route as SCS models (base game, German models preferred) | implemented, not yet checked in game |
 | Forests as tree walls (edges up to 300 m from the route, roads through forests), tree rows | implemented, not yet checked in game |
 | Single trees (`natural=tree`) as base-game tree models | implemented, not yet checked in game |
-| Terrain material: grass everywhere, grass kinds/dirt by OSM land cover | implemented, not yet checked in game |
+| Terrain material: grass everywhere, grass kinds/dirt/field materials by OSM land use and land cover | implemented, not yet checked in game |
 | Water areas (ponds, basins, lakes, pools, river areas): lowered bed, flat transparent water | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
@@ -385,7 +385,7 @@ This is an approximation from OSM tags, not a survey.
   x-z plane), `area`, `fill` (footprint / rectangle), `height`, `levels`, `street` (unit vector
   [x, z] to the nearest street, or null).
 - `forests[]`, `landcover[]`, `water[]`: areas with `osm`, `leaf` or `kind` and the rings `outer`/`inner`
-  [x, z]; `trees[]` (`pos`, `leaf`, `genus`, `height`) and `tree_rows[]` (`points`) – see the sections
+  [x, z] (land cover with rows also `angle`, fields `crop`); `trees[]` (`pos`, `leaf`, `genus`, `height`) and `tree_rows[]` (`points`) – see the sections
   on forests, terrain material and water.
 - `junctions[]`: nodes with all adjoining road ends and their directions.
 - `qa.low_clearance_crossings`: grade-separated crossings with < 4.5 m clearance.
@@ -588,15 +588,33 @@ under 100 m² dropped – `landcover` in the profile) paint the quads inside the
 | Kind | OSM | Material |
 |---|---|---|
 | `lawn` | `landuse=grass/village_green/greenery/recreation_ground`, `landcover=grass`, `leisure=park/garden/golf_course`, `leisure=pitch` (grass/no `surface`) | "grass green main" (82) |
-| `meadow` | `landuse=meadow/orchard`, `natural=grassland` | "grass flowers main" (77) |
-| `farmland` | `landuse=farmland` | "grass yellowish main" (86) – field textures only exist in DLCs |
+| `meadow` | `landuse=meadow`, `natural=grassland` | "grass flowers main" (77) |
+| `orchard` | `landuse=orchard` | "grass flowers main" (77) – no fruit trees yet |
+| `farmland` | `landuse=farmland` | field materials, see below |
+| `farmyard` | `landuse=farmyard` | "generic dirt gravel 01" (`share_516`) |
+| `vineyard` | `landuse=vineyard` | "grassland grass rows 01 01" (`share_288`) |
+| `nursery` | `landuse=plant_nursery` | "agricultural soil grass rows 01" (`share_331`) |
+| `greenhouse` | `landuse=greenhouse_horticulture` | "generic gravel 01 01" (`share_37`) – no greenhouse models yet |
 | `heath` | `natural=heath` | "grass droughty main" (80) |
 | `scrub` | `natural=scrub` | "dirty grass" (24) |
 | `bare` | `landuse=quarry/landfill/construction/brownfield`, `natural=bare_rock/scree/sand` | "dirt" (0) |
 
+**Fields**: each `landuse=farmland` area gets one picture from the "agricultural …" materials of SCS's
+shared material library (`terrain_material.base_share.sii`): wheat green, young, ripe, stubble, maize, rape,
+green field, ploughed, row crops. `crop=*` from OSM decides where present (cereals → one of the wheat
+pictures, maize, rape, potatoes/beet/vegetables → row crops, grass/clover → green field), otherwise the OSM
+id picks one, weighted and reproducible. Fields within 80 m of a road of the map get the near variant,
+up to 300 m "mid", beyond "far". Furrows and planting rows (fields, orchards, vineyards, nurseries) follow
+the long side of the area: the Python side writes `angle` (smallest enclosing rectangle), the writer turns
+the material per terrain side against the direction of the road or strip, in steps of 15°. (Earlier
+versions said field textures only existed in DLCs – wrong: the legacy field materials carry `dlc_fr_…`
+names, the shared library also has its own.)
+
 The centre of each quad counts; where areas overlap the smaller one wins, already painted quads (stone
-under bridges) stay. `OSM2ETS_NO_LANDCOVER=1` keeps the old material. Unverified: the look of the chosen
-materials and the quad order (column by column, rows outwards within a column – derived from the SCS map
+under bridges, bed of water) stay. `OSM2ETS_NO_LANDCOVER=1` keeps the old material. Unverified: the look of
+the chosen materials, that the shared "agricultural" materials are available without DLCs, the direction of
+the material rotation (`OSM2ETS_FIELD_ROT_SIGN=-1` turns the other way, `OSM2ETS_FIELD_ROT_OFFSET=90` turns
+rows across) and the quad order (column by column, rows outwards within a column – derived from the SCS map
 as for the stone under bridges). The first row of road terrain at the carriageway edge keeps the base
 material.
 

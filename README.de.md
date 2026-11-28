@@ -41,7 +41,7 @@ v1–v46 (siehe Commits).
 | Gebäude: OSM-`building=*` nahe der Strecke als SCS-Modelle (Grundspiel, deutsche bevorzugt) | umgesetzt, im Spiel noch nicht geprüft |
 | Wälder als Waldwände (Ränder bis 300 m neben der Strecke, Straßen durch Wald), Baumreihen | umgesetzt, im Spiel noch nicht geprüft |
 | Einzelbäume (`natural=tree`) als Baummodelle des Grundspiels | umgesetzt, im Spiel noch nicht geprüft |
-| Geländematerial: überall Gras, Grasarten/Erde nach OSM-Bodenbedeckung | umgesetzt, im Spiel noch nicht geprüft |
+| Geländematerial: überall Gras, Grasarten/Erde/Feldmaterial nach OSM-Landnutzung und -Bodenbedeckung | umgesetzt, im Spiel noch nicht geprüft |
 | Wasserflächen (Teiche, Becken, Seen, Schwimmbecken, Flussflächen): abgesenkter Grund, ebenes durchsichtiges Wasser | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
@@ -387,7 +387,7 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
   x-z-Ebene), `area`, `fill` (Grundfläche / Rechteck), `height`, `levels`, `street` (Einheitsvektor
   [x, z] zur nächsten Straße oder null).
 - `forests[]`, `landcover[]`, `water[]`: Flächen mit `osm`, `leaf` bzw. `kind` und den Ringen
-  `outer`/`inner` [x, z]; `trees[]` (`pos`, `leaf`, `genus`, `height`) und `tree_rows[]` (`points`) –
+  `outer`/`inner` [x, z] (Bodenbedeckung mit Reihen zusätzlich `angle`, Äcker `crop`); `trees[]` (`pos`, `leaf`, `genus`, `height`) und `tree_rows[]` (`points`) –
   siehe die Abschnitte zu Wäldern, Geländematerial und Wasser.
 - `junctions[]`: Knoten mit allen angrenzenden Straßenenden und deren Richtung –
   Grundlage für die geplanten Kreuzungs-Prefabs.
@@ -597,15 +597,33 @@ Spiels (Grasbüschel, Blumen). Flächen der Bodenbedeckung aus OSM (`landcover[]
 | Art | OSM | Material |
 |---|---|---|
 | `lawn` | `landuse=grass/village_green/greenery/recreation_ground`, `landcover=grass`, `leisure=park/garden/golf_course`, `leisure=pitch` (Rasen/ohne `surface`) | „grass green main“ (82) |
-| `meadow` | `landuse=meadow/orchard`, `natural=grassland` | „grass flowers main“ (77) |
-| `farmland` | `landuse=farmland` | „grass yellowish main“ (86) – Feldtexturen gibt es nur in DLCs |
+| `meadow` | `landuse=meadow`, `natural=grassland` | „grass flowers main“ (77) |
+| `orchard` | `landuse=orchard` | „grass flowers main“ (77) – noch ohne Obstbäume |
+| `farmland` | `landuse=farmland` | Feldmaterial, siehe unten |
+| `farmyard` | `landuse=farmyard` | „generic dirt gravel 01“ (`share_516`) |
+| `vineyard` | `landuse=vineyard` | „grassland grass rows 01 01“ (`share_288`) |
+| `nursery` | `landuse=plant_nursery` | „agricultural soil grass rows 01“ (`share_331`) |
+| `greenhouse` | `landuse=greenhouse_horticulture` | „generic gravel 01 01“ (`share_37`) – noch ohne Gewächshausmodelle |
 | `heath` | `natural=heath` | „grass droughty main“ (80) |
 | `scrub` | `natural=scrub` | „dirty grass“ (24) |
 | `bare` | `landuse=quarry/landfill/construction/brownfield`, `natural=bare_rock/scree/sand` | „dirt“ (0) |
 
+**Äcker**: jede `landuse=farmland`-Fläche bekommt ein Bild aus den „agricultural …“-Materialien der
+gemeinsamen SCS-Materialbibliothek (`terrain_material.base_share.sii`): Weizen grün, jung, reif, Stoppeln,
+Mais, Raps, grünes Feld, gepflügt, Reihenkultur. `crop=*` aus OSM entscheidet, wo angegeben (Getreide →
+eines der Weizenbilder, Mais, Raps, Kartoffeln/Rüben/Gemüse → Reihenkultur, Gras/Klee → grünes Feld), sonst
+wählt die OSM-Kennung gewichtet und reproduzierbar. Äcker bis 80 m neben einer Straße der Karte bekommen die
+nahe Variante, bis 300 m „mid“, darüber „far“. Furchen und Pflanzreihen (Äcker, Obst- und Rebanlagen,
+Baumschulen) folgen der Längsseite der Fläche: die Python-Seite schreibt `angle` (kleinstes umschließendes
+Rechteck), der Writer dreht das Material je Geländeseite gegen die Richtung der Straße bzw. des Streifens,
+in 15°-Schritten. (Frühere Versionen sagten, Feldtexturen gebe es nur in DLCs – falsch: die alten
+Feldmaterialien heißen `dlc_fr_…`, die gemeinsame Bibliothek hat eigene.)
+
 Je Quad zählt seine Mitte; in Überschneidungen gilt die kleinere Fläche, schon bemalte Quads (Stein unter
-Brücken) bleiben. `OSM2ETS_NO_LANDCOVER=1` lässt alles beim alten Material. Ungeprüft: das Aussehen der
-gewählten Materialien und die Reihenfolge der Quads (Spalte für Spalte, je Spalte die Reihen nach außen –
+Brücken, Grund im Wasser) bleiben. `OSM2ETS_NO_LANDCOVER=1` lässt alles beim alten Material. Ungeprüft: das
+Aussehen der gewählten Materialien, dass die gemeinsamen „agricultural“-Materialien ohne DLCs vorhanden sind,
+die Richtung der Materialdrehung (`OSM2ETS_FIELD_ROT_SIGN=-1` dreht andersherum, `OSM2ETS_FIELD_ROT_OFFSET=90`
+legt die Reihen quer) und die Reihenfolge der Quads (Spalte für Spalte, je Spalte die Reihen nach außen –
 aus der SCS-Karte abgeleitet wie für das Steinmaterial unter Brücken). Die erste Reihe des Straßengeländes
 am Fahrbahnrand bleibt beim Grundmaterial.
 

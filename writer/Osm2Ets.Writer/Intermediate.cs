@@ -242,11 +242,16 @@ public sealed class WaterEntry
     public List<List<double[]>> Inner { get; set; } = [];
 }
 
-/// <summary>Fläche der Bodenbedeckung (kind: lawn, meadow, farmland, heath, scrub, bare).</summary>
+/// <summary>Fläche der Bodenbedeckung (kind: lawn, meadow, farmland, farmyard, orchard, vineyard, nursery,
+/// greenhouse, heath, scrub, bare).</summary>
 public sealed class LandcoverEntry
 {
     public string Osm { get; set; } = "";
     public string Kind { get; set; } = "";
     public List<double[]> Outer { get; set; } = [];
     public List<List<double[]>> Inner { get; set; } = [];
+    /// <summary>Richtung der Längsseite in Grad (x-z-Ebene) bei Flächen mit Reihen, sonst null.</summary>
+    public double? Angle { get; set; }
+    /// <summary>Feldfrucht aus OSM (crop=*) bei Äckern, sonst null.</summary>
+    public string? Crop { get; set; }
 }
