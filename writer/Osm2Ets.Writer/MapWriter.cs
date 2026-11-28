@@ -46,6 +46,10 @@ public static class MapWriter
 
         var warnings = new List<string>();
         int written = 0, skipped = 0, items = 0, styleChanges = 0;
+        // Wasserflächen nur mit Geländeraster (Becken und Wasserspiegel kommen aus den Rasterhöhen)
+        TerrainFill.ExtraZoneRects = null;
+        Forests.WaterDistance = null;
+        var water = Water.Enabled && input.Water.Count > 0 && input.TerrainGrid is { Nx: > 1, Nz: > 1 } ? new Water.Index(input.Water) : null;
         RoadEntry? startRoad = null;
 
         var valid = new List<RoadEntry>();
@@ -338,6 +342,12 @@ public static class MapWriter
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("clear"));
         Overlaps.ExactRoads = TerrainClearance.Share && UseModelEdges && TerrainFill.GapRamp;
         terrainClamped += Overlaps.EnforceTerrain(valid, styles, obstacles);
+        // Straßengelände endet vor Wasserflächen: dort übernimmt das Füllgelände mit feinen Reihen ums Ufer
+        if (water is not null && TerrainFill.WideRoadTerrain)
+        {
+            int wc = water.ClampRoadTerrain(valid, styles);
+            if (wc > 0) warnings.Add($"Info: Straßengelände an {wc} Seiten vor Wasserflächen gekürzt (mindestens {Water.RoadMin:0} m)");
+        }
         if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null) Console.Error.WriteLine(Stat("enforce"));
         if (Environment.GetEnvironmentVariable("OSM2ETS_PROBE") is { } probe)
         {
@@ -532,6 +542,21 @@ public static class MapWriter
                 };
             }
             tg2.Post = post;
+            // Wasser: Spiegel aus den Rasterhöhen (samt Prefab-Böschungen) und Straßen am Ufer, dann die Becken als
+            // erste Nachbearbeitung – Prefab-Böschungen und Unterführungen gelten danach weiter
+            if (water is not null)
+            {
+                water.ComputeLevels((x, z) => tg2.HeightAt(x, z), valid, styles);
+                var before = post;
+                post = (x, z, h) =>
+                {
+                    h = water.Post(x, z, h);
+                    return before is null ? h : before(x, z, h);
+                };
+                tg2.Post = post;
+                TerrainFill.ExtraZoneRects = water.ZoneRects();
+                Forests.WaterDistance = water.Distance;
+            }
             // Gebäude vor dem Gelände: am Hang wird das Raster unter ihnen eingeebnet
             if (OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
             {
@@ -630,6 +655,16 @@ public static class MapWriter
             cover?.AddPrefabLanes(PrefabFootprint.Centres3(map));
             TerrainFill.FinePrefabLanes = PrefabFootprint.KitLanes(map);
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes, cover);
+            TerrainFill.ExtraZoneRects = null;
+            if (water is not null)
+            {
+                var wr = water.Emit(map, tg2);
+                var (bedQuads, noGrass) = water.PaintBeds(map);
+                warnings.Insert(0, $"Info: Wasserflächen: {wr.Bodies} von {input.Water.Count} gesetzt ({wr.Strips} Wasserstreifen, {wr.AreaM2 / 1e4:0.0} ha, " +
+                                   $"{wr.NarrowBodies} mit 1-m-Streifen neben anderem Wasser; {wr.Skipped} ohne Geländeraster): " +
+                                   string.Join(", ", wr.ByKind.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) +
+                                   $"; Grund: {bedQuads} Quads, ohne Detailvegetation: {noGrass} Quads");
+            }
             // Waldwände und Baumreihen zuletzt auf das fertige Gelände (Höhen samt eingeebneter Gebäudeflächen)
             if (Forests.Enabled && (input.Forests.Count > 0 || input.TreeRows.Count > 0 || input.Trees.Count > 0))
                 forestResult = Forests.Apply(map, input, valid, styles, PrefabFootprint.All(map), (x, z) => tg2.HeightAt(x, z));

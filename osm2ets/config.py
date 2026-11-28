@@ -89,6 +89,7 @@ class Profile:
     buildings: dict = field(default_factory=dict)
     forests: dict = field(default_factory=dict)
     landcover: dict = field(default_factory=dict)
+    water: dict = field(default_factory=dict)
 
     def lod(self, name: str) -> LodConfig:
         try:
@@ -274,6 +275,15 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         "min_area_m2": _float(lc, "min_area_m2", "landcover", default=100.0, positive=False),
     }
 
+    wa = data.get("water") or {}
+    if not isinstance(wa, dict):
+        raise ConfigError("water: YAML-Objekt erwartet")
+    water = {
+        "enabled": bool(wa.get("enabled", True)),
+        "simplify_m": _float(wa, "simplify_m", "water", default=1.5),
+        "min_area_m2": _float(wa, "min_area_m2", "water", default=20.0, positive=False),
+    }
+
     profile = Profile(
         name=str(data.get("name", "profil")),
         description=str(data.get("description", "")),
@@ -301,6 +311,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         buildings=buildings,
         forests=forests,
         landcover=landcover,
+        water=water,
         industry={
             "enabled": bool((data.get("industry") or {}).get("enabled", True)),
             "highway": _str_set((data.get("industry") or {}).get("highway", drivable_default), "industry.highway"),

@@ -42,6 +42,7 @@ v1–v46 (see commits).
 | Forests as tree walls (edges up to 300 m from the route, roads through forests), tree rows | implemented, not yet checked in game |
 | Single trees (`natural=tree`) as base-game tree models | implemented, not yet checked in game |
 | Terrain material: grass everywhere, grass kinds/dirt by OSM land cover | implemented, not yet checked in game |
+| Water areas (ponds, basins, lakes, pools, river areas): lowered bed, flat transparent water | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
@@ -383,15 +384,18 @@ This is an approximation from OSM tags, not a survey.
   `length`/`width` (smallest enclosing rectangle), `angle` (direction of the long side in degrees,
   x-z plane), `area`, `fill` (footprint / rectangle), `height`, `levels`, `street` (unit vector
   [x, z] to the nearest street, or null).
+- `forests[]`, `landcover[]`, `water[]`: areas with `osm`, `leaf` or `kind` and the rings `outer`/`inner`
+  [x, z]; `trees[]` (`pos`, `leaf`, `genus`, `height`) and `tree_rows[]` (`points`) – see the sections
+  on forests, terrain material and water.
 - `junctions[]`: nodes with all adjoining road ends and their directions.
 - `qa.low_clearance_crossings`: grade-separated crossings with < 4.5 m clearance.
 
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 87 tests, synthetic networks
+python3 -m pytest                                   # 89 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 50 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 52 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings, water
 ```
 
 The real extract is the OSM test file `core/files/north-bayreuth.osm.gz` from the
@@ -595,6 +599,49 @@ under bridges) stay. `OSM2ETS_NO_LANDCOVER=1` keeps the old material. Unverified
 materials and the quad order (column by column, rows outwards within a column – derived from the SCS map
 as for the stone under bridges). The first row of road terrain at the carriageway edge keeps the base
 material.
+
+## Water
+
+Water areas from OSM go into the intermediate format (`water[]`, whole file, outlines simplified to 1.5 m,
+under 20 m² dropped – `water` in the profile):
+
+| Kind | OSM | Water colour (`terrain_color.water.sii`) | Bed |
+|---|---|---|---|
+| `pond`, `basin`, `water` | `natural=water` + `water=pond/basin`, `landuse=basin`, `natural=water` without (known) `water=*` | "green_02 01m" | "muddy ground" (20) |
+| `lake`, `reservoir`, `lock` | `water=lake/oxbow/reservoir/lock`, `landuse=reservoir` | "green_01 05m" | "muddy ground" |
+| `wastewater` | `water=wastewater` | "brown_01 01m" | "muddy ground" |
+| `river` | `water=river/stream/canal/ditch/drain`, `waterway=riverbank` | "green_02 01m", material with small waves | "riverbed wet 01 sandy soil 01" |
+| `pool` | `leisure=swimming_pool` (not `indoor=yes`, `covered=yes`, `location=indoor/roof/underground`) | "blue_01 05m" | "artificial tiles 01" |
+| `kneipp` | `amenity=kneipp_water_cure` | "clear_01 05m" | "pebble stones" (29) |
+
+The writer (`Water.cs`) builds each area like this:
+
+* **Water level**: 0.15 m below the lowest point of the shore (terrain grid every 2 m along the outline,
+  including the slopes next to prefabs); roads (no bridges/tunnels) up to carriageway edge + 12 m from the
+  shore count with their carriageway height − 0.5 m, so no water lies above a road. River areas take the
+  lowest shore point within 150 m per place.
+* **Bed**: every grid height is post-processed like the building pads: inside the outline it drops from
+  0.35 m above the water level with the bank slope of the kind (0.35, wastewater 0.8, pools/Kneipp 2) down to the depth
+  (ponds 1.2–4 m by size, lakes +1 m, pools 1.6 m, Kneipp 0.5 m); outside, up to the overhang of the water
+  strips, at least shore height, and higher terrain is tilted towards the shore (slope 0.5, fading out over
+  8 m). Prefab slopes and underpasses still apply on top. Edges where two areas touch are not shores.
+* **Water surface**: flat terrain strips running east-west, 4 m wide (1 m next to other water closer than
+  6 m – dams between fish ponds), each as long as the area reaches within the strip; material "transparent
+  water calm 01" (`wtr_tran_15`), colour = palette/visible depth/foam as in `terrain_color.water.sii`, no
+  collision, no detail vegetation.
+* **Shore shape**: around each area (bounding box + 3 m) the fill terrain uses fine rows (1 m across, 4 m
+  along, 2 m at small pools, pools and ponds next to other water); road terrain ends 7 m before the shore
+  (at least 3 m wide) – its rows get 6–10 m wide further out. Quads inside the water get the bed material,
+  quads up to 1.5 m outside lose their detail vegetation; trees keep 1–2 m away from water.
+
+Test area Bayreuth-Nord: 257 of 273 areas (16 outside the terrain grid), 3286 water strips, 35 ha; the
+map grows from 84 to 96 MB (fill terrain 31 900 → 39 900 pieces). Checked offline against the written
+terrain: water visible outside the OSM outlines 342 m² (sub-metre seams at the shore), 11 m of the 36.6 km
+water edge end above terrain lower than the water level by more than 5 cm; about 5 % of the outlines stay
+dry (shore slightly inside the outline, e.g. at roads on a dam right next to a basin). `OSM2ETS_NO_WATER=1`
+switches water off. Unverified: that SCS builds water this way (flat terrain with water material), the
+colour encoding (alpha 0 as in editor maps), depths and materials; flowing water has no stream direction
+(the strips run east-west). Not included yet: rivers and streams mapped only as lines (`waterway=*`).
 
 ## Roadmap
 

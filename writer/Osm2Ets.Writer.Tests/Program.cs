@@ -58,6 +58,8 @@ var tests = new List<(string Name, Action Body)>
     ("Baumreihe: eine Reihe Bäume, an der Fahrbahn unterbrochen", TreeRowAsCurve),
     ("Einzelbaum: Modell nach Gattung/Blattwerk/Höhe, skaliert; aus der Fahrbahn geschoben", SingleTrees),
     ("Geländematerial: überall Gras, Quads in OSM-Flächen nach Art (kleinere Fläche gewinnt)", LandcoverPaint),
+    ("Wasser: Abstandsraster, Nachbarbecken schmal, gemeinsame Kante kein Ufer, Becken-Profil, Projektion", WaterIndexRules),
+    ("Wasser: Teich und Schwimmbecken – Spiegel unter dem Ufer, Streifen decken die Fläche, Grund abgesenkt und bemalt", WaterPondAndPool),
 };
 
 int failed = 0;
@@ -421,6 +423,128 @@ static void LandcoverPaint()
     Check(Mat(L, 7, 0) == Landcover.Default && Mat(R, 9, 3) == Landcover.Default, "außerhalb nicht Gras");
     Check(Mat(R, 2, 0) == Landcover.Materials["farmland"], "rechts Acker, nicht Wiese");
     Check(r.Quads == 6 * 4 * 2 && r.ByKind["meadow"] == 4 && r.ByKind["farmland"] == 44, $"{r.Quads} Quads, Wiese {r.ByKind.GetValueOrDefault("meadow")}");
+}
+
+static IEnumerable<(Vector3 C, string Mat, bool NoGrass)> TerrainQuads(Map map)
+{
+    foreach (var it in map.MapItems.Values)
+    {
+        var (origin, sides) = it switch
+        {
+            Road r => (r.Node.Position, new[] { r.Left.Terrain, r.Right.Terrain }),
+            Terrain t => (t.Node.Position, new[] { t.Left.Terrain, t.Right.Terrain }),
+            _ => (Vector3.Zero, Array.Empty<RoadTerrain>()),
+        };
+        foreach (var s in sides)
+        {
+            var q = s.QuadData;
+            if (q.Offsets.Count == 0 || q.Quads.Count != q.Cols * q.Rows) continue;
+            var at = new Dictionary<(int, int), Vector3>();
+            foreach (var o in q.Offsets) at[(o.X, o.Y)] = origin + o.Data;
+            for (int i = 0; i < q.Cols; i++)
+                for (int j = 0; j < q.Rows; j++)
+                    if (at.TryGetValue((i, j), out var a) && at.TryGetValue((i + 1, j), out var b) &&
+                        at.TryGetValue((i, j + 1), out var c) && at.TryGetValue((i + 1, j + 1), out var d))
+                    {
+                        var quad = q.Quads[i * q.Rows + j];
+                        yield return ((a + b + c + d) / 4, q.BrushMaterials[(int)quad.MainMaterial].Name.ToString(), quad.NoDetailVegetation);
+                    }
+        }
+    }
+}
+
+static void WaterIndexRules()
+{
+    // A und B mit 3 m Damm dazwischen → beide 1-m-Streifen; C stößt an A (gemeinsame Kante x = 0): dort kein
+    // Ufer. D (See) allein → 4-m-Streifen.
+    var ix = new Water.Index([
+        new WaterEntry { Osm = "a", Kind = "pond", Outer = [[-30, 0], [0, 0], [0, 20], [-30, 20]] },
+        new WaterEntry { Osm = "b", Kind = "pond", Outer = [[-30, 23], [0, 23], [0, 40], [-30, 40]] },
+        new WaterEntry { Osm = "c", Kind = "pond", Outer = [[0, 0], [30, 0], [30, 20], [0, 20]] },
+        new WaterEntry { Osm = "d", Kind = "lake", Outer = [[200, 0], [260, 0], [260, 60], [200, 60]] },
+    ]);
+    var by = ix.Bodies.ToDictionary(b => b.Osm);
+    Check(by["a"].Half == Water.Narrow && by["b"].Half == Water.Narrow && by["d"].Half == Water.Wide, "Streifenbreite");
+    Check(by["a"].SignedDistance(-1, 10) > 8.5f, $"gemeinsame Kante zählt als Ufer: {by["a"].SignedDistance(-1, 10):0.0}");
+    Check(by["a"].SignedDistance(-15, 1) is > 0.9f and < 1.1f, "Ufer bei z = 0");
+    Check(by["d"].SignedDistance(230, -5) is > -5.1f and < -4.9f, "außen 5 m");
+    // Spiegel: Gelände h = x/10 → tiefster Uferpunkt bei x = 200
+    ix.ComputeLevels((x, z) => x / 10f, [], new());
+    float lv = by["d"].Level;
+    Check(MathF.Abs(lv - (20 - Water.LevelBelow)) < 1e-3f, $"Spiegel {lv}");
+    Check(MathF.Abs(ix.Post(230, 30, 50) - (lv - by["d"].Style.Depth)) < 1e-3f, "Grund in der Mitte");
+    Check(MathF.Abs(ix.Post(201, 30, 50) - (lv + Water.ShoreAbove - by["d"].Style.Bank)) < 0.05f, "Böschung 1 m vom Ufer");
+    Check(ix.Post(230, -1, 0) >= lv + Water.ShoreAbove - 1e-3f, "außen nicht auf Ufer-Höhe angehoben");
+    Check(ix.Post(230, -1, 100) < 100 && ix.Post(230, -1, 100) >= lv + Water.ShoreAbove && ix.Post(230, -30, 100) == 100, "Neigung zum Ufer");
+    // Projektion: U-Form, Band über beide Arme → zwei Intervalle
+    var u = new[] { new[] { new Vector2(0, 0), new Vector2(30, 0), new Vector2(30, 20), new Vector2(20, 20), new Vector2(20, 5),
+                            new Vector2(10, 5), new Vector2(10, 20), new Vector2(0, 20) } };
+    var iv = Water.Projection(u, 8, 12);
+    Check(iv.Count == 2 && MathF.Abs(iv[0].A) < 1e-3f && MathF.Abs(iv[0].B - 10) < 1e-3f && MathF.Abs(iv[1].A - 20) < 1e-3f && MathF.Abs(iv[1].B - 30) < 1e-3f,
+          "Projektion U-Form: " + string.Join(" ", iv));
+    // Band über eine schräge Kante: genau der x-Bereich im Band
+    var tri = new[] { new[] { new Vector2(0, 0), new Vector2(40, 0), new Vector2(0, 40) } };
+    var it = Water.Projection(tri, 10, 14);
+    Check(it.Count == 1 && MathF.Abs(it[0].A) < 1e-3f && MathF.Abs(it[0].B - 30) < 1e-3f, "Projektion Dreieck: " + string.Join(" ", it));
+}
+
+static void WaterPondAndPool()
+{
+    // Geländeraster x −100…500, z −200…200 (10 m), Hang h = 0,01·x + 0,02·z; Landstraße bei z = 0 (x 0…200).
+    // Teich x 60…100, z 30…60 südlich der Straße (Straßengelände bis 60 m breit → gekürzt); Schwimmbecken
+    // x 300…320, z −100…−90; Baum mitten im Teich.
+    int nx = 61, nz = 41;
+    static float H(float x, float z) => 0.01f * x + 0.02f * z;
+    var heights = new float[nx * nz];
+    for (int j = 0; j < nz; j++)
+        for (int i = 0; i < nx; i++) heights[j * nx + i] = H(-100 + i * 10, -200 + j * 10);
+    var road = MakeRoad("r", new[] { new[] { 0.0, H(0, 0), 0 }, new[] { 100.0, H(100, 0), 0 }, new[] { 200.0, H(200, 0), 0 } }, MakeRun(0, 2, "primary"));
+    var input = new IntermediateFile
+    {
+        Format = IntermediateFile.ExpectedFormat, Version = 1,
+        Projection = new ProjectionInfo { Scale = 1, VerticalScale = 1 },
+        Roads = [road],
+        TerrainGrid = new TerrainGridEntry { Origin = [-100, -200], Cell = 10, Nx = nx, Nz = nz, Heights = heights },
+        Water =
+        [
+            new WaterEntry { Osm = "w1", Kind = "pond", Outer = [[60, 30], [100, 30], [100, 60], [60, 60]] },
+            new WaterEntry { Osm = "w2", Kind = "pool", Outer = [[300, -100], [320, -100], [320, -90], [300, -90]] },
+        ],
+        Trees = [new TreeEntry { Osm = "n1", Leaf = "broadleaved", Pos = [80, 45] }],
+    };
+    var (map, result) = MapWriter.Build(input, MappingConfig.Load(ShippedMapping()));
+    var strips = map.MapItems.Values.OfType<Terrain>().Where(t => t.Left.Terrain.QuadData.BrushMaterials[0].Name.ToString().StartsWith("wtr_tran")).ToList();
+    var pond = strips.Where(t => t.Node.Position.X < 200).ToList();
+    var pool = strips.Where(t => t.Node.Position.X >= 200).ToList();
+    Check(pond.Count >= 7 && pool.Count >= 2, $"Wasserstreifen: Teich {pond.Count}, Becken {pool.Count}");
+    float level = H(60, 30) - Water.LevelBelow;                      // tiefster Uferpunkt (60, 30)
+    Check(pond.All(t => MathF.Abs(t.Node.Position.Y - level) < 0.02f && MathF.Abs(t.ForwardNode.Position.Y - level) < 0.02f),
+          $"Spiegel {pond[0].Node.Position.Y:0.00} statt {level:0.00}");
+    var pc = pond[0].Left.Terrain.QuadData.BrushColors[0];
+    var bc = pool[0].Right.Terrain.QuadData.BrushColors[0];
+    Check((pc.R, pc.G, pc.B) == (25, 2, 0) && (bc.R, bc.G, bc.B) == (8, 5, 0), $"Farben {pc} / {bc}");
+    Check(strips.All(t => !t.Collision && !t.Left.DetailVegetation && !t.Right.DetailVegetation && !t.Boundary), "Wasser mit Kollision, Rand oder Detailvegetation");
+    bool Wet(float x, float z) => pond.Any(t => x >= t.Node.Position.X && x <= t.ForwardNode.Position.X && MathF.Abs(z - t.Node.Position.Z) <= t.Left.Terrain.Size + 1e-3f);
+    for (float x = 60.5f; x < 100; x += 2)
+        for (float z = 30.5f; z < 60; z += 2) Check(Wet(x, z), $"Teich bei ({x}, {z}) ohne Wasser");
+    Check(pond.All(t => t.Node.Position.X >= 59.7f && t.ForwardNode.Position.X <= 100.3f &&
+                        t.Node.Position.Z - t.Left.Terrain.Size >= 30 - 4.1f && t.Node.Position.Z + t.Right.Terrain.Size <= 60 + 4.1f), "Wasser ragt weit über den Teich");
+    // Becken: Grund abgesenkt, Ufer und Umgebung über dem Spiegel
+    var g = input.TerrainGrid!;
+    Check(g.HeightAt(80, 45) < level - 1.2f, $"Grund {g.HeightAt(80, 45):0.00} nicht abgesenkt (Spiegel {level:0.00})");
+    Check(g.HeightAt(56, 45) >= level + Water.ShoreAbove - 0.01f && g.HeightAt(80, 26) >= level + Water.ShoreAbove - 0.01f, "Ufer unter dem Spiegel");
+    // Straßengelände zum Teich hin gekürzt (Teich 30 m neben der Straßenlinie)
+    var rd = map.MapItems.Values.OfType<Road>().Where(r => r.ForwardNode.Position.X > 60 && r.Node.Position.X < 100).ToList();
+    Check(rd.Count > 0 && rd.All(r => r.Right.Terrain.Size <= 30 - Water.RoadKeep && r.Right.Terrain.Size >= Water.RoadMin),
+          "Straßengelände nicht gekürzt: " + string.Join(", ", rd.Select(r => r.Right.Terrain.Size)));
+    // Grund: Schlamm im Teich, Fliesen im Becken, ohne Detailvegetation
+    var quads = TerrainQuads(map).ToList();
+    var inPond = quads.Where(q => q.C.X > 61 && q.C.X < 99 && q.C.Z > 31 && q.C.Z < 59).ToList();
+    var inPool = quads.Where(q => q.C.X > 301 && q.C.X < 319 && q.C.Z > -99 && q.C.Z < -91).ToList();
+    Check(inPond.Count > 20 && inPond.All(q => q.Mat == "20" && q.NoGrass), $"Teichgrund: {inPond.Count} Quads, Materialien {string.Join(",", inPond.Select(q => q.Mat).Distinct())}");
+    Check(inPool.Count > 5 && inPool.All(q => q.Mat == "share_27" && q.NoGrass), $"Beckengrund: {inPool.Count} Quads, Materialien {string.Join(",", inPool.Select(q => q.Mat).Distinct())}");
+    Check(!map.MapItems.Values.OfType<Model>().Any(), "Baum im Teich gesetzt");
+    Check(result.Warnings.Any(w => w.Contains("Info: Wasserflächen: 2 von 2 gesetzt")), "Info-Zeile fehlt");
 }
 
 static void CountryOnNetworkNodesOnly()

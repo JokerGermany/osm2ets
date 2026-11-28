@@ -24,6 +24,8 @@ namespace Osm2Ets.Writer;
 public static class Forests
 {
     public static bool Enabled = Environment.GetEnvironmentVariable("OSM2ETS_NO_FORESTS") != "1";
+    /// <summary>Abstand zum nächsten Wasser (innen positiv, <see cref="Water.Index.Distance"/>), sonst null.</summary>
+    public static Func<Vector2, float>? WaterDistance;
     /// <summary>Abstand der ersten Reihe vom Fahrbahnrand (samt Modellversatz) – Straßen; Wege: <see cref="PathClear"/>.</summary>
     public const float RoadClear = 6f;
     public const float PathClear = 2f;
@@ -260,6 +262,8 @@ public static class Forests
         /// Gebäude + 1 m.</summary>
         public bool Blocked(Vector2 p, bool trunk = false, float crown = 0)
         {
+            // Wasser: Stamm mindestens 1 m (Wald 2 m) vom Ufer
+            if (WaterDistance is { } wd && wd(p) > -(trunk ? 1f : 2f)) return true;
             var k = Key(p);
             if (segs.TryGetValue(k, out var sl))
                 foreach (var (a, b, half, clear, path) in sl)

@@ -111,6 +111,7 @@ public static class TerrainFill
         placedFill.Clear();
         // Zellen mit Prefab-Spuren: Füllstücke dort mit feinem Raster (siehe Emit)
         PrefabCells.Clear(); FinePieces = 0; ZonePieces = 0;
+        FineWaterCells.Clear();
         if (FinePrefabLanes is not null)
             foreach (var c in FinePrefabLanes) PrefabCells.Add(((int)MathF.Floor(c.X / PrefabCell), (int)MathF.Floor(c.Y / PrefabCell)));
         CoverCap.ConeLowered = 0; CoverCap.ConeRaised = 0; CoverCap.CoverLowered = 0;
@@ -259,11 +260,15 @@ public static class TerrainFill
         // ZoneMargin darüber hinaus (zoneFill) – sonst Lücken zwischen beiden
         var zone = new bool[mw * mh];
         var zoneFill = new bool[mw * mh];
-        bool useZone = ZoneReach > 0 && FinePrefabLanes is { Count: > 0 };
-        if (useZone)
+        // Ufer der Wasserflächen: eigene Zone mit breiteren Zonen-Reihen (ExtraZoneSpacing)
+        var wzoneFill = new bool[mw * mh];
+        bool prefabZone = ZoneReach > 0 && FinePrefabLanes is { Count: > 0 };
+        bool waterZone = ExtraZoneRects is { Count: > 0 };
+        bool useZone = prefabZone || waterZone;
+        void MarkZone(List<Vector2> pts, float reach, bool[] zoneFill)
         {
-            float rf = ZoneReach + ZoneMargin;
-            foreach (var c in FinePrefabLanes!)
+            float rf = reach + ZoneMargin;
+            foreach (var c in pts)
             {
                 int i0 = Math.Max(0, (int)((c.X - rf - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)((c.X + rf - x0) / MaskCell) + 1);
                 int j0 = Math.Max(0, (int)((c.Y - rf - z0) / MaskCell)), j1 = Math.Min(mh - 1, (int)((c.Y + rf - z0) / MaskCell) + 1);
@@ -272,25 +277,44 @@ public static class TerrainFill
                     {
                         float d2 = Vector2.DistanceSquared(new Vector2(x0 + i * MaskCell, z0 + j * MaskCell), c);
                         if (d2 <= rf * rf) zoneFill[j * mw + i] = true;
-                        if (d2 <= ZoneReach * ZoneReach) zone[j * mw + i] = true;
+                        if (d2 <= reach * reach) zone[j * mw + i] = true;
                     }
             }
         }
+        if (prefabZone) MarkZone(FinePrefabLanes!, ZoneReach, zoneFill);
+        if (waterZone)
+            foreach (var (lo, hi, fineRect) in ExtraZoneRects!)
+            {
+                // fein (2-m-Raster längs): Becken neben anderem Wasser (Damm), kleine Becken, Schwimmbecken
+                if (fineRect)
+                    for (int i = (int)MathF.Floor((lo.X - ZoneMargin) / PrefabCell); i <= (int)MathF.Floor((hi.X + ZoneMargin) / PrefabCell); i++)
+                        for (int j = (int)MathF.Floor((lo.Y - ZoneMargin) / PrefabCell); j <= (int)MathF.Floor((hi.Y + ZoneMargin) / PrefabCell); j++)
+                            FineWaterCells.Add((i, j));
+                int i0 = Math.Max(0, (int)MathF.Floor((lo.X - ZoneMargin - x0) / MaskCell)), i1 = Math.Min(mw - 1, (int)MathF.Ceiling((hi.X + ZoneMargin - x0) / MaskCell));
+                int j0 = Math.Max(0, (int)MathF.Floor((lo.Y - ZoneMargin - z0) / MaskCell)), j1 = Math.Min(mh - 1, (int)MathF.Ceiling((hi.Y + ZoneMargin - z0) / MaskCell));
+                for (int j = j0; j <= j1; j++)
+                    for (int i = i0; i <= i1; i++)
+                    {
+                        wzoneFill[j * mw + i] = true;
+                        float x = x0 + i * MaskCell, z = z0 + j * MaskCell;
+                        if (x >= lo.X && x <= hi.X && z >= lo.Y && z <= hi.Y) zone[j * mw + i] = true;
+                    }
+            }
         bool InZone(float x, float z)
         {
             int i = (int)MathF.Round((x - x0) / MaskCell), j = (int)MathF.Round((z - z0) / MaskCell);
             return i >= 0 && j >= 0 && i < mw && j < mh && zone[j * mw + i];
         }
-        bool InZoneFill(float x, float z)
+        bool InZoneFill(float x, float z, bool[] zf)
         {
             int i = (int)MathF.Round((x - x0) / MaskCell), j = (int)MathF.Round((z - z0) / MaskCell);
-            return i >= 0 && j >= 0 && i < mw && j < mh && zoneFill[j * mw + i];
+            return i >= 0 && j >= 0 && i < mw && j < mh && zf[j * mw + i];
         }
-        // Breite einer Zonen-Reihe zur Seite: ZoneHalf, sonst so weit frei (mindestens 0,5 m)
-        float ZoneExtent(float x, float z, float sign)
+        // Breite einer Zonen-Reihe zur Seite: bis zone (ZoneHalf bzw. ExtraZoneHalf), sonst so weit frei (mindestens 0,5 m)
+        float ZoneExtent(float x, float z, float sign, float most)
         {
-            foreach (var e in new[] { ZoneHalf, 1f, 0.5f })
-                if (e <= ZoneHalf && Free(x, z + sign * e) && Free(x, z + sign * MathF.Min(e, 0.5f))) return e;
+            foreach (var e in new[] { most, 1f, 0.5f })
+                if (e <= most && Free(x, z + sign * e) && Free(x, z + sign * MathF.Min(e, 0.5f))) return e;
             return 0;
         }
         bool coarse = true;
@@ -307,6 +331,7 @@ public static class TerrainFill
         var material = new Token(Road.Add(new Map(), Vector3.Zero, new Vector3(10, 0, 0), "ger1", 1, 1)
                                      .Right.Terrain.QuadData.BrushMaterials[0].Name.ToString());
         int items = 0, rows = 0; double area = 0;
+        var perPass = new Dictionary<float, int>();
         var covered = new bool[mw * mh];
         var full = new bool[mw * mh];   // tatsächlich bedeckt (ohne Rücknahme), für die feinen Reihen
         bool Covered(float x, float z)
@@ -374,12 +399,15 @@ public static class TerrainFill
         // letzter Durchgang: feine Reihen (FineSpacing) für die Reste neben Straßen (Treppenstufen)
         // Durchgang −2 (nur mit Zone): Reihen im festen Abstand ZoneSpacing um die Anschluss-Prefabs,
         // unabhängig von der Bedeckung (die 1-m-Restreihen ließen dort alle paar Meter 1 m frei)
-        foreach (float offset in new[] { 0f, RowSpacing / 2, RowSpacing / 4, 3 * RowSpacing / 4, -2f, -1f })
+        foreach (float offset in new[] { 0f, RowSpacing / 2, RowSpacing / 4, 3 * RowSpacing / 4, -2f, -3f, -1f })
         {
-        bool zonePass = offset == -2f;
-        if (zonePass && !useZone) continue;
+        bool waterPass = offset == -3f;
+        bool zonePass = offset == -2f || waterPass;
+        if (offset == -2f && !prefabZone || waterPass && !waterZone) continue;
         if (offset < 0) coarse = false;
-        if (zonePass) spacing = ZoneSpacing;
+        var zf = waterPass ? wzoneFill : zoneFill;
+        float zoneHalf = waterPass ? ExtraZoneHalf : ZoneHalf;
+        if (zonePass) spacing = waterPass ? ExtraZoneSpacing : ZoneSpacing;
         else if (offset < 0) { spacing = FineSpacing; half = FineSpacing / 2 + 1; }
         for (float z = z0 + RowSpacing / 2 + 10 + Math.Max(offset, 0); z < z1 - RowSpacing / 2 - 10; z += spacing)
         {
@@ -390,6 +418,7 @@ public static class TerrainFill
                 {
                     // Bedeckung nach den tatsächlich gesetzten Stücken (Breite = Minimum je Stück)
                     ZonePiece = zonePass;
+                    WaterZonePiece = waterPass;
                     if (useZone && PadEnds)
                     {
                         // Stückenden um eine (Zone) bzw. eine halbe Abtastung verlängern, wo frei: ein
@@ -401,12 +430,14 @@ public static class TerrainFill
                         if (Free(fx - pad, z)) run.Insert(0, (fx - pad, fl, fr));
                         if (Free(lx + pad, z)) run.Add((lx + pad, ll, lr));
                     }
+                    int before = items;
                     items += Emit(map, grid, run, z, material, ref area, (xa, xb, l, r) =>
                     {
                         Cover(xa, xb, z - l + 2, z + r - 2);
                         Mark2(full, xa, xb, z - l, z + r);
                         MarkFine(xa, xb, z - l, z + r);
                     });
+                    perPass[offset] = perPass.GetValueOrDefault(offset) + items - before;
                 }
                 run.Clear();
             }
@@ -448,11 +479,11 @@ public static class TerrainFill
             {
                 bool ok; float l, r;
                 if (ZoneProbe is { } zp && MathF.Abs(x - zp.X) < 1.3f && MathF.Abs(z - zp.Y) < 1.1f)
-                    Console.Error.WriteLine($"ZP pass {offset} x {x:0.0} z {z:0.0} free {Free(x, z)} zone {InZone(x, z)} zfill {InZoneFill(x, z)} cov {Covered(x, z)} full {Full(x, z)} zext {ZoneExtent(x, z, -1)}/{ZoneExtent(x, z, 1)} ext {Extent(x, z, -1)}/{Extent(x, z, 1)} h {grid.HeightAt(x, z)}");
+                    Console.Error.WriteLine($"ZP pass {offset} x {x:0.0} z {z:0.0} free {Free(x, z)} zone {InZone(x, z)} zfill {InZoneFill(x, z, zf)} cov {Covered(x, z)} full {Full(x, z)} zext {ZoneExtent(x, z, -1, zoneHalf)}/{ZoneExtent(x, z, 1, zoneHalf)} ext {Extent(x, z, -1)}/{Extent(x, z, 1)} h {grid.HeightAt(x, z)}");
                 if (zonePass)
                 {
-                    ok = InZoneFill(x, z) && Free(x, z);
-                    l = ok ? ZoneExtent(x, z, -1) : -1; r = ok ? ZoneExtent(x, z, +1) : -1;
+                    ok = InZoneFill(x, z, zf) && Free(x, z);
+                    l = ok ? ZoneExtent(x, z, -1, zoneHalf) : -1; r = ok ? ZoneExtent(x, z, +1, zoneHalf) : -1;
                     if (l < 0.5f || r < 0.5f || float.IsNaN(grid.HeightAt(x, z))) { Flush(); continue; }
                 }
                 else
@@ -487,6 +518,8 @@ public static class TerrainFill
         int free = 0, open = 0;
         for (int k = 0; k < mask.Length; k++) if (!mask[k]) { free++; if (!full[k]) open++; }
         Uncovered = free > 0 ? open / (double)free : 0;
+        if (Environment.GetEnvironmentVariable("OSM2ETS_DEBUG") is not null)
+            Console.Error.WriteLine("FILLPASS " + string.Join(" ", perPass.Select(kv => $"{kv.Key}:{kv.Value}")));
         return new Result(items, rows, area / 1e6);
     }
 
@@ -509,11 +542,21 @@ public static class TerrainFill
     /// (Dreieck A 70/A 9, Periode der 6-m-Reihen). 0 = aus (OSM2ETS_FILL_ZONE).
     /// </summary>
     public static float ZoneReach = EnvF("OSM2ETS_FILL_ZONE", 8f);
+    /// <summary>Weitere Rechtecke (min, max) mit feinen Zonen-Reihen: um Wasserflächen (<see cref="Water"/>) folgt das
+    /// Gelände sonst nicht der Uferlinie. Rechtecke statt Abstand zum Ufer: die groben Reihen enden dann an Kanten
+    /// parallel zu ihnen und behalten ihre Breite – an krummen Zonenrändern zerfielen sie in viele Stücke mit
+    /// Restlücken (bei den Teichen der Testkarte 9000 zusätzliche Restreihen).</summary>
+    public static List<(Vector2 Min, Vector2 Max, bool Fine)>? ExtraZoneRects;
+    /// <summary>Zonen-Reihen dort: Abstand und halbe Breite (Reihen bei 0, 1, 2, 3, 5 m quer).</summary>
+    public const float ExtraZoneSpacing = 9.5f, ExtraZoneHalf = 5f;
     /// <summary>Zonen-Reihen: Abstand und halbe Breite (überlappen je 0,25 m), Überstand über die Zone.</summary>
     public const float ZoneSpacing = 2f, ZoneHalf = 1.25f, ZoneMargin = 3f;
     /// <summary>Raster der Zonen-Stücke 2 m statt 4 m (aus: OSM2ETS_FILL_ZONE_STEP4=1).</summary>
     public static bool ZoneStep2 = Environment.GetEnvironmentVariable("OSM2ETS_FILL_ZONE_STEP4") != "1";
     private static bool ZonePiece;
+    /// <summary>Zonen-Stück am Wasser: 4-m-Raster (die Reihen quer liegen 1 m auseinander; 2 m längs brachten
+    /// am Ufer kaum etwas, kosteten aber doppelt so viele Höhenpunkte).</summary>
+    private static bool WaterZonePiece;
     /// <summary>Stückenden verlängern (nur mit Zone; aus: OSM2ETS_FILL_NOPAD=1).</summary>
     public static bool PadEnds = Environment.GetEnvironmentVariable("OSM2ETS_FILL_NOPAD") != "1";
     /// <summary>Restreihen nach feinem Bedeckungsraster statt nach den 2-m-Zellen (aus: OSM2ETS_FILL_FINECOV=0).</summary>
@@ -524,7 +567,17 @@ public static class TerrainFill
     public static int ZonePieces;
     private const float PrefabCell = 8f, PrefabReach = 10f;
     private static readonly HashSet<(int, int)> PrefabCells = [];
+    private static readonly HashSet<(int, int)> FineWaterCells = [];
     public static int FinePieces;
+
+    private static bool InCells(HashSet<(int, int)> cells, float xa, float xb, float za, float zb)
+    {
+        if (cells.Count == 0) return false;
+        for (int i = (int)MathF.Floor(xa / PrefabCell); i <= (int)MathF.Floor(xb / PrefabCell); i++)
+            for (int j = (int)MathF.Floor(za / PrefabCell); j <= (int)MathF.Floor(zb / PrefabCell); j++)
+                if (cells.Contains((i, j))) return true;
+        return false;
+    }
 
     private static bool NearPrefab(float xa, float xb, float za, float zb)
     {
@@ -598,7 +651,8 @@ public static class TerrainFill
             // kurze Stücke: Standard-Schrittweite und eben (ohne Höhenpunkte) – mit eigenen
             // Höhenpunkten wurden sie im Editor teils nicht gezeichnet
             bool fine = FineNearPrefabs && NearPrefab(pa.X, pb.X, z - l, z + r);
-            t.StepSize = ZonePiece && ZoneStep2 ? StepSize.Meters2 : fine ? StepSize.Meters4 : StepSize.Meters16;
+            bool water2 = WaterZonePiece && ZoneStep2 && InCells(FineWaterCells, pa.X, pb.X, z - l, z + r);
+            t.StepSize = ZonePiece && ZoneStep2 && (!WaterZonePiece || water2) ? StepSize.Meters2 : fine || WaterZonePiece ? StepSize.Meters4 : StepSize.Meters16;
             if (fine) FinePieces++;
             if (ZonePiece) ZonePieces++;
             t.Recalculate();

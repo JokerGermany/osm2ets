@@ -42,6 +42,7 @@ v1–v46 (siehe Commits).
 | Wälder als Waldwände (Ränder bis 300 m neben der Strecke, Straßen durch Wald), Baumreihen | umgesetzt, im Spiel noch nicht geprüft |
 | Einzelbäume (`natural=tree`) als Baummodelle des Grundspiels | umgesetzt, im Spiel noch nicht geprüft |
 | Geländematerial: überall Gras, Grasarten/Erde nach OSM-Bodenbedeckung | umgesetzt, im Spiel noch nicht geprüft |
+| Wasserflächen (Teiche, Becken, Seen, Schwimmbecken, Flussflächen): abgesenkter Grund, ebenes durchsichtiges Wasser | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -385,6 +386,9 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
   `length`/`width` (kleinstes umschließendes Rechteck), `angle` (Richtung der Längsseite in Grad,
   x-z-Ebene), `area`, `fill` (Grundfläche / Rechteck), `height`, `levels`, `street` (Einheitsvektor
   [x, z] zur nächsten Straße oder null).
+- `forests[]`, `landcover[]`, `water[]`: Flächen mit `osm`, `leaf` bzw. `kind` und den Ringen
+  `outer`/`inner` [x, z]; `trees[]` (`pos`, `leaf`, `genus`, `height`) und `tree_rows[]` (`points`) –
+  siehe die Abschnitte zu Wäldern, Geländematerial und Wasser.
 - `junctions[]`: Knoten mit allen angrenzenden Straßenenden und deren Richtung –
   Grundlage für die geplanten Kreuzungs-Prefabs.
 - `qa.low_clearance_crossings`: höhenfreie Kreuzungen mit < 4,5 m Abstand.
@@ -392,9 +396,9 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 87 Tests, synthetische Netze
+python3 -m pytest                                   # 89 Tests, synthetische Netze
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 50 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 52 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude, Wasser
 ```
 
 Als echter Ausschnitt dient die OSM-Testdatei `core/files/north-bayreuth.osm.gz`
@@ -604,6 +608,51 @@ Brücken) bleiben. `OSM2ETS_NO_LANDCOVER=1` lässt alles beim alten Material. Un
 gewählten Materialien und die Reihenfolge der Quads (Spalte für Spalte, je Spalte die Reihen nach außen –
 aus der SCS-Karte abgeleitet wie für das Steinmaterial unter Brücken). Die erste Reihe des Straßengeländes
 am Fahrbahnrand bleibt beim Grundmaterial.
+
+## Wasser
+
+Wasserflächen aus OSM kommen ins Zwischenformat (`water[]`, ganze Datei, Umrisse auf 1,5 m vereinfacht,
+unter 20 m² weggelassen – `water` im Profil):
+
+| Art | OSM | Wasserfarbe (`terrain_color.water.sii`) | Grund |
+|---|---|---|---|
+| `pond`, `basin`, `water` | `natural=water` + `water=pond/basin`, `landuse=basin`, `natural=water` ohne (bekanntes) `water=*` | „green_02 01m“ | „muddy ground“ (20) |
+| `lake`, `reservoir`, `lock` | `water=lake/oxbow/reservoir/lock`, `landuse=reservoir` | „green_01 05m“ | „muddy ground“ |
+| `wastewater` | `water=wastewater` | „brown_01 01m“ | „muddy ground“ |
+| `river` | `water=river/stream/canal/ditch/drain`, `waterway=riverbank` | „green_02 01m“, Material mit kleinen Wellen | „riverbed wet 01 sandy soil 01“ |
+| `pool` | `leisure=swimming_pool` (nicht `indoor=yes`, `covered=yes`, `location=indoor/roof/underground`) | „blue_01 05m“ | „artificial tiles 01“ |
+| `kneipp` | `amenity=kneipp_water_cure` | „clear_01 05m“ | „pebble stones“ (29) |
+
+Der Writer (`Water.cs`) baut jede Fläche so:
+
+* **Wasserspiegel**: 0,15 m unter dem tiefsten Uferpunkt (Geländeraster alle 2 m entlang des Umrisses,
+  samt Böschungen neben Prefabs); Straßen (ohne Brücken/Tunnel) bis Fahrbahnrand + 12 m vom Ufer zählen mit
+  ihrer Fahrbahnhöhe − 0,5 m, damit kein Wasser über einer Straße liegt. Flussflächen nehmen je Ort den
+  tiefsten Uferpunkt im Umkreis von 150 m.
+* **Grund**: jede Rasterhöhe wird nachbearbeitet wie die Gebäudeflächen: innen fällt sie von 0,35 m über
+  dem Spiegel mit der Böschungsneigung der Art (0,35, Abwasser 0,8, Schwimm-/Kneippbecken 2) bis auf die Tiefe (Teiche
+  1,2–4 m nach Größe, Seen +1 m, Schwimmbecken 1,6 m, Kneippbecken 0,5 m); außen bis zum Überstand der
+  Wasserstreifen mindestens Ufer-Höhe, höheres Gelände zum Ufer hin geneigt (Neigung 0,5, über 8 m
+  ausklingend). Prefab-Böschungen und Unterführungen gelten danach weiter. Kanten, an denen zwei Flächen
+  aneinanderstoßen, sind kein Ufer.
+* **Wasseroberfläche**: ebene Terrain-Streifen in Ost-West-Richtung, 4 m breit (1 m neben anderem Wasser
+  näher als 6 m – Dämme zwischen Fischweihern), je Streifen so lang, wie die Fläche darin reicht; Material
+  „transparent water calm 01“ (`wtr_tran_15`), Farbe = Palette/Sichttiefe/Schaum wie in
+  `terrain_color.water.sii`, ohne Kollision und Detailvegetation.
+* **Uferform**: um jede Fläche (Rechteck + 3 m) feine Reihen im Füllgelände (quer 1 m, längs 4 m, 2 m bei
+  kleinen Becken, Schwimmbecken und Teichen neben anderem Wasser); Straßengelände endet 7 m vor dem Ufer
+  (mindestens 3 m breit) – seine Reihen werden nach außen 6–10 m breit. Quads im Wasser bekommen das
+  Material des Grunds, Quads bis 1,5 m außerhalb keine Detailvegetation; Bäume bleiben 1–2 m vom Wasser weg.
+
+Testgebiet Bayreuth-Nord: 257 von 273 Flächen (16 außerhalb des Geländerasters), 3286 Wasserstreifen,
+35 ha; die Karte wächst von 84 auf 96 MB (Füllgelände 31 900 → 39 900 Stücke). Offline gegen das
+geschriebene Gelände geprüft: außerhalb der OSM-Umrisse sichtbares Wasser 342 m² (Nähte unter 1 m am Ufer),
+11 m der 36,6 km Wasserkante enden über Gelände, das mehr als 5 cm unter dem Spiegel liegt; rund 5 % der
+Flächen bleiben trocken (Ufer etwas innerhalb des Umrisses, z. B. an Straßen auf einem Damm direkt am
+Becken). `OSM2ETS_NO_WATER=1` schaltet Wasser ab. Ungeprüft: dass SCS Wasser so baut (ebenes Gelände mit
+Wassermaterial), die Farbcodierung (Alpha 0 wie in Editor-Karten), Tiefen und Materialien; fließendes
+Wasser hat keine Strömungsrichtung (die Streifen laufen Ost-West). Noch nicht dabei: Flüsse und Bäche, die
+nur als Linie erfasst sind (`waterway=*`).
 
 ## Nächste Ausbaustufen
 

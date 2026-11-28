@@ -180,6 +180,14 @@ landcover:
   simplify_m: 3
   min_area_m2: 100
 
+# 10. Wasserflächen (natural=water mit water=*, landuse=basin/reservoir, Schwimmbecken im Freien,
+#     Kneippbecken) – ganze Karte. Der Writer senkt das Gelände zum Becken ab und legt eine ebene,
+#     durchsichtige Wasserfläche darüber (water.py).
+water:
+  enabled: true
+  simplify_m: 1.5
+  min_area_m2: 20
+
 # 1. Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen: Ziele höchstens
 #    max_distance_m (Weg entlang der Straße) von einer Kreuzung bzw. Abfahrt des Netzes;
 #    erreichte Gebiete werden ganz aufgenommen. Auf Autobahnen/Kraftfahrstraßen selbst

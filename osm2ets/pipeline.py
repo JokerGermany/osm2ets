@@ -386,6 +386,9 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     from .landcover import landcover_entries
     landcover, landcover_stats = landcover_entries(input_path, profile, projector)
     stats["landcover"] = landcover_stats if (profile.landcover or {}).get("enabled") else None
+    from .water import water_entries
+    water, water_stats = water_entries(input_path, profile, projector)
+    stats["water"] = water_stats if (profile.water or {}).get("enabled") else None
     stats["elevation"] = elevation_stats
     stats["elevation"]["implicit_bridges"] = implicit
     stats["industry_access"] = industry_stats
@@ -438,6 +441,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         "tree_rows": greenery["tree_rows"],
         "forest_near_m": float((profile.forests or {}).get("near_m", 300.0)),
         "landcover": landcover,
+        "water": water,
         "stats": stats,
         "qa": {"min_clearance_m": MIN_CLEARANCE_M, "low_clearance_crossings": low[:200],
                "dropped_short_pieces": dropped_info[:200]},
