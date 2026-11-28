@@ -10,8 +10,9 @@ import pytest
 from osm2ets.config import load_profile
 
 
-def write_osm(path: Path, nodes: dict, ways: list) -> Path:
-    """nodes: {id: (lon, lat)}, ways: [(id, [node ids], {tags})]"""
+def write_osm(path: Path, nodes: dict, ways: list, relations: list = ()) -> Path:
+    """nodes: {id: (lon, lat)}, ways: [(id, [node ids], {tags})],
+    relations: [(id, [(Typ n/w/r, ref, Rolle)], {tags})]"""
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6" generator="osm2ets-tests">']
     for nid, (lon, lat) in sorted(nodes.items()):
         lines.append(f'  <node id="{nid}" version="1" lat="{lat:.7f}" lon="{lon:.7f}"/>')
@@ -20,6 +21,12 @@ def write_osm(path: Path, nodes: dict, ways: list) -> Path:
         lines.extend(f'    <nd ref="{r}"/>' for r in refs)
         lines.extend(f"    <tag k={quoteattr(k)} v={quoteattr(str(v))}/>" for k, v in tags.items())
         lines.append("  </way>")
+    types = {"n": "node", "w": "way", "r": "relation"}
+    for rid, members, tags in relations:
+        lines.append(f'  <relation id="{rid}" version="1">')
+        lines.extend(f'    <member type="{types[t]}" ref="{ref}" role="{role}"/>' for t, ref, role in members)
+        lines.extend(f"    <tag k={quoteattr(k)} v={quoteattr(str(v))}/>" for k, v in tags.items())
+        lines.append("  </relation>")
     lines.append("</osm>")
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return path

@@ -160,6 +160,14 @@ buildings:
   exclude: [roof, carport, construction, ruins, "no", bridge, tent, ship, container, grandstand,
             proposed, demolished, abandoned, collapsed]
 
+# 8. Wälder (landuse=forest, natural=wood) – ganze Fläche; der Writer bepflanzt das Gelände darin
+#    (Nadel-, Laub- oder Mischwald nach leaf_type).
+forests:
+  enabled: true
+  # Umrisse vereinfachen (Echtmeter) und kleine Flächen weglassen (Echt-m²)
+  simplify_m: 5
+  min_area_m2: 500
+
 # 1. Zufahrten zu Industrie/Gewerbe/Firmen – in allen Detailstufen: Ziele höchstens
 #    max_distance_m (Weg entlang der Straße) von einer Kreuzung bzw. Abfahrt des Netzes;
 #    erreichte Gebiete werden ganz aufgenommen. Auf Autobahnen/Kraftfahrstraßen selbst

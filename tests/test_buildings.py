@@ -111,3 +111,20 @@ def test_unsorted_file_falls_back_to_closed_ways(tmp_path, profile, caplog):
     assert "nicht nach IDs sortiert" in caplog.text
     assert [b["osm"] for b in model["buildings"]] == ["w101"]
     assert model["buildings"][0]["kind"] == "house"
+
+
+
+def test_forest_with_clearing_and_leaf_type(tmp_path, profile):
+    """Wald als Multipolygon mit Lichtung und leaf_type; Wäldchen unter forests.min_area_m2 entfallen."""
+    nodes, ways = {}, []
+    _motorway(nodes, ways)
+    _box(nodes, ways, 201, 0, 300, 400, 200, tags={})                       # Außenring
+    _box(nodes, ways, 202, 0, 300, 50, 40, tags={})                         # Lichtung
+    _box(nodes, ways, 203, 500, 300, 10, 10, tags={"natural": "wood"})      # 100 m² – zu klein
+    rel = (301, [("w", 201, "outer"), ("w", 202, "inner")],
+           {"type": "multipolygon", "landuse": "forest", "leaf_type": "needleleaved"})
+    model = build(str(write_osm(tmp_path / "w.osm", nodes, ways, [rel])), profile, "L1")
+    fo = model["forests"]
+    assert [(f["osm"], f["leaf"], len(f["inner"])) for f in fo] == [("r301", "needleleaved", 1)]
+    xs = [p[0] for p in fo[0]["outer"]]
+    assert max(xs) - min(xs) == pytest.approx(400, abs=10)          # um die Meridiankonvergenz gedreht

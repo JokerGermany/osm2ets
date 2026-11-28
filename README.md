@@ -39,6 +39,7 @@ v1–v46 (see commits).
 | Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
 | Railways: tracks near the route with AI trains (no level crossings, switches, overhead wires) | implemented, not yet checked in game |
 | Buildings: OSM `building=*` near the route as SCS models (base game, German models preferred) | implemented, not yet checked in game |
+| Forests: `landuse=forest`/`natural=wood` as vegetation of the fill terrain | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
@@ -386,9 +387,9 @@ This is an approximation from OSM tags, not a survey.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 83 tests, synthetic networks
+python3 -m pytest                                   # 84 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 44 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 46 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
 ```
 
 The real extract is the OSM test file `core/files/north-bayreuth.osm.gz` from the
@@ -534,6 +535,20 @@ Limits:
   `"+z"` turns all buildings around).
 - Shapes (L, U, courtyard), roof shape, colour and material from OSM are not reproduced; some SCS
   models are clearly taller than village houses (e.g. `village_close_03_de`, 15.5 m).
+
+## Forests
+
+Areas with `landuse=forest` or `natural=wood` (also multipolygons with clearings) go completely into the
+intermediate format (`forests[]`: `osm`, `leaf`, `outer`, `inner`; outlines simplified to 5 m, areas
+under 500 m² dropped – `forests` in the profile). The writer splits the fill-terrain strips at forest
+edges and gives each strip side up to three vegetation bands (across the strip, 5 m steps) with an SCS
+vegetation set: `needleleaved` → "Spruce mix" (`v2_37`), `broadleaved` → "leaved" (`v2_14`), otherwise
+"ger - mixed forest" (`v2_1ger`); trees with collision. Kept free: 8 m next to carriageways, 12 m
+around prefab lanes, 4 m around buildings. `OSM2ETS_NO_FORESTS=1` turns forests off.
+
+Limits: single trees (`natural=tree`) and tree rows are still missing; vegetation only on the fill
+terrain, not on road terrain; the density (TruckLib value 150) and whether From/To count across the
+strip from its centre line in game are unverified; forest edges follow the strip grid (rows, 5 m bands).
 
 ## Roadmap
 

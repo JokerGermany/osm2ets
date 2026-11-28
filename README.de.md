@@ -39,6 +39,7 @@ v1–v46 (siehe Commits).
 | Sichtstücke: Straßen höherer Stufen unter/über Brücken und unmittelbar neben der Strecke | umgesetzt, im Spiel noch nicht geprüft |
 | Eisenbahn: Gleise nahe der Strecke mit KI-Zügen (ohne Bahnübergänge, Weichen, Oberleitung) | umgesetzt, im Spiel noch nicht geprüft |
 | Gebäude: OSM-`building=*` nahe der Strecke als SCS-Modelle (Grundspiel, deutsche bevorzugt) | umgesetzt, im Spiel noch nicht geprüft |
+| Wälder: `landuse=forest`/`natural=wood` als Bewuchs des Füllgeländes | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -389,9 +390,9 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 83 Tests, synthetische Netze
+python3 -m pytest                                   # 84 Tests, synthetische Netze
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 44 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 46 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
 ```
 
 Als echter Ausschnitt dient die OSM-Testdatei `core/files/north-bayreuth.osm.gz`
@@ -540,6 +541,20 @@ Grenzen:
   angenommen; `"+z"` dreht alle Gebäude um).
 - Formen (L-, U-Form, Innenhof), Dachform, Farbe und Material aus OSM werden nicht nachgebildet; manche
   SCS-Modelle sind deutlich höher als Häuser im Dorf (z. B. `village_close_03_de` mit 15,5 m).
+
+## Wälder
+
+Flächen mit `landuse=forest` oder `natural=wood` (auch Multipolygone mit Lichtungen) kommen ganz ins
+Zwischenformat (`forests[]`: `osm`, `leaf`, `outer`, `inner`; Umrisse auf 5 m vereinfacht, Flächen unter
+500 m² entfallen – `forests` im Profil). Der Writer teilt die Streifen des Füllgeländes an Waldrändern
+und gibt jeder Streifenseite bis zu drei Bänder Bewuchs (quer zum Streifen, 5-m-Raster) mit einem
+SCS-Vegetationssatz: `needleleaved` → „Spruce mix“ (`v2_37`), `broadleaved` → „leaved“ (`v2_14`), sonst
+„ger - mixed forest“ (`v2_1ger`); Bäume mit Kollision. Frei bleiben 8 m neben Fahrbahnen, 12 m um
+Prefab-Spuren und 4 m um Gebäude. `OSM2ETS_NO_FORESTS=1` schaltet die Wälder ab.
+
+Grenzen: Einzelbäume (`natural=tree`) und Baumreihen fehlen noch; Bewuchs nur auf dem Füllgelände, nicht
+auf dem Straßengelände; die Dichte (TruckLib-Wert 150) und ob From/To im Spiel quer zum Streifen ab der
+Mittellinie zählen, sind ungeprüft; Waldränder folgen dem Raster der Streifen (Reihen, 5-m-Bänder).
 
 ## Nächste Ausbaustufen
 

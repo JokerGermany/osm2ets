@@ -87,6 +87,7 @@ class Profile:
     extras: dict = field(default_factory=dict)
     railway: dict = field(default_factory=dict)
     buildings: dict = field(default_factory=dict)
+    forests: dict = field(default_factory=dict)
 
     def lod(self, name: str) -> LodConfig:
         try:
@@ -253,6 +254,15 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
                                                 "demolished", "abandoned", "collapsed"]), "buildings.exclude"),
     }
 
+    fo = data.get("forests") or {}
+    if not isinstance(fo, dict):
+        raise ConfigError("forests: YAML-Objekt erwartet")
+    forests = {
+        "enabled": bool(fo.get("enabled", True)),
+        "simplify_m": _float(fo, "simplify_m", "forests", default=5.0),
+        "min_area_m2": _float(fo, "min_area_m2", "forests", default=500.0, positive=False),
+    }
+
     profile = Profile(
         name=str(data.get("name", "profil")),
         description=str(data.get("description", "")),
@@ -278,6 +288,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         extras=extras,
         railway=railway,
         buildings=buildings,
+        forests=forests,
         industry={
             "enabled": bool((data.get("industry") or {}).get("enabled", True)),
             "highway": _str_set((data.get("industry") or {}).get("highway", drivable_default), "industry.highway"),

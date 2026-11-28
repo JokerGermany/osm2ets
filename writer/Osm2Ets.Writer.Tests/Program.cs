@@ -53,6 +53,7 @@ var tests = new List<(string Name, Action Body)>
     ("Gebäude: Modell auf dem OSM-Rechteck, Vorderseite zur Straße; auf der Fahrbahn weggelassen", BuildingPlacedFacingStreet),
     ("Gebäude: lange Halle aus mehreren gleichen Modellen längs", LongHallTiled),
     ("Gebäude: großer Markt 126 × 92 m aus Stücken längs und quer", WideHallTiled),
+    ("Wald: Bänder auf dem Geländestreifen, Lichtung und Prefab frei", ForestBands),
 };
 
 int failed = 0;
@@ -280,6 +281,32 @@ static void WideHallTiled()
     Check(map.MapItems.Values.OfType<Model>().Count() == ch.Tiles * ch.Rows, "Stückzahl");
     // Wohnhäuser werden nicht quer zusammengesetzt
     Check(OsmBuildings.Choose(cat, "house", 12, 30, null, "w8") is not { Rows: > 1 }, "Haus quer zusammengesetzt");
+}
+
+static void ForestBands()
+{
+    // Nadelwald x 0…400, z −300…−40 mit Lichtung x 100…200, z −200…−100; Autobahn (Sample) bei x = 1000
+    // weit weg. Streifen in Zeile z = 0 von x 0 bis 80, 200 m nach Norden: Band von ~40 bis 200 m.
+    var input = Sample();
+    input.Forests.Add(new ForestEntry
+    {
+        Osm = "w1", Leaf = "needleleaved",
+        Outer = [[0, -300], [400, -300], [400, -40], [0, -40]],
+        Inner = [[[100, -200], [200, -200], [200, -100], [100, -100]]],
+    });
+    var fo = new Forests(input, input.Roads, new Dictionary<RoadEntry, ResolvedStyle[]>(), [new Vector2(300, -250)]);
+    Check(fo.At(300, -245) is null, "Prefab nicht frei");
+    Check(fo.At(50, -250) == "needleleaved" && fo.At(150, -150) is null && fo.At(50, 0) is null, "At");
+    var map = new Map();
+    var t = Terrain.Add(map, new Vector3(0, 0, 0), new Vector3(80, 0, 0), "34", 200, 0);
+    fo.Plant(t, 0, 80, 0, 200, 0);
+    var v = t.Left.Vegetation[0];
+    Check(v.Name.ToString() == Forests.Sets["needleleaved"] && MathF.Abs(v.From - 40) <= Forests.Band && v.To >= 195, $"Band {v.Name} {v.From}…{v.To}");
+    Check(t.Right.Vegetation.All(x => x.To == 0), "Südseite ohne Wald bepflanzt");
+    // Streifen über der Lichtung (x 100…200): zwei Bänder um die Lichtung herum
+    var t2 = Terrain.Add(map, new Vector3(120, 0, 0), new Vector3(180, 0, 0), "34", 300, 0);
+    fo.Plant(t2, 120, 180, 0, 300, 0);
+    Check(t2.Left.Vegetation[0].To <= 100 + Forests.Band && t2.Left.Vegetation[1].From >= 200 - Forests.Band, "Lichtung nicht frei");
 }
 
 static void CountryOnNetworkNodesOnly()

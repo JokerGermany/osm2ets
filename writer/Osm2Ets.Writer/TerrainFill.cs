@@ -78,6 +78,8 @@ public static class TerrainFill
     }
     /// <summary>Alle gesetzten Füllstücke (für <see cref="CoverCap.Settle"/>).</summary>
     private static readonly List<Terrain> placedFill = [];
+    /// <summary>Wälder für den Bewuchs des Füllgeländes (null: keiner).</summary>
+    public static Forests? Forest;
     public static bool Chain = Environment.GetEnvironmentVariable("OSM2ETS_FILL_CHAIN") is not null;
     /// <summary>Mittellinie (Zeile 0) mit eigenen Höhenpunkten belegen, wie in der SCS-Karte
     /// (dort ~7,5 % aller Offsets in Zeile 0). Aus: OSM2ETS_FILL_NOROW0.</summary>
@@ -544,6 +546,9 @@ public static class TerrainFill
         // höchstens MaxPiece m – spart viele Items auf flachem, freiem Feld
         var hs = new float[run.Count];
         for (int i = 0; i < run.Count; i++) hs[i] = FH(grid, run[i].X, z);
+        // Wald: Stücke an Waldrändern teilen (Kennung des Querschnitts muss gleich bleiben)
+        var sig = new int[run.Count];
+        if (Forest is { } fo) for (int i = 0; i < run.Count; i++) sig[i] = fo.Signature(run[i].X, z, run[i].L, run[i].R);
         float H(int i) => hs[i];
         var idx = new List<int> { 0 };
         int start = 0;
@@ -558,6 +563,7 @@ public static class TerrainFill
                 {
                     float u = (run[i].X - run[start].X) / (run[end].X - run[start].X);
                     if (MathF.Abs(H(start) + (H(end) - H(start)) * u - H(i)) > 0.4f) ok = false;
+                    if (i > start && i < end && sig[i] != sig[start]) ok = false;
                     lmin = MathF.Min(lmin, run[i].L); lmax = MathF.Max(lmax, run[i].L);
                     rmin = MathF.Min(rmin, run[i].R); rmax = MathF.Max(rmax, run[i].R);
                 }
@@ -607,6 +613,7 @@ public static class TerrainFill
                 if (ShapeSide(t.Left.Terrain, grid, pa, pb, l, -1, fine ? 4 : 16) < 0) Mismatch++;
                 if (ShapeSide(t.Right.Terrain, grid, pa, pb, r, +1, fine ? 4 : 16) < 0) Mismatch++;
             }
+            Forest?.Plant(t, pa.X, pb.X, z, l, r);
             map.AddSector(Map.GetSectorOfCoordinate((pa + pb) / 2));
             area += (pb.X - pa.X) * (l + r);
             n++;

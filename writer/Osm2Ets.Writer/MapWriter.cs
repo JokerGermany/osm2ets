@@ -628,7 +628,11 @@ public static class MapWriter
             var cover = TerrainFill.WideRoadTerrain && CoverCap.Enabled ? CoverCap.Build(valid, firstItem, lastItem, styles) : null;
             cover?.AddPrefabLanes(PrefabFootprint.Centres3(map));
             TerrainFill.FinePrefabLanes = PrefabFootprint.KitLanes(map);
+            TerrainFill.Forest = Forests.Enabled && input.Forests.Count > 0 ? new Forests(input, valid, styles, PrefabFootprint.All(map)) : null;
+            Forests.Bands = Forests.Pieces = 0;
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes, cover);
+            if (TerrainFill.Forest is { } fo)
+                warnings.Insert(0, $"Info: Wälder: {fo.Count} Flächen, {Forests.Pieces} Geländestücke bepflanzt ({Forests.Bands} Bänder)");
             if (cover is not null)
                 warnings.Insert(0, $"Info: Füllgelände unter Fahrbahn/Straßengelände begrenzt: {CoverCap.CoverLowered} Punkte, am Rand per Böschung ({CoverCap.Slope:0.0}) gesenkt: {CoverCap.ConeLowered}, angehoben: {CoverCap.ConeRaised} Punkte, Durchstoßungen nachträglich abgesenkt: {CoverCap.SettledQuads} Quads ({CoverCap.Settled} Höhenpunkte, höchstens {CoverCap.SettledMax:0.00} m; geprüft auch gegen {cover.PrefabSquares} Prefab-Spurpunkte)");
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Stücke mit 4-m-Raster an Prefabs: {TerrainFill.FinePieces}, davon in feinen Reihen um Anschluss-Prefabs: {TerrainFill.ZonePieces}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered}, angehoben: {RoadCap.Raised} Punkte");
