@@ -70,7 +70,9 @@ public static class Forests
     static Kind[] RowsFor(string leaf) => Rows.GetValueOrDefault(leaf) ?? Rows["mixed"];
 
     public sealed record Result(int Forests, double EdgeKm, double RoadKm, int Rows, int Items, int TreeRows, double TreeRowKm,
-                                int Trees = 0, int TreesBlocked = 0, Dictionary<string, int>? TreesByModel = null);
+                                int Trees = 0, int TreesBlocked = 0, Dictionary<string, int>? TreesByModel = null, int TreesShifted = 0);
+    /// <summary>So weit darf ein Einzelbaum aus dem Weg geschoben werden.</summary>
+    public const float MaxShift = 10f;
 
     /// <summary>Einzelbaum-Modell des Grundspiels: Kürzel (model.sii), Höhe der Krone über dem Ursprung (Bounding-Box
     /// der .pmg, Meter), Blattwerk, Gattungen (genus), für die es gilt.</summary>
@@ -457,7 +459,7 @@ public static class Forests
             if (rowsN > before) treeRows++;
         }
         // 4) Einzelbäume: Modell nach Gattung/Blattwerk/Höhe, Stamm nicht auf Fahrbahn, Prefab-Spur oder in Gebäuden
-        int trees = 0, blocked = 0;
+        int trees = 0, blocked = 0, shifted = 0;
         var byModel = new Dictionary<string, int>();
         foreach (var t in input.Trees)
         {
@@ -465,14 +467,27 @@ public static class Forests
             float y = heightAt is null ? 0f : heightAt(p.X, p.Y);
             if (!float.IsFinite(y)) { blocked++; continue; }
             var (m, scale) = PickTree(t);
-            if (ix.Blocked(p, trunk: true, crown: m.Crown * scale))
+            // Steht der Stamm im Weg oder ragt die Krone zu weit über die Fahrbahn: den Baum so wenig wie möglich
+            // verschieben (bis MaxShift); bei gleicher Verschiebung lieber das gewählte Modell als eine kleinere Krone
+            var models = TreeModels.Where(x => x.Leaf == m.Leaf && x.Crown <= m.Crown).OrderByDescending(x => x.Crown == m.Crown).ThenByDescending(x => x.Crown).ToList();
+            Vector2? found = null;
+            for (float r = 0; r <= MaxShift && found is null; r += 1f)
             {
-                // zu ausladend für die Lücke: kleinere Krone desselben Blattwerks versuchen (Eiche → Buche)
-                var alt = TreeModels.Where(x => x.Leaf == m.Leaf && x.Crown < m.Crown).OrderByDescending(x => x.Crown)
-                                    .FirstOrDefault(x => !ix.Blocked(p, trunk: true, crown: x.Crown * scale));
-                if (alt is null) { blocked++; continue; }
-                m = alt;
+                int dirs = r == 0 ? 1 : 16;
+                foreach (var cand in models)
+                {
+                    for (int k = 0; k < dirs && found is null; k++)
+                    {
+                        float a = k * MathF.Tau / dirs;
+                        var q = p + r * new Vector2(MathF.Cos(a), MathF.Sin(a));
+                        if (!ix.Blocked(q, trunk: true, crown: cand.Crown * scale) && (heightAt is null || float.IsFinite(heightAt(q.X, q.Y))))
+                            found = q;
+                    }
+                    if (found is not null) { m = cand; break; }
+                }
             }
+            if (found is not { } fp) { blocked++; continue; }
+            if (fp != p) { shifted++; p = fp; y = heightAt is null ? 0f : heightAt(p.X, p.Y); }
             var item = Model.Add(map, new Vector3(p.X, y, p.Y), m.Token, "default", "default");
             float yaw = (Hash(t.Osm + "/yaw") % 3600) / 3600f * MathF.Tau;
             item.Node.Rotation = Quaternion.CreateFromYawPitchRoll(yaw, 0, 0);
@@ -481,7 +496,7 @@ public static class Forests
             trees++;
             byModel[m.Name] = byModel.GetValueOrDefault(m.Name) + 1;
         }
-        return new Result(ix.Count, edgeM / 1000, roadM / 1000, rowsN, items, treeRows, treeRowM / 1000, trees, blocked, byModel);
+        return new Result(ix.Count, edgeM / 1000, roadM / 1000, rowsN, items, treeRows, treeRowM / 1000, trees, blocked, byModel, shifted);
     }
 
     /// <summary>Punkte näher als 2 m am Vorgänger und Spitzen (Richtungswechsel über 100°, z. B. an spitzen Ecken nach

@@ -678,7 +678,7 @@ public static class MapWriter
         if (forestResult is { } fr)
             warnings.Insert(0, $"Info: Wälder: {fr.Forests} Flächen, Waldwände {fr.EdgeKm:0.0} km Waldrand und {fr.RoadKm:0.0} km an Straßen durch Wald " +
                                $"({fr.Rows} Reihen, {fr.Items} Kurven-Items); Baumreihen: {fr.TreeRows} ({fr.TreeRowKm:0.0} km); Einzelbäume: {fr.Trees} von {input.Trees.Count} gesetzt " +
-                               $"({fr.TreesBlocked} auf Fahrbahn, Prefab, in Gebäuden oder ohne Gelände)" +
+                               $"({fr.TreesShifted} aus dem Weg verschoben, höchstens {Forests.MaxShift:0} m; {fr.TreesBlocked} ohne Platz oder ohne Gelände)" +
                                (fr.TreesByModel is { Count: > 0 } bm ? ": " + string.Join(", ", bm.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) : ""));
         if (buildingResult is null && OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
             buildingResult = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),

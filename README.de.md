@@ -573,8 +573,9 @@ Einzelbäume werden Baummodelle des Grundspiels (vermessen aus den Spieldateien)
 und abgestorbene Stämme (7,8 bzw. 4,5 m, `leafless`). Mit `height` das Modell, dessen Höhe am besten passt,
 auf die Höhe skaliert (0,6–1,4); ohne Angaben Buche oder Eiche nach OSM-ID, ±15 % Größe, Drehung nach
 OSM-ID. Der Stamm steht mindestens 1,5 m neben der Fahrbahn, und die Krone ragt höchstens 2 m über eine
-Fahrbahn (Wege ausgenommen) – sonst die kleinere Krone (Buche statt Eiche) oder kein Baum; nicht auf
-Prefab-Spuren (6 m) und nicht in Gebäuden. `OSM2ETS_NO_FORESTS=1` schaltet Wälder, Baumreihen und
+Fahrbahn (Wege ausgenommen); nicht auf Prefab-Spuren (6 m) und nicht in Gebäuden. Steht ein Baum im Weg,
+wird er so wenig wie möglich verschoben (bis 10 m), bei gleichem Weg lieber mit seinem Modell als mit
+kleinerer Krone (Buche statt Eiche); reicht das nicht, fällt er weg. `OSM2ETS_NO_FORESTS=1` schaltet Wälder, Baumreihen und
 Einzelbäume ab.
 
 Grenzen: Ob die Bäume einer Kurve im Spiel auf dem Gelände stehen oder der Kurvenlinie folgen, ist

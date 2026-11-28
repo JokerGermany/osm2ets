@@ -56,7 +56,7 @@ var tests = new List<(string Name, Action Body)>
     ("Wald: Waldwände am Rand (bis 300 m neben der Straße, auch an Lichtungen), innen leer", ForestWalls),
     ("Wald: Straße durch den Wald – Wände beiderseits, Fahrbahn frei", ForestWallsAlongRoadThroughForest),
     ("Baumreihe: eine Reihe Bäume, an der Fahrbahn unterbrochen", TreeRowAsCurve),
-    ("Einzelbaum: Modell nach Gattung/Blattwerk/Höhe, skaliert; nicht auf der Fahrbahn", SingleTrees),
+    ("Einzelbaum: Modell nach Gattung/Blattwerk/Höhe, skaliert; aus der Fahrbahn geschoben", SingleTrees),
 };
 
 int failed = 0;
@@ -358,16 +358,20 @@ static void SingleTrees()
         new TreeEntry { Osm = "n4", Leaf = "broadleaved", Pos = [1160, 1700], Height = 20 },
         new TreeEntry { Osm = "n5", Leaf = "broadleaved", Pos = [1180, 1700] },
         new TreeEntry { Osm = "n6", Leaf = "broadleaved", Pos = [1000, 1700] },
+        new TreeEntry { Osm = "n8", Leaf = "broadleaved", Genus = "Fagus", Pos = [1000 - Forests.Index.HalfRoad(MappingConfig.Load(ShippedMapping()).Resolve(input.Roads[1].Runs[0])) - 1, 1800] },
     ]);
     var cfg = MappingConfig.Load(ShippedMapping());
     var (map, result) = MapWriter.Build(input, cfg);
     var models = map.MapItems.Values.OfType<Model>().ToDictionary(m => (int)MathF.Round(m.Node.Position.X), m => m);
-    Check(!models.ContainsKey(1000) && models.Count == 5, $"{models.Count} Bäume, auf der Fahrbahn: {models.ContainsKey(1000)}");
+    // n6 mitten auf der Autobahn: 10 m reichen nicht – weggelassen; n8 (Buche) 1 m neben dem Fahrbahnrand: verschoben
+    Check(models.Count == 6 && !models.ContainsKey(1000), $"{models.Count} Bäume, auf der Fahrbahn: {models.ContainsKey(1000)}");
+    var moved = map.MapItems.Values.OfType<Model>().Single(m => MathF.Abs(m.Node.Position.Z - 1800) <= Forests.MaxShift);
+    Check(moved.Name.ToString() == "1036" && moved.Node.Position.X < 1000 - 2, $"verschobener Baum {moved.Node.Position} {moved.Name}");
     Check(models[1100].Name.ToString() == "122" && models[1120].Name.ToString() == "ibe_1u25" && models[1140].Name.ToString() == "shr_1z870", "Modellwahl");
     Check(models[1160].Name.ToString() == "122" && MathF.Abs(models[1160].Scale.Y - 20 / 19.58f) < 0.01f, $"20-m-Baum: {models[1160].Name} {models[1160].Scale}");
     Check(models[1180].Name.ToString() is "122" or "1036" && models[1180].Scale.X is >= 0.85f and <= 1.15f, "Laubbaum ohne Angaben");
     Check(models.Values.All(m => m.Look.ToString() == "default" && m.Variant.ToString() == "default" && m.Scale.X == m.Scale.Z), "Look/Variante/Maßstab");
-    Check(result.Warnings.Any(w => w.Contains("Einzelbäume: 5 von 6 gesetzt")), "Info-Zeile");
+    Check(result.Warnings.Any(w => w.Contains("Einzelbäume: 6 von 7 gesetzt (1 aus dem Weg verschoben")), "Info-Zeile");
 
     // Eiche 4 m neben dem Fahrbahnrand der Autobahn: ihre Krone (10 m) ragte zu weit über die Fahrbahn – Buche
     var st = cfg.Resolve(input.Roads[1].Runs[0]);
@@ -376,8 +380,10 @@ static void SingleTrees()
     input2.Trees.Add(new TreeEntry { Osm = "n7", Leaf = "broadleaved", Genus = "Quercus", Pos = [1000 + half + 4, 1700] });
     var (map2, _) = MapWriter.Build(input2, cfg);
     var oak = map2.MapItems.Values.OfType<Model>().Single();
-    Check(oak.Name.ToString() == "1036", $"Krone über der Fahrbahn: {oak.Name}");
-    Check(4 >= Forests.TreeModels.First(m => m.Token == "1036").Crown * oak.Scale.X - Forests.MaxOverhang - 0.01f, "Buchenkrone ragt zu weit");
+    var tm = Forests.TreeModels.First(m => m.Token == oak.Name.ToString());
+    float edge = MathF.Abs(oak.Node.Position.X - 1000) - half;
+    Check(edge >= tm.Crown * oak.Scale.X - Forests.MaxOverhang - 0.01f, $"Krone ragt zu weit: {tm.Name} {edge:0.0} m");
+    Check(Vector2.Distance(new Vector2(oak.Node.Position.X, oak.Node.Position.Z), new Vector2(1000 + half + 4, 1700)) <= Forests.MaxShift + 0.01f, "zu weit verschoben");
 }
 
 static void CountryOnNetworkNodesOnly()

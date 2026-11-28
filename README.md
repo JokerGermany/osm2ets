@@ -565,8 +565,9 @@ Single trees become base-game tree models (measured from the game files): beech 
 needleleaved) and dead trunks (7.8 and 4.5 m, `leafless`). With `height` the model whose height fits
 best, scaled to the height (0.6–1.4); without data beech or oak by OSM ID, ±15 % size, rotation by OSM
 ID. The trunk stands at least 1.5 m from the carriageway and the crown overhangs a carriageway by at
-most 2 m (paths excepted) – otherwise the smaller crown (beech instead of oak) or no tree; not on prefab
-lanes (6 m) and not in buildings. `OSM2ETS_NO_FORESTS=1` turns forests, tree rows and single trees off.
+most 2 m (paths excepted); not on prefab lanes (6 m) and not in buildings. A tree in the way is moved
+as little as possible (up to 10 m), at equal distance keeping its model rather than a smaller crown (beech
+instead of oak); if that is not enough it is dropped. `OSM2ETS_NO_FORESTS=1` turns forests, tree rows and single trees off.
 
 Limits: whether the trees of a curve stand on the terrain in game or follow the curve line is
 unverified. Forests farther than 300 m from the route are missing (no far tree walls; the base-game far
