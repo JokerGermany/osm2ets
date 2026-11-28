@@ -17,7 +17,8 @@ namespace Osm2Ets.Writer;
 /// Eine Wand besteht aus <see cref="RowOffsets"/>.Length parallelen Reihen: vorn Unterholz („BI N - roadside
 /// forest undergrowth“), dahinter Bäume nach leaf_type. Jede Reihe ist eine Kette kurzer Kurven, deren Knoten
 /// auf dem Gelände liegen (die Bäume einer Kurve stehen auf deren Linie). Frei bleiben Fahrbahnen samt Rand,
-/// Prefab-Spuren und Gebäude. Baumreihen (natural=tree_row) werden als eine Reihe gesetzt.
+/// Prefab-Spuren und Gebäude. Baumreihen (natural=tree_row) werden als eine Reihe gesetzt, Einzelbäume
+/// (natural=tree) als Baummodelle des Grundspiels (<see cref="TreeModels"/>, <see cref="PickTree"/>).
 /// Aus: OSM2ETS_NO_FORESTS=1.
 /// </summary>
 public static class Forests
@@ -28,6 +29,11 @@ public static class Forests
     public const float PathClear = 2f;
     public const float PrefabClear = 12f;
     public const float BuildingClear = 4f;
+    /// <summary>Einzelbäume: Stamm mindestens so weit neben der Fahrbahn (samt Modellversatz) bzw. Prefab-Spuren.</summary>
+    public const float TrunkRoadClear = 1.5f, TrunkPrefabClear = 6f;
+    /// <summary>So weit darf die Krone eines Einzelbaums über eine Fahrbahn ragen (Wege ausgenommen).</summary>
+    public const float MaxOverhang = 2f;
+    static float MaxCrown => TreeModels.Max(m => m.Crown) * TreeMaxScale;
     /// <summary>Abstand der Stützpunkte längs einer Reihe.</summary>
     public const float Step = 5f;
     /// <summary>Reihen ab dem Waldrand (bzw. ab der Freihaltezone der Straße) nach innen; Reihe 0 = Unterholz.</summary>
@@ -63,7 +69,45 @@ public static class Forests
     };
     static Kind[] RowsFor(string leaf) => Rows.GetValueOrDefault(leaf) ?? Rows["mixed"];
 
-    public sealed record Result(int Forests, double EdgeKm, double RoadKm, int Rows, int Items, int TreeRows, double TreeRowKm);
+    public sealed record Result(int Forests, double EdgeKm, double RoadKm, int Rows, int Items, int TreeRows, double TreeRowKm,
+                                int Trees = 0, int TreesBlocked = 0, Dictionary<string, int>? TreesByModel = null);
+
+    /// <summary>Einzelbaum-Modell des Grundspiels: Kürzel (model.sii), Höhe der Krone über dem Ursprung (Bounding-Box
+    /// der .pmg, Meter), Blattwerk, Gattungen (genus), für die es gilt.</summary>
+    public sealed record TreeModel(string Token, string Name, float Top, float Crown, string Leaf, string[] Genera);
+    /// <summary>Vermessen aus den Spieldateien (ETS2 1.61, Look und Variante je „default“).</summary>
+    public static readonly TreeModel[] TreeModels =
+    [
+        // Kürzel, Name, Höhe, Kronenradius (größte Ausdehnung vom Stamm), Blattwerk, Gattungen
+        new("1036", "buk_tree_1_high_model", 13.37f, 5.05f, "broadleaved", ["Fagus", "Carpinus"]),      // Buche
+        new("122", "single_oak_tree", 19.58f, 10.3f, "broadleaved", ["Quercus"]),                        // Eiche
+        new("2sc", "sc_single_giant_tree1", 29.33f, 11.42f, "broadleaved", []),                          // großer Laubbaum
+        new("ibe_1u25", "fir_tall1", 28.0f, 4.8f, "needleleaved", []),                                   // Tanne
+        new("shr_1z870", "tree_dry_generic_trunk_tall02_model", 7.84f, 0.96f, "leafless", []),           // toter Stamm
+        new("shr_1z869", "tree_dry_generic_trunk_tall01_model", 4.53f, 0.34f, "leafless", []),
+    ];
+    public const float TreeMinScale = 0.6f, TreeMaxScale = 1.4f;
+
+    /// <summary>Modell und Maßstab für einen Einzelbaum: Gattung, sonst Blattwerk; mit Höhe das Modell, dessen Höhe am
+    /// besten passt (skaliert auf die Höhe, <see cref="TreeMinScale"/> … <see cref="TreeMaxScale"/>), sonst Buche oder
+    /// Eiche nach OSM-ID und ±15 % Streuung.</summary>
+    public static (TreeModel Model, float Scale) PickTree(TreeEntry t)
+    {
+        uint hsh = Hash(t.Osm);
+        var leaf = t.Leaf is "needleleaved" or "leafless" ? t.Leaf : "broadleaved";
+        var cands = TreeModels.Where(m => m.Leaf == leaf).ToList();
+        var byGenus = t.Genus is { } g ? TreeModels.FirstOrDefault(m => m.Genera.Contains(g)) : null;
+        TreeModel model;
+        if (byGenus is not null) model = byGenus;
+        else if (t.Height is { } h0 && h0 > 0)
+            model = cands.MinBy(m => MathF.Abs(MathF.Log((float)h0 / m.Top)))!;
+        else if (leaf == "broadleaved") model = cands[(int)(hsh % 2)];      // Buche oder Eiche
+        else model = cands[0];
+        float scale = t.Height is { } h && h > 0
+            ? Math.Clamp((float)h / model.Top, TreeMinScale, TreeMaxScale)
+            : 0.85f + 0.3f * (hsh >> 8 & 0xFFFF) / 65535f;
+        return (model, scale);
+    }
 
     private sealed record Poly(Vector2[] Outer, List<Vector2[]> Inner, string Leaf, Vector2 Min, Vector2 Max);
 
@@ -73,7 +117,7 @@ public static class Forests
         const float Cell = 50f, NearCell = 20f;
         readonly Dictionary<(int, int), List<Poly>> polys = [];
         readonly Dictionary<(int, int), List<(Vector2 A, Vector2 B)>> edges = [];
-        readonly Dictionary<(int, int), List<(Vector2 A, Vector2 B, float Half)>> segs = [];
+        readonly Dictionary<(int, int), List<(Vector2 A, Vector2 B, float Half, float Clear, bool Path)>> segs = [];
         readonly Dictionary<(int, int), List<Vector2>> lanes = [];
         readonly List<(Vector2 C, Vector2 U, float HL, float HW)> houses = [];
         readonly Dictionary<(int, int), List<int>> houseCells = [];
@@ -123,9 +167,11 @@ public static class Forests
                     var s = st[Math.Min(i, st.Length - 1)];
                     var a3 = MapWriter.ToVector(r.Points[i]); var b3 = MapWriter.ToVector(r.Points[i + 1]);
                     var a = new Vector2(a3.X, a3.Z); var b = new Vector2(b3.X, b3.Z);
-                    float half = HalfClear(r, i, s);
-                    foreach (var k in Cells(Vector2.Min(a, b) - new Vector2(half), Vector2.Max(a, b) + new Vector2(half)))
-                        Put(segs, k, (a, b, half));
+                    float half = HalfRoad(s), clear = HalfClear(r, i, s) - half;
+                    bool path = IsPath(r.Runs.FirstOrDefault(u => u.From <= i && i < u.To)?.Highway ?? "");
+                    float reachR = half + MathF.Max(clear, MaxCrown - MaxOverhang);
+                    foreach (var k in Cells(Vector2.Min(a, b) - new Vector2(reachR), Vector2.Max(a, b) + new Vector2(reachR)))
+                        Put(segs, k, (a, b, half, clear, path));
                     // Zellen (NearCell), deren Mitte höchstens nearM von der Achse entfernt ist
                     int n = Math.Max(1, (int)(Vector2.Distance(a, b) / 10));
                     for (int t = 0; t <= n; t++)
@@ -147,19 +193,22 @@ public static class Forests
             {
                 float ang = (float)(b.Angle * Math.PI / 180);
                 var c = new Vector2((float)b.Center[0], (float)b.Center[1]);
-                float hl = (float)b.Length / 2 + BuildingClear, hw = (float)b.Width / 2 + BuildingClear;
+                float hl = (float)b.Length / 2, hw = (float)b.Width / 2;
                 houses.Add((c, new Vector2(MathF.Cos(ang), MathF.Sin(ang)), hl, hw));
-                float rr = MathF.Sqrt(hl * hl + hw * hw);
+                float rr = MathF.Sqrt(hl * hl + hw * hw) + BuildingClear;
                 foreach (var k in Cells(c - new Vector2(rr), c + new Vector2(rr))) Put(houseCells, k, houses.Count - 1);
             }
         }
 
         static Vector2 V(double[] p) => new((float)p[0], (float)p[1]);
 
+        /// <summary>Halbe Breite der Fahrbahn samt Modellversatz.</summary>
+        public static float HalfRoad(ResolvedStyle s) => s.Width / 2 + MathF.Abs(s.ModelCenter) + MathF.Abs(s.Offset);
+
         /// <summary>Halbe Breite der Fahrbahn samt Modellversatz plus Freihaltezone.</summary>
         public static float HalfClear(RoadEntry r, int i, ResolvedStyle s)
         {
-            float half = s.Width / 2 + MathF.Abs(s.ModelCenter) + MathF.Abs(s.Offset);
+            float half = HalfRoad(s);
             var hw = r.Runs.FirstOrDefault(u => u.From <= i && i < u.To)?.Highway ?? "";
             return half + (IsPath(hw) ? PathClear : RoadClear);
         }
@@ -204,25 +253,31 @@ public static class Forests
 
         public bool Near(Vector2 p) => near.Contains(((int)MathF.Floor(p.X / NearCell), (int)MathF.Floor(p.Y / NearCell)));
 
-        /// <summary>Freizuhalten: Fahrbahn samt Rand, Prefab-Spuren, Gebäude.</summary>
-        public bool Blocked(Vector2 p)
+        /// <summary>Freizuhalten: Fahrbahn samt Rand, Prefab-Spuren, Gebäude. <paramref name="trunk"/>: nur für einen
+        /// Stamm (Einzelbaum) – Fahrbahn + <see cref="TrunkRoadClear"/>, Prefab-Spuren <see cref="TrunkPrefabClear"/>,
+        /// Gebäude + 1 m.</summary>
+        public bool Blocked(Vector2 p, bool trunk = false, float crown = 0)
         {
             var k = Key(p);
             if (segs.TryGetValue(k, out var sl))
-                foreach (var (a, b, half) in sl)
+                foreach (var (a, b, half, clear, path) in sl)
                 {
                     var ab = b - a;
                     float t = Math.Clamp(Vector2.Dot(p - a, ab) / MathF.Max(ab.LengthSquared(), 1e-6f), 0, 1);
-                    if (Vector2.DistanceSquared(p, a + t * ab) < half * half) return true;
+                    // Einzelbaum: Krone darf höchstens MaxOverhang über die Fahrbahn ragen (Wege: egal)
+                    float r = half + (!trunk ? clear : path ? TrunkRoadClear : MathF.Max(TrunkRoadClear, crown - MaxOverhang));
+                    if (Vector2.DistanceSquared(p, a + t * ab) < r * r) return true;
                 }
+            float pc = trunk ? TrunkPrefabClear : PrefabClear;
             if (lanes.TryGetValue(k, out var ll))
-                foreach (var q in ll) if (Vector2.DistanceSquared(p, q) < PrefabClear * PrefabClear) return true;
+                foreach (var q in ll) if (Vector2.DistanceSquared(p, q) < pc * pc) return true;
+            float bc = trunk ? 1f : BuildingClear;
             if (houseCells.TryGetValue(k, out var hl))
                 foreach (var i in hl)
                 {
                     var (c, u, a, w) = houses[i];
                     var d = p - c;
-                    if (MathF.Abs(Vector2.Dot(d, u)) < a && MathF.Abs(u.X * d.Y - u.Y * d.X) < w) return true;
+                    if (MathF.Abs(Vector2.Dot(d, u)) < a + bc && MathF.Abs(u.X * d.Y - u.Y * d.X) < w + bc) return true;
                 }
             return false;
         }
@@ -401,7 +456,32 @@ public static class Forests
             Emit(run, kind, $"t{tr.Osm}/end", ref treeRowM);
             if (rowsN > before) treeRows++;
         }
-        return new Result(ix.Count, edgeM / 1000, roadM / 1000, rowsN, items, treeRows, treeRowM / 1000);
+        // 4) Einzelbäume: Modell nach Gattung/Blattwerk/Höhe, Stamm nicht auf Fahrbahn, Prefab-Spur oder in Gebäuden
+        int trees = 0, blocked = 0;
+        var byModel = new Dictionary<string, int>();
+        foreach (var t in input.Trees)
+        {
+            var p = new Vector2((float)t.Pos[0], (float)t.Pos[1]);
+            float y = heightAt is null ? 0f : heightAt(p.X, p.Y);
+            if (!float.IsFinite(y)) { blocked++; continue; }
+            var (m, scale) = PickTree(t);
+            if (ix.Blocked(p, trunk: true, crown: m.Crown * scale))
+            {
+                // zu ausladend für die Lücke: kleinere Krone desselben Blattwerks versuchen (Eiche → Buche)
+                var alt = TreeModels.Where(x => x.Leaf == m.Leaf && x.Crown < m.Crown).OrderByDescending(x => x.Crown)
+                                    .FirstOrDefault(x => !ix.Blocked(p, trunk: true, crown: x.Crown * scale));
+                if (alt is null) { blocked++; continue; }
+                m = alt;
+            }
+            var item = Model.Add(map, new Vector3(p.X, y, p.Y), m.Token, "default", "default");
+            float yaw = (Hash(t.Osm + "/yaw") % 3600) / 3600f * MathF.Tau;
+            item.Node.Rotation = Quaternion.CreateFromYawPitchRoll(yaw, 0, 0);
+            item.Scale = new Vector3(scale);
+            item.ViewDistance = (ushort)(m.Top * scale > 20 ? 700 : 500);
+            trees++;
+            byModel[m.Name] = byModel.GetValueOrDefault(m.Name) + 1;
+        }
+        return new Result(ix.Count, edgeM / 1000, roadM / 1000, rowsN, items, treeRows, treeRowM / 1000, trees, blocked, byModel);
     }
 
     /// <summary>Punkte näher als 2 m am Vorgänger und Spitzen (Richtungswechsel über 100°, z. B. an spitzen Ecken nach

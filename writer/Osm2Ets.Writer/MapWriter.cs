@@ -631,7 +631,7 @@ public static class MapWriter
             TerrainFill.FinePrefabLanes = PrefabFootprint.KitLanes(map);
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes, cover);
             // Waldwände und Baumreihen zuletzt auf das fertige Gelände (Höhen samt eingeebneter Gebäudeflächen)
-            if (Forests.Enabled && (input.Forests.Count > 0 || input.TreeRows.Count > 0))
+            if (Forests.Enabled && (input.Forests.Count > 0 || input.TreeRows.Count > 0 || input.Trees.Count > 0))
                 forestResult = Forests.Apply(map, input, valid, styles, PrefabFootprint.All(map), (x, z) => tg2.HeightAt(x, z));
             if (cover is not null)
                 warnings.Insert(0, $"Info: Füllgelände unter Fahrbahn/Straßengelände begrenzt: {CoverCap.CoverLowered} Punkte, am Rand per Böschung ({CoverCap.Slope:0.0}) gesenkt: {CoverCap.ConeLowered}, angehoben: {CoverCap.ConeRaised} Punkte, Durchstoßungen nachträglich abgesenkt: {CoverCap.SettledQuads} Quads ({CoverCap.Settled} Höhenpunkte, höchstens {CoverCap.SettledMax:0.00} m; geprüft auch gegen {cover.PrefabSquares} Prefab-Spurpunkte)");
@@ -673,11 +673,13 @@ public static class MapWriter
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen (davon {DeadEnds.Networks} vor Sackgassen-Netzen)");
         // ohne Geländeraster: Waldwände auf Höhe 0 (Tests)
-        if (forestResult is null && Forests.Enabled && input.TerrainGrid is null && (input.Forests.Count > 0 || input.TreeRows.Count > 0))
+        if (forestResult is null && Forests.Enabled && input.TerrainGrid is null && (input.Forests.Count > 0 || input.TreeRows.Count > 0 || input.Trees.Count > 0))
             forestResult = Forests.Apply(map, input, valid, styles, PrefabFootprint.All(map), null);
         if (forestResult is { } fr)
             warnings.Insert(0, $"Info: Wälder: {fr.Forests} Flächen, Waldwände {fr.EdgeKm:0.0} km Waldrand und {fr.RoadKm:0.0} km an Straßen durch Wald " +
-                               $"({fr.Rows} Reihen, {fr.Items} Kurven-Items); Baumreihen: {fr.TreeRows} ({fr.TreeRowKm:0.0} km); Einzelbäume: {input.Trees.Count} gelesen, noch nicht gesetzt");
+                               $"({fr.Rows} Reihen, {fr.Items} Kurven-Items); Baumreihen: {fr.TreeRows} ({fr.TreeRowKm:0.0} km); Einzelbäume: {fr.Trees} von {input.Trees.Count} gesetzt " +
+                               $"({fr.TreesBlocked} auf Fahrbahn, Prefab, in Gebäuden oder ohne Gelände)" +
+                               (fr.TreesByModel is { Count: > 0 } bm ? ": " + string.Join(", ", bm.OrderByDescending(kv => kv.Value).Select(kv => $"{kv.Key} {kv.Value}")) : ""));
         if (buildingResult is null && OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
             buildingResult = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),
                 input.TerrainGrid is { Nx: > 1, Nz: > 1 } tgb ? (x, z) => tgb.HeightAt(x, z) : null);

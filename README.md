@@ -40,7 +40,7 @@ v1–v46 (see commits).
 | Railways: tracks near the route with AI trains (no level crossings, switches, overhead wires) | implemented, not yet checked in game |
 | Buildings: OSM `building=*` near the route as SCS models (base game, German models preferred) | implemented, not yet checked in game |
 | Forests as tree walls (edges up to 300 m from the route, roads through forests), tree rows | implemented, not yet checked in game |
-| Single trees (`natural=tree`) | read, writer to follow (model sizes missing) |
+| Single trees (`natural=tree`) as base-game tree models | implemented, not yet checked in game |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
@@ -390,7 +390,7 @@ This is an approximation from OSM tags, not a survey.
 ```sh
 python3 -m pytest                                   # 85 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 48 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 49 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
 ```
 
 The real extract is the OSM test file `core/files/north-bayreuth.osm.gz` from the
@@ -560,11 +560,17 @@ roadside forest medium", "slim birches"), mixed forest (birch/larch/spruce, beec
 nodes lie on the terrain; a piece is at most 60 m long and short enough that the line between its nodes
 stays at most 0.3 m above or 1 m below the terrain. Kept free: 6 m beside carriageways (2 m beside paths),
 12 m around prefab lanes, 4 m around buildings. Tree rows become one row (beech, spruce or mixed).
-`OSM2ETS_NO_FORESTS=1` turns forests and tree rows off.
+Single trees become base-game tree models (measured from the game files): beech (13.4 m high, for
+`genus=Fagus`/`Carpinus`), oak (19.6 m, `Quercus`), large broadleaved tree (29.3 m), fir (28 m,
+needleleaved) and dead trunks (7.8 and 4.5 m, `leafless`). With `height` the model whose height fits
+best, scaled to the height (0.6–1.4); without data beech or oak by OSM ID, ±15 % size, rotation by OSM
+ID. The trunk stands at least 1.5 m from the carriageway and the crown overhangs a carriageway by at
+most 2 m (paths excepted) – otherwise the smaller crown (beech instead of oak) or no tree; not on prefab
+lanes (6 m) and not in buildings. `OSM2ETS_NO_FORESTS=1` turns forests, tree rows and single trees off.
 
-Limits: the writer does not place single trees yet (model sizes for choice and scale are missing). Whether
-the trees of a curve stand on the terrain in game or follow the curve line is unverified. Forests farther
-than 300 m from the route are missing (no far tree walls).
+Limits: whether the trees of a curve stand on the terrain in game or follow the curve line is
+unverified. Forests farther than 300 m from the route are missing (no far tree walls; the base-game far
+wall models are flat walls 19–29 m high along the curve line).
 
 ## Roadmap
 

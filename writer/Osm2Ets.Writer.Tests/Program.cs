@@ -56,6 +56,7 @@ var tests = new List<(string Name, Action Body)>
     ("Wald: Waldwände am Rand (bis 300 m neben der Straße, auch an Lichtungen), innen leer", ForestWalls),
     ("Wald: Straße durch den Wald – Wände beiderseits, Fahrbahn frei", ForestWallsAlongRoadThroughForest),
     ("Baumreihe: eine Reihe Bäume, an der Fahrbahn unterbrochen", TreeRowAsCurve),
+    ("Einzelbaum: Modell nach Gattung/Blattwerk/Höhe, skaliert; nicht auf der Fahrbahn", SingleTrees),
 };
 
 int failed = 0;
@@ -343,6 +344,40 @@ static void TreeRowAsCurve()
     var nodes = CurveNodes(map);
     Check(nodes.Count >= 4 && nodes.All(n => n.Model == Forests.TreeRow["broadleaved"].Model && MathF.Abs(n.P.Y - 1700) < 0.01f), "Baumreihe");
     Check(nodes.Any(n => n.P.X < 1000) && nodes.Any(n => n.P.X > 1000) && nodes.All(n => MathF.Abs(n.P.X - 1000) > Forests.RoadClear), "Fahrbahn nicht frei");
+}
+
+static void SingleTrees()
+{
+    // Eiche (genus), Tanne (needleleaved), toter Baum (leafless), 20-m-Laubbaum (Höhe → Eichenmodell, skaliert),
+    // Laubbaum ohne Angaben (Buche oder Eiche, ±15 %), Baum mitten auf der Autobahn (weggelassen)
+    var input = Sample();
+    input.Trees.AddRange([
+        new TreeEntry { Osm = "n1", Leaf = "broadleaved", Genus = "Quercus", Pos = [1100, 1700] },
+        new TreeEntry { Osm = "n2", Leaf = "needleleaved", Pos = [1120, 1700] },
+        new TreeEntry { Osm = "n3", Leaf = "leafless", Pos = [1140, 1700], Height = 8 },
+        new TreeEntry { Osm = "n4", Leaf = "broadleaved", Pos = [1160, 1700], Height = 20 },
+        new TreeEntry { Osm = "n5", Leaf = "broadleaved", Pos = [1180, 1700] },
+        new TreeEntry { Osm = "n6", Leaf = "broadleaved", Pos = [1000, 1700] },
+    ]);
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var (map, result) = MapWriter.Build(input, cfg);
+    var models = map.MapItems.Values.OfType<Model>().ToDictionary(m => (int)MathF.Round(m.Node.Position.X), m => m);
+    Check(!models.ContainsKey(1000) && models.Count == 5, $"{models.Count} Bäume, auf der Fahrbahn: {models.ContainsKey(1000)}");
+    Check(models[1100].Name.ToString() == "122" && models[1120].Name.ToString() == "ibe_1u25" && models[1140].Name.ToString() == "shr_1z870", "Modellwahl");
+    Check(models[1160].Name.ToString() == "122" && MathF.Abs(models[1160].Scale.Y - 20 / 19.58f) < 0.01f, $"20-m-Baum: {models[1160].Name} {models[1160].Scale}");
+    Check(models[1180].Name.ToString() is "122" or "1036" && models[1180].Scale.X is >= 0.85f and <= 1.15f, "Laubbaum ohne Angaben");
+    Check(models.Values.All(m => m.Look.ToString() == "default" && m.Variant.ToString() == "default" && m.Scale.X == m.Scale.Z), "Look/Variante/Maßstab");
+    Check(result.Warnings.Any(w => w.Contains("Einzelbäume: 5 von 6 gesetzt")), "Info-Zeile");
+
+    // Eiche 4 m neben dem Fahrbahnrand der Autobahn: ihre Krone (10 m) ragte zu weit über die Fahrbahn – Buche
+    var st = cfg.Resolve(input.Roads[1].Runs[0]);
+    float half = Forests.Index.HalfRoad(st);
+    var input2 = Sample();
+    input2.Trees.Add(new TreeEntry { Osm = "n7", Leaf = "broadleaved", Genus = "Quercus", Pos = [1000 + half + 4, 1700] });
+    var (map2, _) = MapWriter.Build(input2, cfg);
+    var oak = map2.MapItems.Values.OfType<Model>().Single();
+    Check(oak.Name.ToString() == "1036", $"Krone über der Fahrbahn: {oak.Name}");
+    Check(4 >= Forests.TreeModels.First(m => m.Token == "1036").Crown * oak.Scale.X - Forests.MaxOverhang - 0.01f, "Buchenkrone ragt zu weit");
 }
 
 static void CountryOnNetworkNodesOnly()

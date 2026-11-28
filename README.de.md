@@ -40,7 +40,7 @@ v1–v46 (siehe Commits).
 | Eisenbahn: Gleise nahe der Strecke mit KI-Zügen (ohne Bahnübergänge, Weichen, Oberleitung) | umgesetzt, im Spiel noch nicht geprüft |
 | Gebäude: OSM-`building=*` nahe der Strecke als SCS-Modelle (Grundspiel, deutsche bevorzugt) | umgesetzt, im Spiel noch nicht geprüft |
 | Wälder als Waldwände (Ränder bis 300 m neben der Strecke, Straßen durch Wald), Baumreihen | umgesetzt, im Spiel noch nicht geprüft |
-| Einzelbäume (`natural=tree`) | gelesen, Writer folgt (Modellmaße fehlen) |
+| Einzelbäume (`natural=tree`) als Baummodelle des Grundspiels | umgesetzt, im Spiel noch nicht geprüft |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -393,7 +393,7 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 ```sh
 python3 -m pytest                                   # 85 Tests, synthetische Netze
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 48 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 49 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
 ```
 
 Als echter Ausschnitt dient die OSM-Testdatei `core/files/north-bayreuth.osm.gz`
@@ -566,11 +566,20 @@ roadside forest medium“, „slim birches“), Mischwald (Birke/Lärche/Fichte,
 Curve-Items; ihre Knoten liegen auf dem Gelände, ein Stück ist höchstens 60 m lang und so kurz, dass die
 Linie zwischen den Knoten höchstens 0,3 m über bzw. 1 m unter dem Gelände liegt. Frei bleiben 6 m neben
 Fahrbahnen (2 m neben Wegen), 12 m um Prefab-Spuren und 4 m um Gebäude. Baumreihen werden als eine Reihe
-gesetzt (Buche, Fichte oder Mischung). `OSM2ETS_NO_FORESTS=1` schaltet Wälder und Baumreihen ab.
+gesetzt (Buche, Fichte oder Mischung).
 
-Grenzen: Einzelbäume setzt der Writer noch nicht (für Modellwahl und Größe fehlen die Modellmaße). Ob die
-Bäume einer Kurve im Spiel auf dem Gelände stehen oder der Kurvenlinie folgen, ist ungeprüft. Wälder
-weiter als 300 m von der Strecke fehlen (keine Fern-Waldwände).
+Einzelbäume werden Baummodelle des Grundspiels (vermessen aus den Spieldateien): Buche (13,4 m hoch, für
+`genus=Fagus`/`Carpinus`), Eiche (19,6 m, `Quercus`), großer Laubbaum (29,3 m), Tanne (28 m, Nadelbaum)
+und abgestorbene Stämme (7,8 bzw. 4,5 m, `leafless`). Mit `height` das Modell, dessen Höhe am besten passt,
+auf die Höhe skaliert (0,6–1,4); ohne Angaben Buche oder Eiche nach OSM-ID, ±15 % Größe, Drehung nach
+OSM-ID. Der Stamm steht mindestens 1,5 m neben der Fahrbahn, und die Krone ragt höchstens 2 m über eine
+Fahrbahn (Wege ausgenommen) – sonst die kleinere Krone (Buche statt Eiche) oder kein Baum; nicht auf
+Prefab-Spuren (6 m) und nicht in Gebäuden. `OSM2ETS_NO_FORESTS=1` schaltet Wälder, Baumreihen und
+Einzelbäume ab.
+
+Grenzen: Ob die Bäume einer Kurve im Spiel auf dem Gelände stehen oder der Kurvenlinie folgen, ist
+ungeprüft. Wälder weiter als 300 m von der Strecke fehlen (keine Fern-Waldwände; die Fernwand-Modelle
+des Grundspiels sind flache, 19–29 m hohe Wände entlang der Kurvenlinie).
 
 ## Nächste Ausbaustufen
 
