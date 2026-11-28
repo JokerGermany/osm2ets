@@ -24,6 +24,10 @@ public sealed class IntermediateFile
     /// <summary>Optional: Gebäude nahe der Strecke (Rechteck, Art, Höhe) – der Writer setzt SCS-Modelle.</summary>
     public List<BuildingEntry> Buildings { get; set; } = [];
     public List<ForestEntry> Forests { get; set; } = [];
+    public List<TreeRowEntry> TreeRows { get; set; } = [];
+    public List<TreeEntry> Trees { get; set; } = [];
+    /// <summary>Waldwände nur so weit (Spielmeter) neben den Straßen der Karte (Profil: forests.near_m).</summary>
+    public double ForestNearM { get; set; } = 300;
 
     public static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -195,12 +199,32 @@ public sealed class TerrainGridEntry
     }
 }
 
-/// <summary>Wald aus OSM (landuse=forest, natural=wood): Außenring und Lichtungen in Spielkoordinaten [x, z].</summary>
+/// <summary>Wald aus OSM (landuse=forest, natural=wood, landcover=trees): Außenring und Lichtungen in
+/// Spielkoordinaten [x, z].</summary>
 public sealed class ForestEntry
 {
     public string Osm { get; set; } = "";
-    /// <summary>broadleaved, needleleaved oder mixed.</summary>
+    /// <summary>broadleaved, needleleaved, mixed oder leafless.</summary>
     public string Leaf { get; set; } = "mixed";
     public List<double[]> Outer { get; set; } = [];
     public List<List<double[]>> Inner { get; set; } = [];
+}
+
+/// <summary>Baumreihe aus OSM (natural=tree_row).</summary>
+public sealed class TreeRowEntry
+{
+    public string Osm { get; set; } = "";
+    public string Leaf { get; set; } = "broadleaved";
+    public List<double[]> Points { get; set; } = [];
+}
+
+/// <summary>Einzelbaum aus OSM (natural=tree).</summary>
+public sealed class TreeEntry
+{
+    public string Osm { get; set; } = "";
+    public string Leaf { get; set; } = "broadleaved";
+    public string? Genus { get; set; }
+    public double[] Pos { get; set; } = [0, 0];
+    /// <summary>Höhe in Spielmetern (height=*), sonst null.</summary>
+    public double? Height { get; set; }
 }

@@ -39,7 +39,8 @@ v1–v46 (siehe Commits).
 | Sichtstücke: Straßen höherer Stufen unter/über Brücken und unmittelbar neben der Strecke | umgesetzt, im Spiel noch nicht geprüft |
 | Eisenbahn: Gleise nahe der Strecke mit KI-Zügen (ohne Bahnübergänge, Weichen, Oberleitung) | umgesetzt, im Spiel noch nicht geprüft |
 | Gebäude: OSM-`building=*` nahe der Strecke als SCS-Modelle (Grundspiel, deutsche bevorzugt) | umgesetzt, im Spiel noch nicht geprüft |
-| Wälder: `landuse=forest`/`natural=wood` als Bewuchs des Füllgeländes | umgesetzt, im Spiel noch nicht geprüft |
+| Wälder als Waldwände (Ränder bis 300 m neben der Strecke, Straßen durch Wald), Baumreihen | umgesetzt, im Spiel noch nicht geprüft |
+| Einzelbäume (`natural=tree`) | gelesen, Writer folgt (Modellmaße fehlen) |
 | Stufen, die aufeinander aufbauen (L1 laden, L2 dazupacken …) | geplant, noch nicht umgesetzt |
 | Bewuchs/Landnutzung, Städte, Firmen | noch nicht |
 | Ganz Deutschland | nicht getestet (Laufzeit, Speicher, Editor-Grenzen unbekannt) |
@@ -390,9 +391,9 @@ Das ist eine Näherung aus OSM-Tags, keine Vermessung.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 84 Tests, synthetische Netze
+python3 -m pytest                                   # 85 Tests, synthetische Netze
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 46 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 48 Writer-Tests: Zuordnung, Prüfung, Speichern/Laden, Verbinden, Prefabs, Gelände, Gebäude
 ```
 
 Als echter Ausschnitt dient die OSM-Testdatei `core/files/north-bayreuth.osm.gz`
@@ -542,19 +543,34 @@ Grenzen:
 - Formen (L-, U-Form, Innenhof), Dachform, Farbe und Material aus OSM werden nicht nachgebildet; manche
   SCS-Modelle sind deutlich höher als Häuser im Dorf (z. B. `village_close_03_de` mit 15,5 m).
 
-## Wälder
+## Wälder und Bäume
 
-Flächen mit `landuse=forest` oder `natural=wood` (auch Multipolygone mit Lichtungen) kommen ganz ins
-Zwischenformat (`forests[]`: `osm`, `leaf`, `outer`, `inner`; Umrisse auf 5 m vereinfacht, Flächen unter
-500 m² entfallen – `forests` im Profil). Der Writer teilt die Streifen des Füllgeländes an Waldrändern
-und gibt jeder Streifenseite bis zu drei Bänder Bewuchs (quer zum Streifen, 5-m-Raster) mit einem
-SCS-Vegetationssatz: `needleleaved` → „Spruce mix“ (`v2_37`), `broadleaved` → „leaved“ (`v2_14`), sonst
-„ger - mixed forest“ (`v2_1ger`); Bäume mit Kollision. Frei bleiben 8 m neben Fahrbahnen, 12 m um
-Prefab-Spuren und 4 m um Gebäude. `OSM2ETS_NO_FORESTS=1` schaltet die Wälder ab.
+Wälder (`landuse=forest`, `natural=wood`, `landcover=trees`, auch Multipolygone mit Lichtungen),
+Baumreihen (`natural=tree_row`) und Einzelbäume (`natural=tree`) kommen ins Zwischenformat (`forests[]`,
+`tree_rows[]`, `trees[]`, dazu `forest_near_m`), soweit sie höchstens `forests.near_m` (300 m) neben einer
+Straße der Karte liegen (Gleise zählen nicht) – Wälder auch, wenn eine Straße der Karte durch sie führt.
+Umrisse werden auf 5 m vereinfacht, Wälder unter 500 m² entfallen. Blattwerk aus `leaf_type`
+(`broadleaved`, `needleleaved`, `mixed`, `leafless`); fehlt es, aus der Gattung (`genus`) bzw.
+`leaf_cycle=evergreen`, sonst Mischwald (Wald) bzw. Laubbaum (Baum).
 
-Grenzen: Einzelbäume (`natural=tree`) und Baumreihen fehlen noch; Bewuchs nur auf dem Füllgelände, nicht
-auf dem Straßengelände; die Dichte (TruckLib-Wert 150) und ob From/To im Spiel quer zum Streifen ab der
-Mittellinie zählen, sind ungeprüft; Waldränder folgen dem Raster der Streifen (Reihen, 5-m-Bänder).
+Der Writer stellt Wälder als Waldwände dar, das Innere bleibt leer. Wände stehen
+- an Waldrändern (auch um Lichtungen) bis 300 m neben den Straßen der Karte,
+- beiderseits jeder Straße der Karte, die durch einen Wald führt – dort, wo der Waldrand weiter als
+  gut 24 m entfernt ist (sonst steht die Wand am Waldrand).
+
+Eine Wand sind fünf parallele Reihen 3D-Bäume aus Vegetationskurven des Grundspiels, 1,5 bis 18,5 m vom
+Rand: vorn Unterholz („BI N - roadside forest undergrowth“), dahinter nach Blattwerk Fichte und Tanne
+(„BI spruce school tall“, „silver firs 1 tall“), Buche, Birke und Ahorn („beech trees tall alley“, „BI N -
+roadside forest medium“, „slim birches“), Mischwald (Birke/Lärche/Fichte, Buche, Fichte) bzw. bei
+`leafless` halbtrockene junge Bäume („sparse young trees semidry“). Jede Reihe ist eine Kette von
+Curve-Items; ihre Knoten liegen auf dem Gelände, ein Stück ist höchstens 60 m lang und so kurz, dass die
+Linie zwischen den Knoten höchstens 0,3 m über bzw. 1 m unter dem Gelände liegt. Frei bleiben 6 m neben
+Fahrbahnen (2 m neben Wegen), 12 m um Prefab-Spuren und 4 m um Gebäude. Baumreihen werden als eine Reihe
+gesetzt (Buche, Fichte oder Mischung). `OSM2ETS_NO_FORESTS=1` schaltet Wälder und Baumreihen ab.
+
+Grenzen: Einzelbäume setzt der Writer noch nicht (für Modellwahl und Größe fehlen die Modellmaße). Ob die
+Bäume einer Kurve im Spiel auf dem Gelände stehen oder der Kurvenlinie folgen, ist ungeprüft. Wälder
+weiter als 300 m von der Strecke fehlen (keine Fern-Waldwände).
 
 ## Nächste Ausbaustufen
 

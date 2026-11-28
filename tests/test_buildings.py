@@ -115,16 +115,43 @@ def test_unsorted_file_falls_back_to_closed_ways(tmp_path, profile, caplog):
 
 
 def test_forest_with_clearing_and_leaf_type(tmp_path, profile):
-    """Wald als Multipolygon mit Lichtung und leaf_type; Wäldchen unter forests.min_area_m2 entfallen."""
+    """Wald als Multipolygon mit Lichtung und leaf_type; Wäldchen unter forests.min_area_m2 und Wälder
+    weiter als forests.near_m von den Straßen der Karte entfallen; landcover=trees zählt als Wald."""
     nodes, ways = {}, []
     _motorway(nodes, ways)
     _box(nodes, ways, 201, 0, 300, 400, 200, tags={})                       # Außenring
     _box(nodes, ways, 202, 0, 300, 50, 40, tags={})                         # Lichtung
     _box(nodes, ways, 203, 500, 300, 10, 10, tags={"natural": "wood"})      # 100 m² – zu klein
+    _box(nodes, ways, 204, 0, -200, 200, 100, tags={"landcover": "trees"})  # südlich der Autobahn
+    _box(nodes, ways, 205, 0, 2000, 300, 300, tags={"landuse": "forest"})   # zu weit weg
     rel = (301, [("w", 201, "outer"), ("w", 202, "inner")],
            {"type": "multipolygon", "landuse": "forest", "leaf_type": "needleleaved"})
     model = build(str(write_osm(tmp_path / "w.osm", nodes, ways, [rel])), profile, "L1")
-    fo = model["forests"]
-    assert [(f["osm"], f["leaf"], len(f["inner"])) for f in fo] == [("r301", "needleleaved", 1)]
-    xs = [p[0] for p in fo[0]["outer"]]
+    fo = {f["osm"]: f for f in model["forests"]}
+    assert set(fo) == {"r301", "w204"}, sorted(fo)
+    assert (fo["r301"]["leaf"], len(fo["r301"]["inner"])) == ("needleleaved", 1)
+    assert fo["w204"]["leaf"] == "mixed"                               # ohne leaf_type
+    xs = [p[0] for p in fo["r301"]["outer"]]
     assert max(xs) - min(xs) == pytest.approx(400, abs=10)          # um die Meridiankonvergenz gedreht
+    assert model["forest_near_m"] == profile.forests["near_m"]
+
+
+def test_trees_and_tree_rows_near_route(tmp_path, profile):
+    """Einzelbäume (natural=tree) und Baumreihen (natural=tree_row) nahe der Strecke mit Blattwerk aus
+    leaf_type, sonst aus der Gattung (genus) bzw. leaf_cycle; Höhe aus height."""
+    nodes, ways = {}, []
+    _motorway(nodes, ways)
+    nodes.update({901: (*_pt(50, 80), {"natural": "tree", "genus": "Picea"}),
+                  902: (*_pt(60, 80), {"natural": "tree", "height": "18 m"}),
+                  903: (*_pt(70, 80), {"natural": "tree", "leaf_type": "leafless"}),
+                  904: (*_pt(80, 2000), {"natural": "tree"})})                 # zu weit weg
+    nodes.update({911: _pt(-100, 120), 912: _pt(100, 120)})
+    ways.append((911, [911, 912], {"natural": "tree_row", "leaf_type": "needleleaved"}))
+    path = write_osm(tmp_path / "t.osm", nodes, ways)
+    model = build(str(path), profile, "L1")
+    trees = {t["osm"]: t for t in model["trees"]}
+    assert set(trees) == {"n901", "n902", "n903"}                       # n904 zu weit weg
+    assert trees["n901"]["leaf"] == "needleleaved" and trees["n901"]["genus"] == "Picea"
+    assert trees["n902"]["leaf"] == "broadleaved" and trees["n902"]["height"] == pytest.approx(18)
+    assert trees["n903"]["leaf"] == "leafless"
+    assert [(r["osm"], r["leaf"], len(r["points"])) for r in model["tree_rows"]] == [("w911", "needleleaved", 2)]

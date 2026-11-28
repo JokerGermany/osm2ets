@@ -261,6 +261,7 @@ def parse_profile(data: dict, source: str = "<profil>") -> Profile:
         "enabled": bool(fo.get("enabled", True)),
         "simplify_m": _float(fo, "simplify_m", "forests", default=5.0),
         "min_area_m2": _float(fo, "min_area_m2", "forests", default=500.0, positive=False),
+        "near_m": _float(fo, "near_m", "forests", default=300.0, positive=False),
     }
 
     profile = Profile(

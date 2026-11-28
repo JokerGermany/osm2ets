@@ -39,7 +39,8 @@ v1–v46 (see commits).
 | Visible pieces: roads of higher levels under/over bridges and right next to the route | implemented, not yet checked in game |
 | Railways: tracks near the route with AI trains (no level crossings, switches, overhead wires) | implemented, not yet checked in game |
 | Buildings: OSM `building=*` near the route as SCS models (base game, German models preferred) | implemented, not yet checked in game |
-| Forests: `landuse=forest`/`natural=wood` as vegetation of the fill terrain | implemented, not yet checked in game |
+| Forests as tree walls (edges up to 300 m from the route, roads through forests), tree rows | implemented, not yet checked in game |
+| Single trees (`natural=tree`) | read, writer to follow (model sizes missing) |
 | Levels that build on each other (load L1, add L2 …) | planned, not yet implemented |
 | Vegetation/land use, cities, companies | not yet |
 | All of Germany | not tested (run time, memory, editor limits unknown) |
@@ -387,9 +388,9 @@ This is an approximation from OSM tags, not a survey.
 ## Tests
 
 ```sh
-python3 -m pytest                                   # 84 tests, synthetic networks
+python3 -m pytest                                   # 85 tests, synthetic networks
 OSM2ETS_REAL_EXTRACT=north-bayreuth.osm.gz python3 -m pytest -k real
-dotnet run --project writer/Osm2Ets.Writer.Tests    # 46 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
+dotnet run --project writer/Osm2Ets.Writer.Tests    # 48 writer tests: mapping, validation, save/load, connections, prefabs, terrain, buildings
 ```
 
 The real extract is the OSM test file `core/files/north-bayreuth.osm.gz` from the
@@ -536,19 +537,34 @@ Limits:
 - Shapes (L, U, courtyard), roof shape, colour and material from OSM are not reproduced; some SCS
   models are clearly taller than village houses (e.g. `village_close_03_de`, 15.5 m).
 
-## Forests
+## Forests and trees
 
-Areas with `landuse=forest` or `natural=wood` (also multipolygons with clearings) go completely into the
-intermediate format (`forests[]`: `osm`, `leaf`, `outer`, `inner`; outlines simplified to 5 m, areas
-under 500 m² dropped – `forests` in the profile). The writer splits the fill-terrain strips at forest
-edges and gives each strip side up to three vegetation bands (across the strip, 5 m steps) with an SCS
-vegetation set: `needleleaved` → "Spruce mix" (`v2_37`), `broadleaved` → "leaved" (`v2_14`), otherwise
-"ger - mixed forest" (`v2_1ger`); trees with collision. Kept free: 8 m next to carriageways, 12 m
-around prefab lanes, 4 m around buildings. `OSM2ETS_NO_FORESTS=1` turns forests off.
+Forests (`landuse=forest`, `natural=wood`, `landcover=trees`, also multipolygons with clearings), tree
+rows (`natural=tree_row`) and single trees (`natural=tree`) go into the intermediate format (`forests[]`,
+`tree_rows[]`, `trees[]`, plus `forest_near_m`) as far as they lie at most `forests.near_m` (300 m) from a
+road of the map (railways do not count) – forests also when a road of the map runs through them.
+Outlines are simplified to 5 m, forests under 500 m² are dropped. Foliage from `leaf_type`
+(`broadleaved`, `needleleaved`, `mixed`, `leafless`); without it from the genus (`genus`) or
+`leaf_cycle=evergreen`, otherwise mixed forest (forest) or broadleaved (tree).
 
-Limits: single trees (`natural=tree`) and tree rows are still missing; vegetation only on the fill
-terrain, not on road terrain; the density (TruckLib value 150) and whether From/To count across the
-strip from its centre line in game are unverified; forest edges follow the strip grid (rows, 5 m bands).
+The writer shows forests as tree walls, the inside stays empty. Walls stand
+- at forest edges (also around clearings) up to 300 m from the roads of the map,
+- on both sides of every road of the map that runs through a forest – where the forest edge is more
+  than about 24 m away (otherwise the wall stands at the forest edge).
+
+A wall consists of five parallel rows of 3D trees from base-game vegetation curves, 1.5 to 18.5 m from
+the edge: undergrowth in front ("BI N - roadside forest undergrowth"), behind it by foliage spruce and fir
+("BI spruce school tall", "silver firs 1 tall"), beech, birch and maple ("beech trees tall alley", "BI N -
+roadside forest medium", "slim birches"), mixed forest (birch/larch/spruce, beech, spruce) or, for
+`leafless`, semi-dry young trees ("sparse young trees semidry"). Each row is a chain of Curve items whose
+nodes lie on the terrain; a piece is at most 60 m long and short enough that the line between its nodes
+stays at most 0.3 m above or 1 m below the terrain. Kept free: 6 m beside carriageways (2 m beside paths),
+12 m around prefab lanes, 4 m around buildings. Tree rows become one row (beech, spruce or mixed).
+`OSM2ETS_NO_FORESTS=1` turns forests and tree rows off.
+
+Limits: the writer does not place single trees yet (model sizes for choice and scale are missing). Whether
+the trees of a curve stand on the terrain in game or follow the curve line is unverified. Forests farther
+than 300 m from the route are missing (no far tree walls).
 
 ## Roadmap
 

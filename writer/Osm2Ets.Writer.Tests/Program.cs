@@ -53,7 +53,9 @@ var tests = new List<(string Name, Action Body)>
     ("Gebäude: Modell auf dem OSM-Rechteck, Vorderseite zur Straße; auf der Fahrbahn weggelassen", BuildingPlacedFacingStreet),
     ("Gebäude: lange Halle aus mehreren gleichen Modellen längs", LongHallTiled),
     ("Gebäude: großer Markt 126 × 92 m aus Stücken längs und quer", WideHallTiled),
-    ("Wald: Bänder auf dem Geländestreifen, Lichtung und Prefab frei", ForestBands),
+    ("Wald: Waldwände am Rand (bis 300 m neben der Straße, auch an Lichtungen), innen leer", ForestWalls),
+    ("Wald: Straße durch den Wald – Wände beiderseits, Fahrbahn frei", ForestWallsAlongRoadThroughForest),
+    ("Baumreihe: eine Reihe Bäume, an der Fahrbahn unterbrochen", TreeRowAsCurve),
 };
 
 int failed = 0;
@@ -283,30 +285,64 @@ static void WideHallTiled()
     Check(OsmBuildings.Choose(cat, "house", 12, 30, null, "w8") is not { Rows: > 1 }, "Haus quer zusammengesetzt");
 }
 
-static void ForestBands()
+// Kurvenknoten (x, z) aller Curve-Items samt Modell
+static List<(Vector2 P, string Model)> CurveNodes(Map map) =>
+    map.MapItems.Values.OfType<Curve>()
+       .SelectMany(c => new[] { c.Node.Position, c.ForwardNode.Position }.Select(v => (new Vector2(v.X, v.Z), c.Subcurves[0].Model.ToString())))
+       .ToList();
+
+static void ForestWalls()
 {
-    // Nadelwald x 0…400, z −300…−40 mit Lichtung x 100…200, z −200…−100; Autobahn (Sample) bei x = 1000
-    // weit weg. Streifen in Zeile z = 0 von x 0 bis 80, 200 m nach Norden: Band von ~40 bis 200 m.
+    // Nadelwald x 1100…1500, z 1500…1800 neben der Autobahn (Sample, x = 1000, z 1500…2000), Lichtung
+    // x 1150…1200, z 1600…1650: Waldwände nur an Rändern bis 300 m neben der Autobahn, Reihen 1,5 … 18,5 m
+    // innerhalb, vorn Unterholz, dahinter Fichte/Tanne; das Innere bleibt leer.
     var input = Sample();
     input.Forests.Add(new ForestEntry
     {
         Osm = "w1", Leaf = "needleleaved",
-        Outer = [[0, -300], [400, -300], [400, -40], [0, -40]],
-        Inner = [[[100, -200], [200, -200], [200, -100], [100, -100]]],
+        Outer = [[1100, 1500], [1500, 1500], [1500, 1800], [1100, 1800]],
+        Inner = [[[1150, 1600], [1200, 1600], [1200, 1650], [1150, 1650]]],
     });
-    var fo = new Forests(input, input.Roads, new Dictionary<RoadEntry, ResolvedStyle[]>(), [new Vector2(300, -250)]);
-    Check(fo.At(300, -245) is null, "Prefab nicht frei");
-    Check(fo.At(50, -250) == "needleleaved" && fo.At(150, -150) is null && fo.At(50, 0) is null, "At");
-    var map = new Map();
-    var t = Terrain.Add(map, new Vector3(0, 0, 0), new Vector3(80, 0, 0), "34", 200, 0);
-    fo.Plant(t, 0, 80, 0, 200, 0);
-    var v = t.Left.Vegetation[0];
-    Check(v.Name.ToString() == Forests.Sets["needleleaved"] && MathF.Abs(v.From - 40) <= Forests.Band && v.To >= 195, $"Band {v.Name} {v.From}…{v.To}");
-    Check(t.Right.Vegetation.All(x => x.To == 0), "Südseite ohne Wald bepflanzt");
-    // Streifen über der Lichtung (x 100…200): zwei Bänder um die Lichtung herum
-    var t2 = Terrain.Add(map, new Vector3(120, 0, 0), new Vector3(180, 0, 0), "34", 300, 0);
-    fo.Plant(t2, 120, 180, 0, 300, 0);
-    Check(t2.Left.Vegetation[0].To <= 100 + Forests.Band && t2.Left.Vegetation[1].From >= 200 - Forests.Band, "Lichtung nicht frei");
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var (map, result) = MapWriter.Build(input, cfg);
+    var nodes = CurveNodes(map);
+    Check(nodes.Count > 0, "keine Waldwand");
+    float Edge(Vector2 p) => new[] { p.X - 1100, 1500 - p.X, p.Y - 1500, 1800 - p.Y }.Min();
+    float Hole(Vector2 p) => MathF.Max(MathF.Max(1150 - p.X, p.X - 1200), MathF.Max(1600 - p.Y, p.Y - 1650));
+    Check(nodes.All(n => Edge(n.P) >= 0.5f), "Knoten außerhalb des Waldes");
+    Check(nodes.All(n => MathF.Min(Edge(n.P), Hole(n.P) > 0 ? Hole(n.P) : 99) <= Forests.RowOffsets[^1] + 0.6f), "Bäume im Waldinneren");
+    Check(nodes.All(n => n.P.X <= 1000 + input.ForestNearM + 60), "Waldwand weiter als 300 m von der Straße");
+    Check(nodes.Any(n => n.P.X < 1110 && n.Model == Forests.Undergrowth.Model), "kein Unterholz am Westrand");
+    Check(nodes.Any(n => n.Model == "3l02v") && nodes.Any(n => n.Model == "3l00j"), "keine Fichten/Tannen");
+    Check(nodes.Any(n => Hole(n.P) > 0 && Hole(n.P) < 20), "keine Wand an der Lichtung");
+    Check(result.Warnings.Any(w => w.Contains("Info: Wälder: 1 Flächen")), "Info-Zeile fehlt");
+}
+
+static void ForestWallsAlongRoadThroughForest()
+{
+    // Mischwald x 800…1200, z 1500…2100 umschließt die Autobahn: Wände beiderseits der Fahrbahn, nicht auf ihr
+    // und nicht näher als Fahrbahnrand + Freihaltezone; weiter als EdgeDepth vom Waldrand.
+    var input = Sample();
+    input.Forests.Add(new ForestEntry { Osm = "w2", Leaf = "mixed", Outer = [[800, 1450], [1200, 1450], [1200, 2100], [800, 2100]] });
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var (map, _) = MapWriter.Build(input, cfg);
+    var nodes = CurveNodes(map);
+    var road = nodes.Where(n => MathF.Abs(n.P.X - 1000) < 100 && n.P.Y > 1550 && n.P.Y < 1950).ToList();
+    Check(road.Any(n => n.P.X < 1000) && road.Any(n => n.P.X > 1000), "nicht beiderseits der Straße");
+    Check(road.All(n => MathF.Abs(n.P.X - 1000) >= Forests.RoadClear), $"zu nah an der Fahrbahn: {road.Min(n => MathF.Abs(n.P.X - 1000)):0.0} m");
+    Check(road.Max(n => MathF.Abs(n.P.X - 1000)) < 60, "Waldwand an der Straße zu tief");
+}
+
+static void TreeRowAsCurve()
+{
+    // Laubbaum-Reihe quer über die Autobahn: eine Reihe Buchen, an der Fahrbahn unterbrochen
+    var input = Sample();
+    input.TreeRows.Add(new TreeRowEntry { Osm = "w3", Leaf = "broadleaved", Points = [[900, 1700], [1100, 1700]] });
+    var cfg = MappingConfig.Load(ShippedMapping());
+    var (map, _) = MapWriter.Build(input, cfg);
+    var nodes = CurveNodes(map);
+    Check(nodes.Count >= 4 && nodes.All(n => n.Model == Forests.TreeRow["broadleaved"].Model && MathF.Abs(n.P.Y - 1700) < 0.01f), "Baumreihe");
+    Check(nodes.Any(n => n.P.X < 1000) && nodes.Any(n => n.P.X > 1000) && nodes.All(n => MathF.Abs(n.P.X - 1000) > Forests.RoadClear), "Fahrbahn nicht frei");
 }
 
 static void CountryOnNetworkNodesOnly()

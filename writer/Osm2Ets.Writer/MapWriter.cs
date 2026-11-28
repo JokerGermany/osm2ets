@@ -507,6 +507,7 @@ public static class MapWriter
             warnings.Insert(0, $"Info: Anschlussstellen mit Prefabs: {interchangePlans.Count} geplant, {prefabCount / 2} gesetzt");
 
         OsmBuildings.Result? buildingResult = null;
+        Forests.Result? forestResult = null;
         // Füllgelände zuletzt: dann sind alle Prefabs gesetzt und ihre Fahrspuren bekannt
         if (input.TerrainGrid is { Nx: > 1, Nz: > 1 } tg2 && Environment.GetEnvironmentVariable("OSM2ETS_NOFILL") is null)
         {
@@ -628,11 +629,10 @@ public static class MapWriter
             var cover = TerrainFill.WideRoadTerrain && CoverCap.Enabled ? CoverCap.Build(valid, firstItem, lastItem, styles) : null;
             cover?.AddPrefabLanes(PrefabFootprint.Centres3(map));
             TerrainFill.FinePrefabLanes = PrefabFootprint.KitLanes(map);
-            TerrainFill.Forest = Forests.Enabled && input.Forests.Count > 0 ? new Forests(input, valid, styles, PrefabFootprint.All(map)) : null;
-            Forests.Bands = Forests.Pieces = 0;
             var tf = TerrainFill.Build(map, tg2, valid, styles, obstacles, lanes, cover);
-            if (TerrainFill.Forest is { } fo)
-                warnings.Insert(0, $"Info: Wälder: {fo.Count} Flächen, {Forests.Pieces} Geländestücke bepflanzt ({Forests.Bands} Bänder)");
+            // Waldwände und Baumreihen zuletzt auf das fertige Gelände (Höhen samt eingeebneter Gebäudeflächen)
+            if (Forests.Enabled && (input.Forests.Count > 0 || input.TreeRows.Count > 0))
+                forestResult = Forests.Apply(map, input, valid, styles, PrefabFootprint.All(map), (x, z) => tg2.HeightAt(x, z));
             if (cover is not null)
                 warnings.Insert(0, $"Info: Füllgelände unter Fahrbahn/Straßengelände begrenzt: {CoverCap.CoverLowered} Punkte, am Rand per Böschung ({CoverCap.Slope:0.0}) gesenkt: {CoverCap.ConeLowered}, angehoben: {CoverCap.ConeRaised} Punkte, Durchstoßungen nachträglich abgesenkt: {CoverCap.SettledQuads} Quads ({CoverCap.Settled} Höhenpunkte, höchstens {CoverCap.SettledMax:0.00} m; geprüft auch gegen {cover.PrefabSquares} Prefab-Spurpunkte)");
             warnings.Insert(0, $"Info: flächiges Gelände: {tf.Items} Terrain-Stücke in {tf.Rows} Reihen, {tf.AreaKm2:0.0} km², Raster unpassend: {TerrainFill.Mismatch}, Raster eine Zeile mehr: {TerrainFill.RowShort}, freie Fläche ohne Gelände: {TerrainFill.Uncovered:P1}, Stücke mit 4-m-Raster an Prefabs: {TerrainFill.FinePieces}, davon in feinen Reihen um Anschluss-Prefabs: {TerrainFill.ZonePieces}, Prefab-Spurpunkte: {lanes.Count} (nicht zuordenbar: {PrefabFootprint.Unfitted}), an Fahrbahnen abgesenkt: {RoadCap.Lowered}, angehoben: {RoadCap.Raised} Punkte");
@@ -672,6 +672,12 @@ public static class MapWriter
         foreach (var m in sigMissing) warnings.Add($"Ampel in OSM, aber Prefab ohne Ampelplätze: {m}");
         DeadEndsPlaced = DeadEnds.Apply(map, valid, styles, firstItem, lastItem);
         if (DeadEndsPlaced.Count > 0) warnings.Add($"Info: {DeadEndsPlaced.Count} Sperrbaken an Straßenenden, die ins Nichts führen (davon {DeadEnds.Networks} vor Sackgassen-Netzen)");
+        // ohne Geländeraster: Waldwände auf Höhe 0 (Tests)
+        if (forestResult is null && Forests.Enabled && input.TerrainGrid is null && (input.Forests.Count > 0 || input.TreeRows.Count > 0))
+            forestResult = Forests.Apply(map, input, valid, styles, PrefabFootprint.All(map), null);
+        if (forestResult is { } fr)
+            warnings.Insert(0, $"Info: Wälder: {fr.Forests} Flächen, Waldwände {fr.EdgeKm:0.0} km Waldrand und {fr.RoadKm:0.0} km an Straßen durch Wald " +
+                               $"({fr.Rows} Reihen, {fr.Items} Kurven-Items); Baumreihen: {fr.TreeRows} ({fr.TreeRowKm:0.0} km); Einzelbäume: {input.Trees.Count} gelesen, noch nicht gesetzt");
         if (buildingResult is null && OsmBuildings.Enabled && buildings is not null && input.Buildings.Count > 0)
             buildingResult = OsmBuildings.Apply(map, input, valid, styles, buildings, PrefabFootprint.All(map),
                 input.TerrainGrid is { Nx: > 1, Nz: > 1 } tgb ? (x, z) => tgb.HeightAt(x, z) : null);

@@ -95,7 +95,8 @@ def report_text(model: dict) -> str:
     fo = s.get("forests")
     if fo:
         leaf = ", ".join(f"{k} {v}" for k, v in fo["by_leaf"].items())
-        lines.append(f"Wälder:        {fo['kept']} Flächen, {fo['area_km2']} km² (von {fo['read']} gelesen): {leaf}")
+        lines.append(f"Wälder:        {fo['kept']} Flächen nahe der Strecke, {fo['area_km2']} km² (von {fo['read']} "
+                     f"gelesen): {leaf}; {fo['tree_rows']} Baumreihen, {fo['trees']} Einzelbäume")
     rail = s.get("railway")
     if rail:
         km = s["km_game_by_highway"].get("railway", 0.0)

@@ -381,7 +381,7 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
     stats = _stats(kept, roads, junctions, profile, dropped)
     stats["buildings"] = building_stats if (profile.buildings or {}).get("enabled") else None
     from .forests import forest_entries
-    forests, forest_stats = forest_entries(input_path, profile, projector)
+    greenery, forest_stats = forest_entries(input_path, profile, projector, roads)
     stats["forests"] = forest_stats if (profile.forests or {}).get("enabled") else None
     stats["elevation"] = elevation_stats
     stats["elevation"]["implicit_bridges"] = implicit
@@ -430,7 +430,10 @@ def build(input_path: str, profile: Profile, lod_name: str, bbox=None, dem_path:
         "terrain_grid": terrain_grid,
         "areas": areas,
         "buildings": buildings,
-        "forests": forests,
+        "forests": greenery["forests"],
+        "trees": greenery["trees"],
+        "tree_rows": greenery["tree_rows"],
+        "forest_near_m": float((profile.forests or {}).get("near_m", 300.0)),
         "stats": stats,
         "qa": {"min_clearance_m": MIN_CLEARANCE_M, "low_clearance_crossings": low[:200],
                "dropped_short_pieces": dropped_info[:200]},

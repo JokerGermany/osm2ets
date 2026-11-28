@@ -160,10 +160,14 @@ buildings:
   exclude: [roof, carport, construction, ruins, "no", bridge, tent, ship, container, grandstand,
             proposed, demolished, abandoned, collapsed]
 
-# 8. Wälder (landuse=forest, natural=wood) – ganze Fläche; der Writer bepflanzt das Gelände darin
-#    (Nadel-, Laub- oder Mischwald nach leaf_type).
+# 8. Wälder (landuse=forest, natural=wood, landcover=trees), Baumreihen (natural=tree_row) und
+#    Einzelbäume (natural=tree) – nur nahe der Strecke. Der Writer setzt an Waldränder Waldwände
+#    (mehrere Reihen 3D-Bäume nach leaf_type), das Innere bleibt leer – außer an Straßen der Karte,
+#    die durch einen Wald führen: dort stehen Waldwände beiderseits der Fahrbahn.
 forests:
   enabled: true
+  # höchstens so weit neben einer Straße der Karte (Spielmeter; Gleise zählen nicht)
+  near_m: 300
   # Umrisse vereinfachen (Echtmeter) und kleine Flächen weglassen (Echt-m²)
   simplify_m: 5
   min_area_m2: 500

@@ -11,11 +11,18 @@ from osm2ets.config import load_profile
 
 
 def write_osm(path: Path, nodes: dict, ways: list, relations: list = ()) -> Path:
-    """nodes: {id: (lon, lat)}, ways: [(id, [node ids], {tags})],
+    """nodes: {id: (lon, lat[, {tags}])}, ways: [(id, [node ids], {tags})],
     relations: [(id, [(Typ n/w/r, ref, Rolle)], {tags})]"""
     lines = ['<?xml version="1.0" encoding="UTF-8"?>', '<osm version="0.6" generator="osm2ets-tests">']
-    for nid, (lon, lat) in sorted(nodes.items()):
-        lines.append(f'  <node id="{nid}" version="1" lat="{lat:.7f}" lon="{lon:.7f}"/>')
+    for nid, val in sorted(nodes.items()):
+        lon, lat = val[:2]
+        tags = val[2] if len(val) > 2 else {}
+        if not tags:
+            lines.append(f'  <node id="{nid}" version="1" lat="{lat:.7f}" lon="{lon:.7f}"/>')
+            continue
+        lines.append(f'  <node id="{nid}" version="1" lat="{lat:.7f}" lon="{lon:.7f}">')
+        lines.extend(f"    <tag k={quoteattr(k)} v={quoteattr(str(v))}/>" for k, v in tags.items())
+        lines.append("  </node>")
     for wid, refs, tags in ways:
         lines.append(f'  <way id="{wid}" version="1">')
         lines.extend(f'    <nd ref="{r}"/>' for r in refs)
